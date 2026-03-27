@@ -12,12 +12,13 @@ use std::{
 };
 
 use commands::{
-    cancel_capture, close_translation_widget, complete_capture, get_app_settings,
-    get_autostart_status, get_capture_context, get_storage_info, get_translation_widget_pinned,
-    list_capture_history, minimize_translation_widget, mock_ocr, mock_translate,
-    open_file_in_default_app, set_autostart_enabled, set_shortcut_recording,
-    set_translation_widget_pinned, show_translation_widget, start_capture,
-    update_capture_shortcut, update_max_screenshots, update_translate_shortcut,
+    cancel_capture, clear_all_captures, close_translation_widget, complete_capture, delete_capture,
+    get_app_settings, get_autostart_status, get_capture_context, get_storage_info,
+    get_translation_widget_pinned, list_capture_history, minimize_translation_widget, mock_ocr,
+    mock_translate, open_file_in_default_app, read_image_as_data_url, set_autostart_enabled,
+    set_shortcut_recording, set_translation_widget_pinned, show_translation_widget, start_capture,
+    update_capture_shortcut, update_interface_language, update_max_screenshots,
+    update_translate_shortcut,
 };
 use models::{AppSettings, CaptureContext, CaptureRecord};
 use services::{
@@ -80,10 +81,13 @@ fn main() {
             start_capture,
             cancel_capture,
             complete_capture,
+            delete_capture,
+            clear_all_captures,
             get_capture_context,
             list_capture_history,
             get_storage_info,
             open_file_in_default_app,
+            read_image_as_data_url,
             get_app_settings,
             get_autostart_status,
             set_autostart_enabled,
@@ -94,6 +98,7 @@ fn main() {
             minimize_translation_widget,
             close_translation_widget,
             update_capture_shortcut,
+            update_interface_language,
             update_max_screenshots,
             update_translate_shortcut,
             mock_ocr,
@@ -129,7 +134,12 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
     let screenshot_dir = data_dir.join("captures");
     std::fs::create_dir_all(&screenshot_dir)?;
     let settings_store = SettingsStore::new(data_dir.join("settings.json"));
-    let settings = settings_store.load_settings()?;
+    let mut settings = settings_store.load_settings()?;
+    if !settings.interface_language_set {
+        settings.interface_language = detect_system_language();
+        settings.interface_language_set = false;
+        settings_store.save_settings(&settings)?;
+    }
 
     Ok(AppState {
         capture_context: Mutex::new(CaptureContext::default()),
@@ -144,6 +154,16 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         ocr_service: Arc::new(MockOcrService),
         translation_service: Arc::new(MockTranslationService),
     })
+}
+
+fn detect_system_language() -> String {
+    let locale = sys_locale::get_locale().unwrap_or_else(|| "en".to_string());
+    let normalized = locale.split(['-', '_']).next().unwrap_or("en").to_lowercase();
+    match normalized.as_str() {
+        "zh" => "zh".into(),
+        "ja" => "ja".into(),
+        _ => "en".into(),
+    }
 }
 
 fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {

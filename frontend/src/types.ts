@@ -4,6 +4,8 @@ export type AppSettings = {
   capture_shortcut: string;
   translate_shortcut: string;
   max_screenshots: number;
+  interface_language: string;
+  interface_language_set: boolean;
 };
 
 export type TranslationPayload = {

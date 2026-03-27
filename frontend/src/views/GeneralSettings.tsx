@@ -26,7 +26,6 @@ export default function GeneralSettings() {
   const [savingField, setSavingField] = useState<ShortcutField | null>(null);
   const [shortcutError, setShortcutError] = useState('');
   const [generalError, setGeneralError] = useState('');
-  const [isUpdatingRetention, setIsUpdatingRetention] = useState(false);
   const [isUpdatingAutostart, setIsUpdatingAutostart] = useState(false);
   const isMac = useMemo(
     () => /Mac|iPhone|iPad/i.test(navigator.platform),
@@ -122,8 +121,19 @@ export default function GeneralSettings() {
               <label className="ml-1 mb-2 block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant">{t('general.interfaceLanguage')}</label>
               <div className="relative">
                 <select
-                  value={i18n.language}
-                  onChange={(e) => i18n.changeLanguage(e.target.value)}
+                  value={settings?.interface_language ?? i18n.language}
+                  onChange={(e) => {
+                    const language = e.target.value;
+                    void invoke<AppSettings>('update_interface_language', { language })
+                      .then((updated) => {
+                        setSettings(updated);
+                        setGeneralError('');
+                        void i18n.changeLanguage(updated.interface_language);
+                      })
+                      .catch((error: unknown) => {
+                        setGeneralError(String(error));
+                      });
+                  }}
                   className="w-full cursor-pointer appearance-none rounded-xl border border-outline-variant/30 bg-surface-container px-4 py-3.5 text-sm font-medium text-on-surface outline-none transition-all focus:ring-2 focus:ring-primary"
                 >
                   <option value="en">English</option>
@@ -200,7 +210,6 @@ export default function GeneralSettings() {
               onChange={(event) => {
                 const value = Number(event.target.value);
                 setSettings((current) => current ? { ...current, max_screenshots: value } : current);
-                setIsUpdatingRetention(true);
                 void invoke<AppSettings>('update_max_screenshots', { maxScreenshots: value })
                   .then((updated) => {
                     setSettings(updated);
@@ -208,9 +217,6 @@ export default function GeneralSettings() {
                   })
                   .catch((error: unknown) => {
                     setGeneralError(String(error));
-                  })
-                  .finally(() => {
-                    setIsUpdatingRetention(false);
                   });
               }}
               className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-surface-container-highest accent-primary-container"
@@ -220,12 +226,6 @@ export default function GeneralSettings() {
               <span>{t('general.retentionHint')}</span>
               <span>1000</span>
             </div>
-            {isUpdatingRetention && (
-              <div className="flex items-center gap-2 text-xs text-primary">
-                <LoaderCircle size={14} className="animate-spin" />
-                {t('general.saving')}
-              </div>
-            )}
           </div>
         </section>
 

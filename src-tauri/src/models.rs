@@ -83,6 +83,8 @@ pub struct AppSettings {
     pub capture_shortcut: String,
     pub translate_shortcut: String,
     pub max_screenshots: u32,
+    pub interface_language: String,
+    pub interface_language_set: bool,
 }
 
 impl Default for AppSettings {
@@ -91,6 +93,8 @@ impl Default for AppSettings {
             capture_shortcut: "CommandOrControl+Alt+A".into(),
             translate_shortcut: "CommandOrControl+Alt+T".into(),
             max_screenshots: 500,
+            interface_language: "en".into(),
+            interface_language_set: false,
         }
     }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Clock3, Copy, FolderOpen, ImageIcon, RefreshCw, X } from 'lucide-react';
+import { Clock3, Copy, FolderOpen, ImageIcon, RefreshCw, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CaptureHistory, CaptureRecord } from '../types';
 
@@ -16,6 +16,10 @@ type TranslationMockRecord = {
   time: string;
   highlight?: boolean;
 };
+
+type DeleteTarget =
+  | { kind: 'single'; shot: CaptureRecord }
+  | { kind: 'all' };
 
 const emptyHistory: CaptureHistory = {
   directory: '',
@@ -50,6 +54,8 @@ const translationMocks: TranslationMockRecord[] = [
   },
 ];
 
+const ITEMS_PER_PAGE = 9;
+
 export default function HistoryView() {
   const { t, i18n } = useTranslation();
   const [activeTab, setActiveTab] = useState<HistoryTab>('screenshots');
@@ -57,33 +63,31 @@ export default function HistoryView() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [previewingShot, setPreviewingShot] = useState<CaptureRecord | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const loadHistory = async () => {
+    try {
+      setLoadError(null);
+      const nextHistory = await invoke<CaptureHistory>('list_capture_history');
+      setHistory(nextHistory);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
-
-    const loadHistory = async () => {
-      try {
-        setLoadError(null);
-        const nextHistory = await invoke<CaptureHistory>('list_capture_history');
-        if (!cancelled) {
-          setHistory(nextHistory);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : String(error));
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    void loadHistory();
+    void loadHistory().catch(() => {});
 
     let unlisten: (() => void) | undefined;
     void listen<CaptureRecord>('capture-finished', async () => {
-      await loadHistory();
+      if (!cancelled) {
+        await loadHistory();
+      }
     }).then((dispose) => {
       unlisten = dispose;
     });
@@ -111,6 +115,13 @@ export default function HistoryView() {
     };
   }, [previewingShot]);
 
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(history.items.length / ITEMS_PER_PAGE));
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, history.items.length]);
+
   const formatter = useMemo(
     () =>
       new Intl.DateTimeFormat(i18n.language === 'zh' ? 'zh-CN' : i18n.language === 'ja' ? 'ja-JP' : 'en-US', {
@@ -121,6 +132,10 @@ export default function HistoryView() {
   );
 
   const screenshotCountLabel = t('history.itemCount', { count: history.items.length });
+  const totalPages = Math.max(1, Math.ceil(history.items.length / ITEMS_PER_PAGE));
+  const pagedItems = history.items.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+  const pageStart = history.items.length === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
+  const pageEnd = Math.min(currentPage * ITEMS_PER_PAGE, history.items.length);
 
   return (
     <>
@@ -163,19 +178,18 @@ export default function HistoryView() {
                   </span>
                   <button
                     type="button"
+                    onClick={() => setPendingDelete({ kind: 'all' })}
+                    disabled={history.items.length === 0}
+                    className="inline-flex items-center gap-2 rounded-full bg-error/10 px-3 py-1.5 text-xs font-bold text-error transition-colors hover:bg-error hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Trash2 size={14} />
+                    {t('history.deleteAll')}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => {
                       setIsLoading(true);
-                      void invoke<CaptureHistory>('list_capture_history')
-                        .then((nextHistory) => {
-                          setHistory(nextHistory);
-                          setLoadError(null);
-                        })
-                        .catch((error) => {
-                          setLoadError(error instanceof Error ? error.message : String(error));
-                        })
-                        .finally(() => {
-                          setIsLoading(false);
-                        });
+                      void loadHistory();
                     }}
                     className="inline-flex items-center gap-2 rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-white transition-opacity hover:opacity-90"
                   >
@@ -204,20 +218,67 @@ export default function HistoryView() {
                 <p className="mt-2 text-sm text-on-surface-variant">{t('history.emptyDesc')}</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3 xl:gap-6">
-                {history.items.map((shot) => (
+              <>
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                  {pagedItems.map((shot) => (
                   <ScreenshotCard
                     key={shot.id}
                     formatter={formatter}
                     shot={shot}
                     viewLabel={t('history.view')}
                     previewLabel={t('history.preview')}
+                    deleteLabel={t('history.delete')}
                     copyPathLabel={t('history.copyPath')}
                     copiedLabel={t('history.copied')}
                     onPreview={() => setPreviewingShot(shot)}
+                    onDelete={() => setPendingDelete({ kind: 'single', shot })}
                   />
                 ))}
-              </div>
+                </div>
+                {totalPages > 1 && (
+                  <div className="mt-8 flex flex-col gap-4 border-t border-surface-container-high pt-6 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                      {t('history.showingRange', { start: pageStart, end: pageEnd, total: history.items.length })}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={currentPage === 1}
+                        onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-container-lowest text-on-surface-variant ring-1 ring-outline-variant/30 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        &lt;
+                      </button>
+                      {Array.from({ length: totalPages }, (_, index) => {
+                        const page = index + 1;
+                        const isActive = page === currentPage;
+                        return (
+                          <button
+                            key={page}
+                            type="button"
+                            onClick={() => setCurrentPage(page)}
+                            className={`flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold transition-colors ${
+                              isActive
+                                ? 'bg-primary text-white'
+                                : 'bg-surface-container-lowest text-on-surface ring-1 ring-outline-variant/30 hover:bg-surface-container'
+                            }`}
+                          >
+                            {page}
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        disabled={currentPage === totalPages}
+                        onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-container-lowest text-on-surface-variant ring-1 ring-outline-variant/30 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        &gt;
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </>
         ) : (
@@ -272,8 +333,48 @@ export default function HistoryView() {
         <PreviewModal
           formatter={formatter}
           onClose={() => setPreviewingShot(null)}
+          onDelete={() => setPendingDelete({ kind: 'single', shot: previewingShot })}
           shot={previewingShot}
+          deleteLabel={t('history.delete')}
           viewLabel={t('history.view')}
+        />
+      )}
+
+      {pendingDelete && (
+        <ConfirmDeleteModal
+          fileName={pendingDelete.kind === 'single' ? pendingDelete.shot.path.split(/[\\/]/).pop() ?? pendingDelete.shot.path : t('history.allScreenshots')}
+          isDeleting={isDeleting}
+          message={pendingDelete.kind === 'single' ? t('history.deleteConfirm') : t('history.deleteAllConfirm')}
+          cancelLabel={t('history.cancel')}
+          confirmLabel={pendingDelete.kind === 'single' ? t('history.delete') : t('history.deleteAll')}
+          title={pendingDelete.kind === 'single' ? t('history.deleteTitle') : t('history.deleteAllTitle')}
+          onCancel={() => {
+            if (!isDeleting) {
+              setPendingDelete(null);
+            }
+          }}
+          onConfirm={() => {
+            setIsDeleting(true);
+            setLoadError(null);
+            void (pendingDelete.kind === 'single'
+              ? invoke('delete_capture', { path: pendingDelete.shot.path })
+              : invoke('clear_all_captures'))
+              .then(async () => {
+                if (pendingDelete.kind === 'all' || (previewingShot && pendingDelete.kind === 'single' && previewingShot.path === pendingDelete.shot.path)) {
+                  setPreviewingShot(null);
+                }
+                setPendingDelete(null);
+                setIsLoading(true);
+                setCurrentPage(1);
+                await loadHistory();
+              })
+              .catch((error) => {
+                setLoadError(error instanceof Error ? error.message : String(error));
+              })
+              .finally(() => {
+                setIsDeleting(false);
+              });
+          }}
         />
       )}
     </>
@@ -285,42 +386,52 @@ function ScreenshotCard({
   formatter,
   viewLabel,
   previewLabel,
+  deleteLabel,
   copyPathLabel,
   copiedLabel,
   onPreview,
+  onDelete,
 }: {
   shot: CaptureRecord;
   formatter: Intl.DateTimeFormat;
   viewLabel: string;
   previewLabel: string;
+  deleteLabel: string;
   copyPathLabel: string;
   copiedLabel: string;
   onPreview: () => void;
+  onDelete: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
-  const imageUrl = convertFileSrc(shot.path);
+  const imageUrl = useImageDataUrl(shot.path);
   const fileName = shot.path.split(/[\\/]/).pop() ?? shot.path;
 
   return (
-    <article className="group overflow-hidden rounded-3xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl">
+    <article className="group overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg">
       <button
         type="button"
         onClick={onPreview}
-        className="relative block aspect-[16/10] w-full overflow-hidden bg-surface-container text-left"
+        className="relative block aspect-[4/3] w-full overflow-hidden bg-surface-container text-left"
         title={previewLabel}
       >
-        <img
-          src={imageUrl}
-          alt={fileName}
-          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-        />
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt={fileName}
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-on-surface-variant">
+            <ImageIcon size={28} />
+          </div>
+        )}
         <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/35 via-black/10 to-transparent" />
         <div className="absolute inset-0 bg-primary/0 transition-colors group-hover:bg-primary/5" />
       </button>
-      <div className="space-y-4 p-5">
+      <div className="space-y-3 p-4">
         <div>
-          <p className="truncate text-sm font-bold text-on-surface">{fileName}</p>
+          <p className="truncate text-[13px] font-bold text-on-surface">{fileName}</p>
           <p className="mt-1 flex items-center gap-1.5 text-xs text-on-surface-variant">
             <Clock3 size={13} />
             {formatter.format(new Date(shot.created_at))}
@@ -343,9 +454,17 @@ function ScreenshotCard({
                 setOpenError(error instanceof Error ? error.message : String(error));
               });
             }}
-            className="flex-1 rounded-xl bg-primary px-3 py-2.5 text-xs font-bold text-white transition-opacity hover:opacity-90"
+            className="flex-1 rounded-xl bg-primary px-3 py-2 text-[11px] font-bold text-white transition-opacity hover:opacity-90"
           >
             {viewLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="inline-flex items-center justify-center rounded-xl bg-surface-container px-2.5 py-2 text-on-surface-variant transition-colors hover:bg-error/10 hover:text-error"
+            title={deleteLabel}
+          >
+            <Trash2 size={16} />
           </button>
           <button
             type="button"
@@ -354,7 +473,7 @@ function ScreenshotCard({
               setCopied(true);
               window.setTimeout(() => setCopied(false), 1500);
             }}
-            className="inline-flex items-center justify-center rounded-xl bg-surface-container px-3 py-2.5 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+            className="inline-flex items-center justify-center rounded-xl bg-surface-container px-2.5 py-2 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
             title={copyPathLabel}
           >
             {copied ? <span className="text-[11px] font-bold text-primary">{copiedLabel}</span> : <Copy size={16} />}
@@ -370,14 +489,18 @@ function PreviewModal({
   shot,
   formatter,
   viewLabel,
+  deleteLabel,
   onClose,
+  onDelete,
 }: {
   shot: CaptureRecord;
   formatter: Intl.DateTimeFormat;
   viewLabel: string;
+  deleteLabel: string;
   onClose: () => void;
+  onDelete: () => void;
 }) {
-  const imageUrl = convertFileSrc(shot.path);
+  const imageUrl = useImageDataUrl(shot.path);
   const fileName = shot.path.split(/[\\/]/).pop() ?? shot.path;
 
   return (
@@ -392,6 +515,13 @@ function PreviewModal({
             <p className="mt-1 text-xs text-on-surface-variant">{formatter.format(new Date(shot.created_at))}</p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onDelete}
+              className="rounded-xl bg-error/10 px-3 py-2 text-xs font-bold text-error transition-colors hover:bg-error hover:text-white"
+            >
+              {deleteLabel}
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -412,8 +542,102 @@ function PreviewModal({
         </div>
         <div className="bg-[radial-gradient(circle_at_top,_rgba(0,41,117,0.12),_transparent_45%)] p-4 sm:p-6">
           <div className="overflow-hidden rounded-2xl bg-surface-container shadow-inner ring-1 ring-outline-variant/20">
-            <img src={imageUrl} alt={fileName} className="max-h-[72vh] w-full object-contain" />
+            {imageUrl ? (
+              <img src={imageUrl} alt={fileName} className="max-h-[72vh] w-full object-contain" />
+            ) : (
+              <div className="flex min-h-[320px] items-center justify-center text-on-surface-variant">
+                <ImageIcon size={36} />
+              </div>
+            )}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function useImageDataUrl(path: string) {
+  const [imageUrl, setImageUrl] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void invoke<string>('read_image_as_data_url', { path })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setImageUrl(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setImageUrl('');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  return imageUrl;
+}
+
+function ConfirmDeleteModal({
+  title,
+  message,
+  fileName,
+  cancelLabel,
+  confirmLabel,
+  isDeleting,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  message: string;
+  fileName: string;
+  cancelLabel: string;
+  confirmLabel: string;
+  isDeleting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={onCancel}>
+      <div
+        className="w-full max-w-md rounded-[28px] border border-outline-variant/20 bg-surface-container-lowest p-6 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-lg font-bold text-on-surface">{title}</p>
+            <p className="mt-2 text-sm text-on-surface-variant">{message}</p>
+            <p className="mt-3 break-all rounded-2xl bg-surface-container px-3 py-2 text-xs font-semibold text-on-surface">{fileName}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-xl bg-surface-container p-2 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            disabled={isDeleting}
+            onClick={onCancel}
+            className="rounded-xl bg-surface-container px-4 py-2 text-sm font-bold text-on-surface transition-colors hover:bg-surface-container-high disabled:opacity-50"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            disabled={isDeleting}
+            onClick={onConfirm}
+            className="rounded-xl bg-error px-4 py-2 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {isDeleting ? '...' : confirmLabel}
+          </button>
         </div>
       </div>
     </div>

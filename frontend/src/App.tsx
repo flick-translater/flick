@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useTranslation } from 'react-i18next';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import GeneralSettings from './views/GeneralSettings';
@@ -9,6 +10,7 @@ import AISettings from './views/AISettings';
 import { ViewState } from './types';
 
 export default function App() {
+  const { t } = useTranslation();
   const [currentView, setCurrentView] = useState<ViewState>('general');
 
   return (
@@ -17,7 +19,7 @@ export default function App() {
       
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <TopBar 
-          title={getViewTitle(currentView)} 
+          title={getViewTitle(currentView, t)} 
           onToggleWidget={() => {
             void invoke('show_translation_widget');
           }}
@@ -34,11 +36,11 @@ export default function App() {
   );
 }
 
-function getViewTitle(view: ViewState) {
+function getViewTitle(view: ViewState, t: (key: string) => string) {
   switch (view) {
-    case 'general': return 'General Settings';
-    case 'history': return 'Capture History';
-    case 'ocr': return 'OCR Settings';
-    case 'ai': return 'AI Configuration';
+    case 'general': return t('sidebar.general');
+    case 'history': return t('sidebar.history');
+    case 'ocr': return t('sidebar.ocr');
+    case 'ai': return t('sidebar.ai');
   }
 }

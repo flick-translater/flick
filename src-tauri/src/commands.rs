@@ -7,6 +7,7 @@ use std::{
     time::SystemTime,
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt as _;
@@ -261,6 +262,56 @@ pub fn open_file_in_default_app(path: String) -> Result<(), FlickError> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn read_image_as_data_url(path: String) -> Result<String, FlickError> {
+    let bytes = fs::read(&path)
+        .map_err(|error| FlickError::Message(format!("failed to read image: {error}")))?;
+
+    Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
+}
+
+#[tauri::command]
+pub fn delete_capture(state: State<'_, AppState>, path: String) -> Result<(), FlickError> {
+    let capture_path = Path::new(&path);
+    let screenshot_dir = &state.screenshot_dir;
+
+    if !capture_path.starts_with(screenshot_dir) {
+        return Err(FlickError::Message("capture path is outside screenshot directory".into()));
+    }
+
+    if !capture_path.exists() {
+        return Ok(());
+    }
+
+    fs::remove_file(capture_path)
+        .map_err(|error| FlickError::Message(format!("failed to delete capture: {error}")))?;
+
+    if let Ok(mut history) = state.history.lock() {
+        history.retain(|record| record.path != path);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_all_captures(state: State<'_, AppState>) -> Result<(), FlickError> {
+    let records = load_capture_history(&state.screenshot_dir)?;
+
+    for record in records {
+        let capture_path = Path::new(&record.path);
+        if capture_path.starts_with(&state.screenshot_dir) && capture_path.exists() {
+            fs::remove_file(capture_path)
+                .map_err(|error| FlickError::Message(format!("failed to delete capture: {error}")))?;
+        }
+    }
+
+    if let Ok(mut history) = state.history.lock() {
+        history.clear();
+    }
+
+    Ok(())
+}
+
 fn load_capture_history(screenshot_dir: &Path) -> Result<Vec<CaptureRecord>, FlickError> {
     let mut records = Vec::new();
     let entries = fs::read_dir(screenshot_dir)
@@ -448,6 +499,32 @@ pub fn update_max_screenshots(
         history.truncate(normalized as usize);
     }
 
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn update_interface_language(
+    state: State<'_, AppState>,
+    language: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = match language.trim().to_lowercase().as_str() {
+        "zh" => "zh",
+        "ja" => "ja",
+        _ => "en",
+    }
+    .to_string();
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.interface_language = normalized;
+        settings.interface_language_set = true;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
     Ok(updated)
 }
 

@@ -261,6 +261,10 @@ impl SettingsStore {
         self.save_json(settings)
     }
 
+    pub fn exists(&self) -> bool {
+        self.path.exists()
+    }
+
     fn load_json<T: DeserializeOwned>(&self) -> anyhow::Result<T> {
         let content = std::fs::read_to_string(&self.path)
             .with_context(|| format!("failed to read {}", self.path.display()))?;
