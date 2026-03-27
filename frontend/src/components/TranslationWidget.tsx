@@ -1,19 +1,81 @@
-import { useState } from 'react';
-import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, Share2, History, Star, ScanText } from 'lucide-react';
+import { useEffect, useState, type MouseEvent } from 'react';
+import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, Share2, ScanText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { TranslationPayload } from '../types';
 
 interface TranslationWidgetProps {
+  payload: TranslationPayload;
   onClose: () => void;
+  standalone?: boolean;
 }
 
-export default function TranslationWidget({ onClose }: TranslationWidgetProps) {
+export default function TranslationWidget({ payload, onClose, standalone = false }: TranslationWidgetProps) {
   const { t } = useTranslation();
   const [isPinned, setIsPinned] = useState(false);
+  const windowHandle = standalone ? getCurrentWindow() : null;
+
+  useEffect(() => {
+    if (!windowHandle) {
+      return;
+    }
+
+    void windowHandle.isAlwaysOnTop().then(setIsPinned).catch((error) => {
+      console.error('Failed to read always-on-top state', error);
+    });
+  }, [windowHandle]);
+
+  const handleHeaderMouseDown = async (event: MouseEvent<HTMLElement>) => {
+    if (!standalone || event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, input, select, textarea, a, [role="button"]')) {
+      return;
+    }
+
+    event.preventDefault();
+
+    try {
+      await windowHandle?.startDragging();
+    } catch (error) {
+      console.error('Failed to start dragging widget window', error);
+    }
+  };
+
+  const handleTogglePinned = async () => {
+    const next = !isPinned;
+    setIsPinned(next);
+
+    try {
+      await windowHandle?.setAlwaysOnTop(next);
+    } catch (error) {
+      setIsPinned(!next);
+      console.error('Failed to toggle always-on-top', error);
+    }
+  };
+
+  const handleMinimize = async () => {
+    try {
+      await windowHandle?.minimize();
+    } catch (error) {
+      console.error('Failed to minimize widget window', error);
+    }
+  };
 
   return (
-    <div className="fixed inset-x-3 bottom-3 top-24 z-50 flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-xl border border-outline-variant/30 shadow-2xl duration-300 animate-in fade-in glass-panel sm:left-auto sm:right-4 sm:w-[min(480px,calc(100vw-2rem))] lg:right-8 lg:top-20 lg:h-[min(640px,calc(100vh-6rem))] lg:max-h-none">
+    <div className={standalone
+      ? 'flex h-screen flex-col overflow-hidden bg-surface'
+      : 'fixed inset-x-3 bottom-3 top-24 z-50 flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-xl border border-outline-variant/30 shadow-2xl duration-300 animate-in fade-in glass-panel sm:left-auto sm:right-4 sm:w-[min(480px,calc(100vw-2rem))] lg:right-8 lg:top-20 lg:h-[min(640px,calc(100vh-6rem))] lg:max-h-none'}
+    >
       {/* Header */}
-      <header className="flex justify-between items-center px-4 py-3 bg-white/80 border-b border-outline-variant/20 shrink-0">
+      <header
+        className={`flex justify-between items-center px-4 py-3 bg-white/80 border-b border-outline-variant/20 shrink-0 ${standalone ? 'select-none' : ''}`}
+        onMouseDown={(event) => {
+          void handleHeaderMouseDown(event);
+        }}
+      >
         <div className="flex items-center gap-2">
           <img 
             src="https://lh3.googleusercontent.com/aida-public/AB6AXuBA7uviJf2q0QkZM9cIPRQTKrK48R2cd2xeSwM8K3ynoq89JoLeWTy5MDuIS3fuzZwdz61GftmVSQcsiLBKlJkQSqhN84xOrC4ort4exBYS9jB6lZEH4XEopxSK4i8Ymf8ESne7fMknWg4QmPVZrvNSvvtCSZtn1QBynRu5yIdbZmx5AdU0mqCOrN255nhN-FNqILXlmLLAHl2IyPS3a3fivdHzp4REfThQMjsWd5JPSinBMRSmrm7jDD1gr_jDce2E4ROHFLr2bE8" 
@@ -24,12 +86,19 @@ export default function TranslationWidget({ onClose }: TranslationWidgetProps) {
         </div>
         <div className="flex gap-1">
           <button 
-            onClick={() => setIsPinned(!isPinned)}
+            onClick={() => {
+              void handleTogglePinned();
+            }}
             className={`w-8 h-8 flex items-center justify-center rounded transition-colors ${isPinned ? 'bg-primary text-white' : 'text-on-surface-variant hover:bg-surface-container'}`}
           >
             <Pin size={16} className={isPinned ? 'fill-current' : ''} />
           </button>
-          <button className="w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container transition-colors text-on-surface-variant">
+          <button
+            onClick={() => {
+              void handleMinimize();
+            }}
+            className="w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container transition-colors text-on-surface-variant"
+          >
             <Minus size={16} />
           </button>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded hover:bg-error/10 hover:text-error transition-colors text-on-surface-variant">
@@ -50,7 +119,7 @@ export default function TranslationWidget({ onClose }: TranslationWidgetProps) {
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
             <p className="font-body text-sm leading-relaxed text-on-surface">
-              The Digital Atrium design philosophy emphasizes spaciousness and clarity. By utilizing tonal layering instead of harsh borders, we create a desktop environment that feels like an extension of the user's focus, rather than a distraction. This screenshot tool captures the essence of efficient utility.
+              {payload.sourceText}
             </p>
           </div>
         </section>
@@ -99,7 +168,7 @@ export default function TranslationWidget({ onClose }: TranslationWidgetProps) {
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
             <p className="font-body text-sm leading-relaxed text-primary-container font-medium">
-              Digital Atrium 设计哲学强调空间感和清晰度。通过利用色调分层而非生硬的边框，我们创造了一个桌面环境，让用户感觉它像是专注力的延伸，而不是干扰。这款截屏工具捕捉了高效实用的精髓。
+              {payload.translatedText}
             </p>
           </div>
         </section>

@@ -13,14 +13,17 @@ use std::{
 
 use commands::{
     cancel_capture, complete_capture, get_app_settings, get_autostart_status, get_capture_context,
-    list_capture_history, mock_ocr, mock_translate, set_autostart_enabled, start_capture,
-    update_capture_shortcut,
+    list_capture_history, mock_ocr, mock_translate, set_autostart_enabled, set_shortcut_recording,
+    show_translation_widget, start_capture, update_capture_shortcut, update_translate_shortcut,
 };
 use models::{AppSettings, CaptureContext, CaptureRecord};
-use services::{CachedScreenCapture, MockOcrService, MockTranslationService, ScreenCaptureService, SettingsStore};
+use services::{
+    CachedScreenCapture, MockOcrService, MockTranslationService, ScreenCaptureService,
+    SettingsStore,
+};
 use tauri::{
-    ActivationPolicy, AppHandle, Emitter, LogicalPosition, Manager, RunEvent, TitleBarStyle, WebviewUrl,
-    WebviewWindowBuilder,
+    ActivationPolicy, AppHandle, Emitter, LogicalPosition, Manager, RunEvent, TitleBarStyle,
+    WebviewUrl, WebviewWindowBuilder,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuId, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -29,6 +32,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const CAPTURE_WINDOW_LABEL: &str = "capture";
+const WIDGET_WINDOW_LABEL: &str = "widget";
 pub struct AppState {
     pub capture_context: Mutex<CaptureContext>,
     pub capture_snapshots: Mutex<Vec<CachedScreenCapture>>,
@@ -36,18 +40,29 @@ pub struct AppState {
     pub screenshot_dir: PathBuf,
     pub settings_store: SettingsStore,
     pub settings: Mutex<AppSettings>,
+    pub capture_intent: Mutex<CaptureIntent>,
     pub capture_service: ScreenCaptureService,
     pub ocr_service: Arc<MockOcrService>,
     pub translation_service: Arc<MockTranslationService>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureIntent {
+    Capture,
+    Translate,
+}
+
 fn main() {
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Regular);
             ensure_main_window(app.handle())?;
             ensure_capture_window(app.handle())?;
+            ensure_widget_window(app.handle())?;
             let state = build_state(app.handle())?;
             app.manage(state);
 
@@ -66,7 +81,10 @@ fn main() {
             get_app_settings,
             get_autostart_status,
             set_autostart_enabled,
+            set_shortcut_recording,
+            show_translation_widget,
             update_capture_shortcut,
+            update_translate_shortcut,
             mock_ocr,
             mock_translate,
         ])
@@ -76,14 +94,14 @@ fn main() {
         .expect("failed to build Flick application");
 
     app.run(|app, event| match event {
-            RunEvent::Ready => {
-                let _ = show_main_window(app);
-            }
-            RunEvent::Reopen { .. } => {
-                let _ = show_main_window(app);
-            }
-            _ => {}
-        });
+        RunEvent::Ready => {
+            let _ = show_main_window(app);
+        }
+        RunEvent::Reopen { .. } => {
+            let _ = show_main_window(app);
+        }
+        _ => {}
+    });
 }
 
 fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
@@ -109,6 +127,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         screenshot_dir,
         settings_store,
         settings: Mutex::new(settings),
+        capture_intent: Mutex::new(CaptureIntent::Capture),
         capture_service: ScreenCaptureService::default(),
         ocr_service: Arc::new(MockOcrService),
         translation_service: Arc::new(MockTranslationService),
@@ -142,26 +161,69 @@ fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
     eprintln!("[shortcut] initializing plugin");
     app.plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
 
-    let shortcut = {
+    let settings = {
         let state = app.state::<AppState>();
         let settings = state
             .settings
             .lock()
             .map_err(|_| anyhow::anyhow!("settings mutex poisoned"))?;
-        settings.capture_shortcut.clone()
+        settings.clone()
     };
-    eprintln!("[shortcut] registering initial shortcut: {}", shortcut);
-    app.global_shortcut().on_shortcut(shortcut.as_str(), |app, _, event| {
-        eprintln!(
-            "[shortcut] initial handler fired: state={:?}",
-            event.state
-        );
-        if event.state == ShortcutState::Pressed {
-            let state = app.state::<AppState>();
-            let _ = commands::begin_capture_session(app, &state);
+    apply_shortcut_bindings(app, &settings)?;
+    eprintln!("[shortcut] initial shortcuts registered");
+
+    Ok(())
+}
+
+pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
+    let global_shortcut = app.global_shortcut();
+
+    if settings.capture_shortcut == settings.translate_shortcut {
+        anyhow::bail!("截图和截图翻译快捷键不能相同");
+    }
+
+    for shortcut in [&settings.capture_shortcut, &settings.translate_shortcut] {
+        if global_shortcut.is_registered(shortcut.as_str()) {
+            eprintln!("[shortcut] unregister existing binding: {}", shortcut);
+            global_shortcut.unregister(shortcut.as_str())?;
         }
-    })?;
-    eprintln!("[shortcut] initial shortcut registered");
+    }
+
+    register_shortcut_handler(
+        app,
+        settings.capture_shortcut.as_str(),
+        CaptureIntent::Capture,
+    )?;
+    register_shortcut_handler(
+        app,
+        settings.translate_shortcut.as_str(),
+        CaptureIntent::Translate,
+    )?;
+
+    Ok(())
+}
+
+fn register_shortcut_handler(
+    app: &AppHandle,
+    shortcut: &str,
+    intent: CaptureIntent,
+) -> anyhow::Result<()> {
+    let shortcut_value = shortcut.to_string();
+    eprintln!(
+        "[shortcut] registering initial shortcut: {} ({intent:?})",
+        shortcut_value
+    );
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |app, _, event| {
+            eprintln!(
+                "[shortcut] initial handler fired: shortcut={} intent={intent:?} state={:?}",
+                shortcut_value, event.state
+            );
+            if event.state == ShortcutState::Pressed {
+                let state = app.state::<AppState>();
+                let _ = commands::begin_capture_session_with_intent(app, &state, intent);
+            }
+        })?;
 
     Ok(())
 }
@@ -259,10 +321,38 @@ pub fn ensure_capture_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWin
     .build()
 }
 
-pub fn emit_capture_status(
-    app: &AppHandle,
-    event: &str,
-    payload: impl serde::Serialize + Clone,
-) {
+pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
+    if let Some(window) = app.get_webview_window(WIDGET_WINDOW_LABEL) {
+        return Ok(window);
+    }
+
+    WebviewWindowBuilder::new(
+        app,
+        WIDGET_WINDOW_LABEL,
+        WebviewUrl::App("translation-window.html".into()),
+    )
+    .title("Flick Widget")
+    .inner_size(480.0, 640.0)
+    .min_inner_size(360.0, 480.0)
+    .resizable(true)
+    .visible(false)
+    .focused(false)
+    .always_on_top(true)
+    .decorations(false)
+    .build()
+}
+
+pub fn show_widget_window(app: &AppHandle) -> tauri::Result<()> {
+    let window = ensure_widget_window(app)?;
+    let _ = window.center();
+    let _ = window.set_visible_on_all_workspaces(true);
+    window.show()?;
+    window.unminimize()?;
+    window.set_focus()?;
+    let _ = window.set_visible_on_all_workspaces(false);
+    Ok(())
+}
+
+pub fn emit_capture_status(app: &AppHandle, event: &str, payload: impl serde::Serialize + Clone) {
     let _ = app.emit(event, payload);
 }

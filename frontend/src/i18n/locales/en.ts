@@ -26,6 +26,9 @@ export default {
       action: "Action",
       captureScreenshot: "Capture Screenshot",
       screenshotTranslate: "Screenshot & Translate",
+      recordingShortcut: "Recording...",
+      pressShortcut: "Press the new shortcut now. Press Esc to cancel.",
+      shortcutModifierHint: "Shortcut must include at least one modifier key.",
       discardChanges: "Discard Changes",
       savePreferences: "Save Preferences"
     },

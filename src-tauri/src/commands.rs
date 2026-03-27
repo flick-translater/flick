@@ -1,19 +1,21 @@
 use std::{path::PathBuf, sync::MutexGuard, thread};
 
 use chrono::Utc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
 use uuid::Uuid;
 
 use crate::{
-    AppState, CAPTURE_WINDOW_LABEL, ensure_capture_window, emit_capture_status,
+    AppState, CAPTURE_WINDOW_LABEL, CaptureIntent, apply_shortcut_bindings, emit_capture_status,
+    ensure_capture_window, ensure_widget_window,
     error::FlickError,
     models::{
-        AppSettings, AutostartStatus, CaptureContext, CaptureRecord, OcrRequest, OcrResponse, SelectionRect,
-        TranslateRequest, TranslateResponse,
+        AppSettings, AutostartStatus, CaptureContext, CaptureRecord, OcrRequest, OcrResponse,
+        SelectionRect, TranslateRequest, TranslateResponse,
     },
     services::{OcrService, ScreenCaptureService, TranslationService},
+    show_widget_window,
 };
 
 #[tauri::command]
@@ -44,6 +46,12 @@ pub fn complete_capture(
     selection: SelectionRect,
 ) -> Result<(), FlickError> {
     let screenshot_dir = state.screenshot_dir.clone();
+    let intent = *state
+        .capture_intent
+        .lock()
+        .map_err(|_| FlickError::Message("capture intent mutex poisoned".into()))?;
+    let ocr_service = state.ocr_service.clone();
+    let translation_service = state.translation_service.clone();
 
     #[cfg(not(target_os = "macos"))]
     let cached_screens = {
@@ -117,6 +125,28 @@ pub fn complete_capture(
             drop(history);
 
             emit_capture_status(&app_handle, "capture-finished", &record);
+            if intent == CaptureIntent::Translate {
+                let ocr = ocr_service.run(OcrRequest {
+                    image_path: record.path.clone(),
+                    language_hint: None,
+                })?;
+                let translation = translation_service.translate(TranslateRequest {
+                    text: ocr.text.clone(),
+                    source_language: None,
+                    target_language: "zh".into(),
+                })?;
+                let payload = serde_json::json!({
+                    "imagePath": record.path,
+                    "sourceText": ocr.text,
+                    "translatedText": translation.translated_text,
+                    "provider": translation.provider,
+                    "detectedSourceLanguage": translation.detected_source_language,
+                    "targetLanguage": "zh",
+                });
+                let widget = ensure_widget_window(&app_handle)?;
+                show_widget_window(&app_handle)?;
+                let _ = widget.emit("translation-ready", payload);
+            }
             save_capture_async(image, path);
             Ok(())
         };
@@ -193,6 +223,40 @@ pub fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Result<(), FlickE
 }
 
 #[tauri::command]
+pub fn show_translation_widget(app: AppHandle) -> Result<(), FlickError> {
+    show_widget_window(&app)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_shortcut_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    recording: bool,
+) -> Result<(), FlickError> {
+    let settings = state
+        .settings
+        .lock()
+        .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
+        .clone();
+    let global_shortcut = app.global_shortcut();
+
+    for shortcut in [&settings.capture_shortcut, &settings.translate_shortcut] {
+        if recording {
+            if global_shortcut.is_registered(shortcut.as_str()) {
+                global_shortcut.unregister(shortcut.as_str())?;
+            }
+        } else if !global_shortcut.is_registered(shortcut.as_str()) {
+            apply_shortcut_bindings(&app, &settings)
+                .map_err(|error| FlickError::Message(format!("恢复快捷键失败: {error}")))?;
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, FlickError> {
     Ok(state
         .settings
@@ -207,84 +271,114 @@ pub fn update_capture_shortcut(
     state: State<'_, AppState>,
     shortcut: String,
 ) -> Result<AppSettings, FlickError> {
+    update_shortcut(app, state, shortcut, ShortcutKind::Capture)
+}
+
+#[tauri::command]
+pub fn update_translate_shortcut(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    shortcut: String,
+) -> Result<AppSettings, FlickError> {
+    update_shortcut(app, state, shortcut, ShortcutKind::Translate)
+}
+
+#[derive(Clone, Copy)]
+enum ShortcutKind {
+    Capture,
+    Translate,
+}
+
+fn update_shortcut(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    shortcut: String,
+    kind: ShortcutKind,
+) -> Result<AppSettings, FlickError> {
     let normalized = shortcut.trim().to_string();
-    eprintln!("[shortcut] update request received: raw='{}' normalized='{}'", shortcut, normalized);
+    eprintln!(
+        "[shortcut] update request received: kind={} raw='{}' normalized='{}'",
+        shortcut_kind_name(&kind),
+        shortcut,
+        normalized
+    );
     if normalized.is_empty() {
         eprintln!("[shortcut] rejected: empty shortcut");
         return Err(FlickError::Message("快捷键不能为空".into()));
     }
 
-    let current = {
+    let current_settings = {
         let settings = state
             .settings
             .lock()
             .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
-        settings.capture_shortcut.clone()
+        settings.clone()
     };
-    eprintln!("[shortcut] current shortcut: {}", current);
+    let current = match kind {
+        ShortcutKind::Capture => current_settings.capture_shortcut.clone(),
+        ShortcutKind::Translate => current_settings.translate_shortcut.clone(),
+    };
+    eprintln!(
+        "[shortcut] current {} shortcut: {}",
+        shortcut_kind_name(&kind),
+        current
+    );
 
     if current == normalized {
         eprintln!("[shortcut] no-op update, shortcut unchanged");
         return get_app_settings(state);
     }
 
-    let global_shortcut = app.global_shortcut();
-    eprintln!(
-        "[shortcut] is current registered? {}",
-        global_shortcut.is_registered(current.as_str())
-    );
-    if global_shortcut.is_registered(current.as_str()) {
-        eprintln!("[shortcut] unregister current: {}", current);
-        global_shortcut.unregister(current.as_str())?;
-        eprintln!("[shortcut] unregister success: {}", current);
+    let mut next_settings = current_settings.clone();
+    match kind {
+        ShortcutKind::Capture => next_settings.capture_shortcut = normalized.clone(),
+        ShortcutKind::Translate => next_settings.translate_shortcut = normalized.clone(),
     }
 
-    eprintln!("[shortcut] register new: {}", normalized);
-    if let Err(error) = global_shortcut.on_shortcut(normalized.as_str(), |app, _, event| {
-        eprintln!(
-            "[shortcut] dynamic handler fired for updated shortcut: state={:?}",
-            event.state
-        );
-        if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-            let state = app.state::<AppState>();
-            let _ = begin_capture_session(app, &state);
-        }
-    }) {
-        eprintln!("[shortcut] register failed for {}: {}", normalized, error);
-        if !current.is_empty() {
-            eprintln!("[shortcut] restoring previous shortcut: {}", current);
-            let _ = global_shortcut.on_shortcut(current.as_str(), |app, _, event| {
-                eprintln!(
-                    "[shortcut] restored handler fired: state={:?}",
-                    event.state
-                );
-                if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                    let state = app.state::<AppState>();
-                    let _ = begin_capture_session(app, &state);
-                }
-            });
-        }
-        return Err(FlickError::Message(format!("快捷键注册失败，可能已被其他应用占用: {error}")));
+    if let Err(error) = apply_shortcut_bindings(&app, &next_settings) {
+        let _ = apply_shortcut_bindings(&app, &current_settings);
+        return Err(FlickError::Message(format!(
+            "快捷键注册失败，可能已被其他应用占用: {error}"
+        )));
     }
-    eprintln!("[shortcut] register success: {}", normalized);
+    eprintln!(
+        "[shortcut] register success: capture={} translate={}",
+        next_settings.capture_shortcut, next_settings.translate_shortcut
+    );
 
     let updated = {
         let mut settings = state
             .settings
             .lock()
             .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
-        settings.capture_shortcut = normalized.clone();
+        *settings = next_settings.clone();
         settings.clone()
     };
-    eprintln!("[shortcut] in-memory settings updated: {}", updated.capture_shortcut);
+    eprintln!(
+        "[shortcut] in-memory settings updated: capture={} translate={}",
+        updated.capture_shortcut, updated.translate_shortcut
+    );
 
     state.settings_store.save_settings(&updated)?;
-    eprintln!("[shortcut] persisted settings to store: {}", updated.capture_shortcut);
+    eprintln!(
+        "[shortcut] persisted settings to store: capture={} translate={}",
+        updated.capture_shortcut, updated.translate_shortcut
+    );
     Ok(updated)
 }
 
+fn shortcut_kind_name(kind: &ShortcutKind) -> &'static str {
+    match kind {
+        ShortcutKind::Capture => "capture",
+        ShortcutKind::Translate => "translate",
+    }
+}
+
 #[tauri::command]
-pub fn mock_ocr(state: State<'_, AppState>, request: OcrRequest) -> Result<OcrResponse, FlickError> {
+pub fn mock_ocr(
+    state: State<'_, AppState>,
+    request: OcrRequest,
+) -> Result<OcrResponse, FlickError> {
     state.ocr_service.run(request).map_err(Into::into)
 }
 
@@ -293,7 +387,10 @@ pub fn mock_translate(
     state: State<'_, AppState>,
     request: TranslateRequest,
 ) -> Result<TranslateResponse, FlickError> {
-    state.translation_service.translate(request).map_err(Into::into)
+    state
+        .translation_service
+        .translate(request)
+        .map_err(Into::into)
 }
 
 pub fn open_capture_overlay(app: &AppHandle) -> Result<(), FlickError> {
@@ -307,6 +404,22 @@ pub fn begin_capture_session(
     app: &AppHandle,
     state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
+    begin_capture_session_with_intent(app, state, CaptureIntent::Capture)
+}
+
+pub fn begin_capture_session_with_intent(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    intent: CaptureIntent,
+) -> Result<(), FlickError> {
+    {
+        let mut guard = state
+            .capture_intent
+            .lock()
+            .map_err(|_| FlickError::Message("capture intent mutex poisoned".into()))?;
+        *guard = intent;
+    }
+
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
@@ -340,8 +453,16 @@ fn prepare_capture_context(app: &AppHandle, state: &State<'_, AppState>) -> Resu
         })
         .collect::<Vec<_>>();
 
-    let min_x = logical_monitors.iter().map(|(x, _, _, _)| *x).reduce(f64::min).unwrap_or(0.0);
-    let min_y = logical_monitors.iter().map(|(_, y, _, _)| *y).reduce(f64::min).unwrap_or(0.0);
+    let min_x = logical_monitors
+        .iter()
+        .map(|(x, _, _, _)| *x)
+        .reduce(f64::min)
+        .unwrap_or(0.0);
+    let min_y = logical_monitors
+        .iter()
+        .map(|(_, y, _, _)| *y)
+        .reduce(f64::min)
+        .unwrap_or(0.0);
     let max_x = logical_monitors
         .iter()
         .map(|(x, _, width, _)| x + width)
@@ -369,7 +490,9 @@ fn prepare_capture_context(app: &AppHandle, state: &State<'_, AppState>) -> Resu
     }
 
     let window = ensure_capture_window(app)?;
-    window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(min_x, min_y)))?;
+    window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+        min_x, min_y,
+    )))?;
     window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)))?;
     window.set_always_on_top(true)?;
 
@@ -385,10 +508,7 @@ fn lock_capture_context<'a>(
         .map_err(|_| FlickError::Message("capture context mutex poisoned".into()))
 }
 
-fn save_capture_async(
-    image: image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
-    path: PathBuf,
-) {
+fn save_capture_async(image: image::ImageBuffer<image::Rgba<u8>, Vec<u8>>, path: PathBuf) {
     thread::spawn(move || {
         if let Err(error) = image.save(&path) {
             eprintln!("failed to save screenshot to {}: {}", path.display(), error);

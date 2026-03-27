@@ -26,6 +26,9 @@ export default {
       action: "操作",
       captureScreenshot: "捕获截图",
       screenshotTranslate: "截图并翻译",
+      recordingShortcut: "正在录制...",
+      pressShortcut: "请直接按下新的快捷键，按 Esc 取消。",
+      shortcutModifierHint: "快捷键至少需要包含一个修饰键。",
       discardChanges: "放弃更改",
       savePreferences: "保存首选项"
     },

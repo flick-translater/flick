@@ -1,4 +1,7 @@
-use std::{borrow::Cow, path::{Path, PathBuf}};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, anyhow};
 use arboard::{Clipboard, ImageData};
@@ -6,7 +9,10 @@ use image::{ImageBuffer, Rgba, imageops};
 use screenshots::Screen;
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::models::{AppSettings, OcrRequest, OcrResponse, OcrTextBlock, SelectionRect, TranslateRequest, TranslateResponse};
+use crate::models::{
+    AppSettings, OcrRequest, OcrResponse, OcrTextBlock, SelectionRect, TranslateRequest,
+    TranslateResponse,
+};
 
 #[derive(Clone)]
 pub struct CachedScreenCapture {
@@ -49,7 +55,8 @@ impl ScreenCaptureService {
         use core_graphics::{
             geometry::{CGPoint, CGRect, CGSize},
             window::{
-                create_image, kCGNullWindowID, kCGWindowImageDefault, kCGWindowListOptionOnScreenOnly,
+                create_image, kCGNullWindowID, kCGWindowImageDefault,
+                kCGWindowListOptionOnScreenOnly,
             },
         };
 
@@ -141,10 +148,7 @@ impl ScreenCaptureService {
         .to_image())
     }
 
-    pub fn copy_to_clipboard(
-        &self,
-        image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    ) -> anyhow::Result<()> {
+    pub fn copy_to_clipboard(&self, image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> anyhow::Result<()> {
         let mut clipboard = Clipboard::new().context("failed to access clipboard")?;
         let width = usize::try_from(image.width()).context("invalid image width")?;
         let height = usize::try_from(image.height()).context("invalid image height")?;
@@ -168,7 +172,11 @@ impl ScreenCaptureService {
 }
 
 #[cfg(target_os = "macos")]
-fn bgra_to_rgba_image(width: u32, height: u32, buf: Vec<u8>) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+fn bgra_to_rgba_image(
+    width: u32,
+    height: u32,
+    buf: Vec<u8>,
+) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
     let mut rgba_buf = buf.clone();
 
     for (src, dst) in buf.chunks_exact(4).zip(rgba_buf.chunks_exact_mut(4)) {
@@ -223,11 +231,7 @@ impl TranslationService for MockTranslationService {
     fn translate(&self, request: TranslateRequest) -> anyhow::Result<TranslateResponse> {
         Ok(TranslateResponse {
             provider: "mock-translate".into(),
-            translated_text: format!(
-                "[{}] {}",
-                request.target_language,
-                request.text.trim()
-            ),
+            translated_text: format!("[{}] {}", request.target_language, request.text.trim()),
             detected_source_language: request.source_language.or(Some("auto".into())),
         })
     }

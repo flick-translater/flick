@@ -66,14 +66,17 @@ pub struct TranslateResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppSettings {
     pub capture_shortcut: String,
+    pub translate_shortcut: String,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             capture_shortcut: "CommandOrControl+Alt+A".into(),
+            translate_shortcut: "CommandOrControl+Alt+T".into(),
         }
     }
 }

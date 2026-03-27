@@ -18,6 +18,8 @@ export default function TopBar({ title, onToggleWidget }: TopBarProps) {
       return;
     }
 
+    event.preventDefault();
+
     try {
       await getCurrentWindow().startDragging();
     } catch (error) {
@@ -27,13 +29,13 @@ export default function TopBar({ title, onToggleWidget }: TopBarProps) {
 
   return (
     <header
-      className="sticky top-0 z-30 flex shrink-0 items-center justify-between gap-4 border-b border-outline-variant/10 bg-surface/80 px-4 py-3 pl-20 backdrop-blur-md sm:px-6 sm:pl-24 lg:px-8 lg:pl-28"
+      className="sticky top-0 z-30 flex h-[74px] shrink-0 select-none items-center justify-between gap-4 border-b border-outline-variant/10 bg-surface/80 px-4 py-3 backdrop-blur-md sm:px-6 lg:px-8"
       onMouseDown={(event) => {
         void handleMouseDown(event);
       }}
     >
-      <div className="min-w-0 flex-1">
-        <h2 className="truncate font-headline text-lg font-extrabold tracking-tight text-primary sm:text-xl lg:text-2xl">
+      <div className="min-w-0 flex-1 text-left">
+        <h2 className="cursor-default truncate text-left font-headline text-lg font-extrabold tracking-tight text-primary sm:text-xl lg:text-2xl">
           {title}
         </h2>
       </div>
