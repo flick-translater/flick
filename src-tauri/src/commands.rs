@@ -229,6 +229,29 @@ pub fn show_translation_widget(app: AppHandle) -> Result<(), FlickError> {
 }
 
 #[tauri::command]
+pub fn get_translation_widget_pinned(app: AppHandle) -> Result<bool, FlickError> {
+    Ok(ensure_widget_window(&app)?.is_always_on_top()?)
+}
+
+#[tauri::command]
+pub fn set_translation_widget_pinned(app: AppHandle, pinned: bool) -> Result<(), FlickError> {
+    ensure_widget_window(&app)?.set_always_on_top(pinned)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn minimize_translation_widget(app: AppHandle) -> Result<(), FlickError> {
+    ensure_widget_window(&app)?.minimize()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn close_translation_widget(app: AppHandle) -> Result<(), FlickError> {
+    ensure_widget_window(&app)?.close()?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn set_shortcut_recording(
     app: AppHandle,
     state: State<'_, AppState>,

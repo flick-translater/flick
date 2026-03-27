@@ -12,9 +12,11 @@ use std::{
 };
 
 use commands::{
-    cancel_capture, complete_capture, get_app_settings, get_autostart_status, get_capture_context,
-    list_capture_history, mock_ocr, mock_translate, set_autostart_enabled, set_shortcut_recording,
-    show_translation_widget, start_capture, update_capture_shortcut, update_translate_shortcut,
+    cancel_capture, close_translation_widget, complete_capture, get_app_settings,
+    get_autostart_status, get_capture_context, get_translation_widget_pinned, list_capture_history,
+    minimize_translation_widget, mock_ocr, mock_translate, set_autostart_enabled,
+    set_shortcut_recording, set_translation_widget_pinned, show_translation_widget, start_capture,
+    update_capture_shortcut, update_translate_shortcut,
 };
 use models::{AppSettings, CaptureContext, CaptureRecord};
 use services::{
@@ -83,6 +85,10 @@ fn main() {
             set_autostart_enabled,
             set_shortcut_recording,
             show_translation_widget,
+            get_translation_widget_pinned,
+            set_translation_widget_pinned,
+            minimize_translation_widget,
+            close_translation_widget,
             update_capture_shortcut,
             update_translate_shortcut,
             mock_ocr,
@@ -337,7 +343,7 @@ pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWind
     .resizable(true)
     .visible(false)
     .focused(false)
-    .always_on_top(true)
+    .always_on_top(false)
     .decorations(false)
     .build()
 }

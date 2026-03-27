@@ -1,4 +1,5 @@
 import { useEffect, useState, type MouseEvent } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, Share2, ScanText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -20,7 +21,7 @@ export default function TranslationWidget({ payload, onClose, standalone = false
       return;
     }
 
-    void windowHandle.isAlwaysOnTop().then(setIsPinned).catch((error) => {
+    void invoke<boolean>('get_translation_widget_pinned').then(setIsPinned).catch((error) => {
       console.error('Failed to read always-on-top state', error);
     });
   }, [windowHandle]);
@@ -46,21 +47,32 @@ export default function TranslationWidget({ payload, onClose, standalone = false
 
   const handleTogglePinned = async () => {
     const next = !isPinned;
-    setIsPinned(next);
 
     try {
-      await windowHandle?.setAlwaysOnTop(next);
+      await invoke('set_translation_widget_pinned', { pinned: next });
+      setIsPinned(next);
     } catch (error) {
-      setIsPinned(!next);
       console.error('Failed to toggle always-on-top', error);
     }
   };
 
   const handleMinimize = async () => {
     try {
-      await windowHandle?.minimize();
+      await invoke('minimize_translation_widget');
     } catch (error) {
       console.error('Failed to minimize widget window', error);
+    }
+  };
+
+  const handleClose = async () => {
+    try {
+      if (standalone) {
+        await invoke('close_translation_widget');
+        return;
+      }
+      onClose();
+    } catch (error) {
+      console.error('Failed to close widget window', error);
     }
   };
 
@@ -77,15 +89,13 @@ export default function TranslationWidget({ payload, onClose, standalone = false
         }}
       >
         <div className="flex items-center gap-2">
-          <img 
-            src="https://lh3.googleusercontent.com/aida-public/AB6AXuBA7uviJf2q0QkZM9cIPRQTKrK48R2cd2xeSwM8K3ynoq89JoLeWTy5MDuIS3fuzZwdz61GftmVSQcsiLBKlJkQSqhN84xOrC4ort4exBYS9jB6lZEH4XEopxSK4i8Ymf8ESne7fMknWg4QmPVZrvNSvvtCSZtn1QBynRu5yIdbZmx5AdU0mqCOrN255nhN-FNqILXlmLLAHl2IyPS3a3fivdHzp4REfThQMjsWd5JPSinBMRSmrm7jDD1gr_jDce2E4ROHFLr2bE8" 
-            alt="Flick Logo" 
-            className="w-5 h-5 object-cover rounded"
-          />
           <span className="font-headline font-bold text-sm tracking-tight text-on-surface">Flick</span>
         </div>
         <div className="flex gap-1">
-          <button 
+          <button
+            onMouseDown={(event) => {
+              event.stopPropagation();
+            }}
             onClick={() => {
               void handleTogglePinned();
             }}
@@ -94,6 +104,9 @@ export default function TranslationWidget({ payload, onClose, standalone = false
             <Pin size={16} className={isPinned ? 'fill-current' : ''} />
           </button>
           <button
+            onMouseDown={(event) => {
+              event.stopPropagation();
+            }}
             onClick={() => {
               void handleMinimize();
             }}
@@ -101,7 +114,15 @@ export default function TranslationWidget({ payload, onClose, standalone = false
           >
             <Minus size={16} />
           </button>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded hover:bg-error/10 hover:text-error transition-colors text-on-surface-variant">
+          <button
+            onMouseDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={() => {
+              void handleClose();
+            }}
+            className="w-8 h-8 flex items-center justify-center rounded hover:bg-error/10 hover:text-error transition-colors text-on-surface-variant"
+          >
             <X size={16} />
           </button>
         </div>
