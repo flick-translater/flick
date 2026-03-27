@@ -11,7 +11,7 @@ export default function TranslationWidget({ onClose }: TranslationWidgetProps) {
   const [isPinned, setIsPinned] = useState(false);
 
   return (
-    <div className="fixed top-24 right-12 w-[480px] h-[640px] glass-panel rounded-xl flex flex-col overflow-hidden border border-outline-variant/30 shadow-2xl z-50 animate-in slide-in-from-right-8 fade-in duration-300">
+    <div className="fixed inset-x-3 bottom-3 top-24 z-50 flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-xl border border-outline-variant/30 shadow-2xl duration-300 animate-in fade-in glass-panel sm:left-auto sm:right-4 sm:w-[min(480px,calc(100vw-2rem))] lg:right-8 lg:top-20 lg:h-[min(640px,calc(100vh-6rem))] lg:max-h-none">
       {/* Header */}
       <header className="flex justify-between items-center px-4 py-3 bg-white/80 border-b border-outline-variant/20 shrink-0">
         <div className="flex items-center gap-2">
@@ -39,7 +39,7 @@ export default function TranslationWidget({ onClose }: TranslationWidgetProps) {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col p-5 gap-5 overflow-hidden bg-surface/50">
+      <main className="flex flex-1 flex-col gap-4 overflow-hidden bg-surface/50 p-4 sm:p-5">
         {/* Source Text */}
         <section className="flex-1 flex flex-col min-h-0 bg-white border border-outline-variant/30 rounded-xl p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3 border-b border-outline-variant/20 pb-2">
@@ -56,8 +56,8 @@ export default function TranslationWidget({ onClose }: TranslationWidgetProps) {
         </section>
 
         {/* Language Selector */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="flex-1 relative">
+        <div className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2">
+          <div className="relative min-w-0">
             <select className="w-full appearance-none py-2.5 px-3 rounded-lg border border-outline-variant/30 bg-white text-on-surface font-medium text-xs hover:border-primary/50 transition-all outline-none cursor-pointer shadow-sm">
               <option>{t('widget.english')}</option>
             </select>
@@ -72,7 +72,7 @@ export default function TranslationWidget({ onClose }: TranslationWidgetProps) {
             <ArrowRightLeft size={18} />
           </button>
           
-          <div className="flex-1 relative">
+          <div className="relative min-w-0">
             <select className="w-full appearance-none py-2.5 px-3 rounded-lg border border-outline-variant/30 bg-white text-on-surface font-medium text-xs hover:border-primary/50 transition-all outline-none cursor-pointer shadow-sm">
               <option>{t('widget.chinese')}</option>
             </select>

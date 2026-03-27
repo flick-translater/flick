@@ -13,16 +13,16 @@ export default function App() {
   const [showWidget, setShowWidget] = useState(false);
 
   return (
-    <div className="flex h-screen bg-surface font-sans text-on-surface overflow-hidden">
+    <div className="flex h-screen min-h-0 flex-col bg-surface font-sans text-on-surface lg:flex-row">
       <Sidebar currentView={currentView} setCurrentView={setCurrentView} />
       
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <TopBar 
           title={getViewTitle(currentView)} 
           onToggleWidget={() => setShowWidget(!showWidget)} 
         />
         
-        <main className="flex-1 overflow-y-auto p-8 lg:p-12 relative">
+        <main className="relative flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8 xl:px-10 xl:py-10">
           {currentView === 'general' && <GeneralSettings />}
           {currentView === 'history' && <HistoryView />}
           {currentView === 'ocr' && <OCRSettings />}

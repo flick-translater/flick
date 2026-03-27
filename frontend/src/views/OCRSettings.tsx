@@ -9,15 +9,15 @@ export default function OCRSettings() {
   const [autoTranslate, setAutoTranslate] = useState(false);
 
   return (
-    <div className="max-w-4xl mx-auto animate-in fade-in duration-500">
+    <div className="mx-auto max-w-4xl animate-in fade-in duration-500">
       <section className="space-y-8">
         <div className="flex items-center gap-3 pb-2">
           <span className="text-[11px] font-bold text-primary uppercase tracking-[0.2em]">OCR Configuration</span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-surface-container-lowest p-6 rounded-xl shadow-sm border border-outline-variant/20 hover:bg-surface-container/50 transition-colors group">
-            <div className="flex justify-between items-start">
+        <div className="grid grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-2 lg:gap-6">
+          <div className="group rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-colors hover:bg-surface-container/50 sm:p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="space-y-1.5 pr-4">
                 <div className="font-bold text-on-surface text-base">{t('ocr.enableShortcut')}</div>
                 <p className="text-xs text-on-surface-variant leading-relaxed">
@@ -28,8 +28,8 @@ export default function OCRSettings() {
             </div>
           </div>
 
-          <div className="bg-surface-container-lowest p-6 rounded-xl shadow-sm border border-outline-variant/20 hover:bg-surface-container/50 transition-colors group">
-            <div className="flex justify-between items-start">
+          <div className="group rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-colors hover:bg-surface-container/50 sm:p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="space-y-1.5 pr-4">
                 <div className="font-bold text-on-surface text-base">{t('ocr.autoTranslate')}</div>
                 <p className="text-xs text-on-surface-variant leading-relaxed">
@@ -80,12 +80,12 @@ export default function OCRSettings() {
         </div>
       </section>
 
-      <footer className="flex items-center justify-end pt-10 mt-10 border-t border-outline-variant/20">
-        <div className="flex gap-4">
-          <button className="px-6 py-2.5 text-sm font-bold text-on-surface-variant hover:bg-surface-container rounded-xl transition-colors">
+      <footer className="mt-8 border-t border-outline-variant/20 pt-8 sm:mt-10 sm:pt-10">
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end sm:gap-4">
+          <button className="w-full rounded-xl px-6 py-2.5 text-sm font-bold text-on-surface-variant transition-colors hover:bg-surface-container sm:w-auto">
             {t('ocr.discard')}
           </button>
-          <button className="px-8 py-2.5 text-sm font-bold bg-primary text-white rounded-xl shadow-lg hover:scale-[1.02] active:scale-95 transition-all">
+          <button className="w-full rounded-xl bg-primary px-8 py-2.5 text-sm font-bold text-white shadow-lg transition-all hover:scale-[1.02] active:scale-95 sm:w-auto">
             {t('ocr.saveChanges')}
           </button>
         </div>

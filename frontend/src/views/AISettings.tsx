@@ -10,19 +10,19 @@ export default function AISettings() {
   const [maxTokens, setMaxTokens] = useState(4096);
 
   return (
-    <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
+    <div className="mx-auto max-w-5xl animate-in fade-in duration-500">
       {/* Provider Selection */}
-      <section className="mb-12">
+      <section className="mb-8 lg:mb-12">
         <div className="flex items-center gap-2 mb-4">
           <Network className="text-primary" size={20} />
           <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">Provider Selection</h3>
         </div>
-        <div className="bg-surface-container-low p-1.5 rounded-xl flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1 rounded-xl bg-surface-container-low p-1.5">
           {providers.map(p => (
             <button
               key={p}
               onClick={() => setActiveProvider(p)}
-              className={`px-5 py-2.5 text-sm font-semibold rounded-lg transition-all ${
+              className={`rounded-lg px-4 py-2.5 text-sm font-semibold transition-all sm:px-5 ${
                 activeProvider === p
                   ? 'bg-surface-container-lowest text-primary shadow-sm ring-1 ring-outline-variant/20 scale-[0.98]'
                   : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-lowest/50'
@@ -34,7 +34,7 @@ export default function AISettings() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+      <div className="mb-8 grid grid-cols-1 gap-6 lg:mb-12 lg:grid-cols-2 lg:gap-8">
         {/* API Config */}
         <section className="space-y-6">
           <div className="flex items-center gap-2 mb-2">
@@ -86,7 +86,7 @@ export default function AISettings() {
             <Terminal className="text-primary" size={20} />
             <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">Default Prompt</h3>
           </div>
-          <div className="flex-1 min-h-[220px]">
+          <div className="flex-1 min-h-[180px] sm:min-h-[220px]">
             <textarea
               className="w-full h-full p-4 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm resize-none leading-relaxed"
               placeholder="Enter the base system instruction for the AI..."
@@ -96,12 +96,12 @@ export default function AISettings() {
       </div>
 
       {/* Advanced Parameters */}
-      <section className="bg-surface-container-low/50 rounded-2xl p-8 border border-outline-variant/20 shadow-sm">
-        <div className="flex items-center gap-2 mb-8">
+      <section className="rounded-2xl border border-outline-variant/20 bg-surface-container-low/50 p-5 shadow-sm sm:p-6 lg:p-8">
+        <div className="mb-6 flex items-center gap-2 sm:mb-8">
           <SlidersHorizontal className="text-primary" size={20} />
           <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">Advanced Parameters</h3>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:gap-12">
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-2">
               <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Max Tokens</label>
@@ -130,9 +130,9 @@ export default function AISettings() {
                 onChange={(e) => setTemperature(parseFloat(e.target.value))}
                 className="w-full h-2 bg-surface-container-highest rounded-full appearance-none cursor-pointer accent-primary"
               />
-              <div className="flex justify-between mt-3 px-1">
+              <div className="mt-3 flex justify-between gap-3 px-1">
                 <span className="text-[10px] font-bold text-on-surface-variant">0.0 (PRECISE)</span>
-                <span className="text-[10px] font-bold text-on-surface-variant">1.0 (CREATIVE)</span>
+                <span className="text-right text-[10px] font-bold text-on-surface-variant">1.0 (CREATIVE)</span>
               </div>
             </div>
           </div>
@@ -140,10 +140,10 @@ export default function AISettings() {
       </section>
 
       {/* Action Bar */}
-      <div className="mt-12 flex items-center justify-end pt-8 border-t border-outline-variant/20">
-        <div className="flex gap-3">
-          <button className="px-6 py-3 text-sm font-bold text-on-surface-variant hover:text-on-surface transition-colors">Discard</button>
-          <button className="px-8 py-3 bg-primary text-white text-sm font-bold rounded-xl shadow-lg shadow-primary/20 hover:opacity-90 transition-all active:scale-[0.98]">
+      <div className="mt-8 border-t border-outline-variant/20 pt-8 lg:mt-12">
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <button className="w-full px-6 py-3 text-sm font-bold text-on-surface-variant transition-colors hover:text-on-surface sm:w-auto">Discard</button>
+          <button className="w-full rounded-xl bg-primary px-8 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:opacity-90 active:scale-[0.98] sm:w-auto">
             Save Configuration
           </button>
         </div>

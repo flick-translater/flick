@@ -22,8 +22,8 @@ export default function HistoryView() {
   const [activeTab, setActiveTab] = useState<'screenshots' | 'translations'>('screenshots');
 
   return (
-    <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
-      <div className="flex items-center gap-2 bg-surface-container p-1.5 rounded-2xl w-fit mb-10 shadow-sm border border-outline-variant/20">
+    <div className="mx-auto max-w-6xl animate-in fade-in duration-500">
+      <div className="mb-6 flex w-full items-center gap-2 overflow-x-auto rounded-2xl border border-outline-variant/20 bg-surface-container p-1.5 shadow-sm sm:mb-8 md:w-fit lg:mb-10">
         <button 
           onClick={() => setActiveTab('screenshots')}
           className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
@@ -48,7 +48,7 @@ export default function HistoryView() {
 
       {activeTab === 'screenshots' ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3 xl:gap-6">
             {screenshots.map((shot) => {
               const Icon = shot.icon;
               return (
@@ -77,9 +77,9 @@ export default function HistoryView() {
             })}
           </div>
           
-          <div className="flex items-center justify-between pt-10 mt-10 border-t border-surface-container-high">
-            <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider">{t('history.showingItems')}</p>
-            <div className="flex gap-2">
+          <div className="mt-8 flex flex-col gap-4 border-t border-surface-container-high pt-8 sm:mt-10 sm:flex-row sm:items-center sm:justify-between sm:pt-10">
+            <p className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">{t('history.showingItems')}</p>
+            <div className="flex flex-wrap gap-2">
               <button className="w-9 h-9 flex items-center justify-center rounded-lg bg-surface-container-lowest ring-1 ring-outline-variant/30 text-on-surface-variant hover:text-primary transition-colors">
                 &lt;
               </button>
@@ -98,7 +98,7 @@ export default function HistoryView() {
             {translations.map((trans) => (
             <article 
               key={trans.id} 
-              className={`group relative rounded-xl p-6 shadow-sm transition-all flex flex-col md:flex-row gap-8 items-start border ${
+              className={`group relative flex flex-col items-start gap-5 rounded-xl border p-5 shadow-sm transition-all sm:p-6 md:flex-row md:gap-8 ${
                 trans.highlight 
                   ? 'bg-gradient-to-br from-primary/5 to-white border-primary/20' 
                   : 'bg-surface-container-lowest border-outline-variant/20 hover:shadow-md'
@@ -119,12 +119,12 @@ export default function HistoryView() {
                   <p className="text-lg font-medium text-primary leading-snug">{trans.targetText}</p>
                 </div>
               </div>
-              <div className="shrink-0 flex flex-col items-end gap-3">
-                <span className="text-xs font-semibold text-on-surface-variant flex items-center gap-1.5">
+              <div className="flex w-full flex-row items-center justify-between gap-3 md:w-auto md:shrink-0 md:flex-col md:items-end">
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant">
                   <Clock size={14} />
                   {trans.time}
                 </span>
-                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex gap-2 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                   <button className="p-2 rounded-lg bg-surface-container hover:bg-primary-container hover:text-white transition-colors text-on-surface-variant">
                     <Copy size={16} />
                   </button>
@@ -137,9 +137,9 @@ export default function HistoryView() {
           ))}
         </div>
         
-        <div className="flex items-center justify-between pt-10 mt-10 border-t border-surface-container-high">
-          <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider">{t('history.showingItems')}</p>
-          <div className="flex gap-2">
+        <div className="mt-8 flex flex-col gap-4 border-t border-surface-container-high pt-8 sm:mt-10 sm:flex-row sm:items-center sm:justify-between sm:pt-10">
+          <p className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">{t('history.showingItems')}</p>
+          <div className="flex flex-wrap gap-2">
             <button className="w-9 h-9 flex items-center justify-center rounded-lg bg-surface-container-lowest ring-1 ring-outline-variant/30 text-on-surface-variant hover:text-primary transition-colors">
               &lt;
             </button>

@@ -7,23 +7,19 @@ interface TopBarProps {
 
 export default function TopBar({ title, onToggleWidget }: TopBarProps) {
   return (
-    <header className="h-20 px-8 flex items-center justify-between bg-surface/80 backdrop-blur-md sticky top-0 z-30 shrink-0">
-      <div className="flex items-center gap-8">
-        <h2 className="text-2xl font-extrabold text-primary font-headline tracking-tight hidden lg:block">{title}</h2>
+    <header className="sticky top-0 z-30 flex shrink-0 items-center justify-between gap-4 border-b border-outline-variant/10 bg-surface/80 px-4 py-3 backdrop-blur-md sm:px-6 lg:px-8">
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate font-headline text-lg font-extrabold tracking-tight text-primary sm:text-xl lg:text-2xl">{title}</h2>
       </div>
       
-      <div className="flex items-center gap-6">
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={onToggleWidget}
-            className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors flex items-center gap-2 mr-2"
-            title="Toggle Translation Widget"
-          >
-            <Zap size={20} className="fill-current" />
-            <span className="text-xs font-bold uppercase tracking-wider hidden sm:inline-block">Widget</span>
-          </button>
-        </div>
-      </div>
+      <button 
+        onClick={onToggleWidget}
+        className="flex shrink-0 items-center gap-2 rounded-lg p-2 text-primary transition-colors hover:bg-primary/10"
+        title="Toggle Translation Widget"
+      >
+        <Zap size={20} className="fill-current" />
+        <span className="hidden text-xs font-bold uppercase tracking-wider sm:inline-block">Widget</span>
+      </button>
     </header>
   );
 }
