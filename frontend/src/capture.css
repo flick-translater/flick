@@ -38,8 +38,7 @@ body.capture-ready .overlay {
 .hint {
   position: fixed;
   top: 24px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 24px;
   padding: 10px 16px;
   border-radius: 999px;
   background: rgba(16, 83, 211, 0.9);
@@ -47,6 +46,14 @@ body.capture-ready .overlay {
   font-size: 14px;
   letter-spacing: 0.02em;
   box-shadow: 0 12px 36px rgba(13, 63, 152, 0.22);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+body.capture-ready .hint {
+  opacity: 1;
+  visibility: visible;
 }
 
 .selection {

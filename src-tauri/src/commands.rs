@@ -688,6 +688,7 @@ pub fn mock_translate(
 pub fn open_capture_overlay(app: &AppHandle) -> Result<(), FlickError> {
     let window = ensure_capture_window(app)?;
     window.show()?;
+    emit_capture_status(app, "capture-started", "started");
     window.set_focus()?;
     Ok(())
 }
@@ -713,7 +714,13 @@ pub fn begin_capture_session_with_intent(
     }
 
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+        let should_hide_main_window = match window.is_focused() {
+            Ok(is_focused) => !is_focused,
+            Err(_) => true,
+        };
+        if should_hide_main_window {
+            let _ = window.hide();
+        }
     }
     prepare_capture_context(app, state)?;
     #[cfg(not(target_os = "macos"))]

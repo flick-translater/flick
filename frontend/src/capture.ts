@@ -1,6 +1,7 @@
 import './capture.css';
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 type CaptureContext = {
   x: number;
@@ -24,7 +25,7 @@ if (!root) {
 
 root.innerHTML = `
   <div class="overlay">
-    <div id="hint" class="hint">正在准备截图区域...</div>
+    <div id="hint" class="hint"></div>
     <div id="selection" class="selection hidden"></div>
     <div id="crosshair-x" class="crosshair-x"></div>
     <div id="crosshair-y" class="crosshair-y"></div>
@@ -78,7 +79,7 @@ function setReadyState(ready: boolean) {
   isReady = ready;
   document.body.classList.toggle('capture-ready', ready);
   if (hintElement) {
-    hintElement.textContent = ready ? '拖拽选择区域，松开鼠标立即截图，Esc 取消' : '正在准备截图区域...';
+    hintElement.textContent = ready ? '拖拽选择区域，松开鼠标立即截图，Esc 取消' : '';
   }
 }
 
@@ -137,14 +138,17 @@ async function confirmSelection() {
 
   const scaleX = context.width / window.innerWidth;
   const scaleY = context.height / window.innerHeight;
+  const selection = currentSelection;
+  resetSelection();
+  setReadyState(false);
 
   try {
     await invoke('complete_capture', {
       selection: {
-        x: Math.round(context.x + currentSelection.x * scaleX),
-        y: Math.round(context.y + currentSelection.y * scaleY),
-        width: Math.round(currentSelection.width * scaleX),
-        height: Math.round(currentSelection.height * scaleY)
+        x: Math.round(context.x + selection.x * scaleX),
+        y: Math.round(context.y + selection.y * scaleY),
+        width: Math.round(selection.width * scaleX),
+        height: Math.round(selection.height * scaleY)
       }
     });
   } finally {
@@ -193,6 +197,8 @@ window.addEventListener('mouseup', (event) => {
 
 window.addEventListener('keydown', async (event) => {
   if (event.key === 'Escape') {
+    resetSelection();
+    setReadyState(false);
     await invoke('cancel_capture');
   }
 
@@ -209,17 +215,14 @@ window.addEventListener('dblclick', async () => {
 
 window.addEventListener('contextmenu', async (event) => {
   event.preventDefault();
+  resetSelection();
+  setReadyState(false);
   await invoke('cancel_capture');
 });
 
-window.addEventListener('focus', () => {
+void listen('capture-started', () => {
   void loadCaptureContext().catch((error: unknown) => {
     console.error('Failed to refresh capture context', error);
     setReadyState(false);
   });
-});
-
-void loadCaptureContext().catch((error: unknown) => {
-  console.error('Failed to load capture context', error);
-  setReadyState(false);
 });
