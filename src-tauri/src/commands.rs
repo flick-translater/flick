@@ -185,7 +185,9 @@ pub fn update_capture_shortcut(
     shortcut: String,
 ) -> Result<AppSettings, FlickError> {
     let normalized = shortcut.trim().to_string();
+    eprintln!("[shortcut] update request received: raw='{}' normalized='{}'", shortcut, normalized);
     if normalized.is_empty() {
+        eprintln!("[shortcut] rejected: empty shortcut");
         return Err(FlickError::Message("快捷键不能为空".into()));
     }
 
@@ -196,23 +198,43 @@ pub fn update_capture_shortcut(
             .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
         settings.capture_shortcut.clone()
     };
+    eprintln!("[shortcut] current shortcut: {}", current);
 
     if current == normalized {
+        eprintln!("[shortcut] no-op update, shortcut unchanged");
         return get_app_settings(state);
     }
 
     let global_shortcut = app.global_shortcut();
+    eprintln!(
+        "[shortcut] is current registered? {}",
+        global_shortcut.is_registered(current.as_str())
+    );
     if global_shortcut.is_registered(current.as_str()) {
+        eprintln!("[shortcut] unregister current: {}", current);
         global_shortcut.unregister(current.as_str())?;
+        eprintln!("[shortcut] unregister success: {}", current);
     }
+
+    eprintln!("[shortcut] register new: {}", normalized);
     if let Err(error) = global_shortcut.on_shortcut(normalized.as_str(), |app, _, event| {
+        eprintln!(
+            "[shortcut] dynamic handler fired for updated shortcut: state={:?}",
+            event.state
+        );
         if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
             let state = app.state::<AppState>();
             let _ = begin_capture_session(app, &state);
         }
     }) {
+        eprintln!("[shortcut] register failed for {}: {}", normalized, error);
         if !current.is_empty() {
+            eprintln!("[shortcut] restoring previous shortcut: {}", current);
             let _ = global_shortcut.on_shortcut(current.as_str(), |app, _, event| {
+                eprintln!(
+                    "[shortcut] restored handler fired: state={:?}",
+                    event.state
+                );
                 if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                     let state = app.state::<AppState>();
                     let _ = begin_capture_session(app, &state);
@@ -221,6 +243,7 @@ pub fn update_capture_shortcut(
         }
         return Err(FlickError::Message(format!("快捷键注册失败，可能已被其他应用占用: {error}")));
     }
+    eprintln!("[shortcut] register success: {}", normalized);
 
     let updated = {
         let mut settings = state
@@ -230,8 +253,10 @@ pub fn update_capture_shortcut(
         settings.capture_shortcut = normalized.clone();
         settings.clone()
     };
+    eprintln!("[shortcut] in-memory settings updated: {}", updated.capture_shortcut);
 
     state.settings_store.save_settings(&updated)?;
+    eprintln!("[shortcut] persisted settings to store: {}", updated.capture_shortcut);
     Ok(updated)
 }
 
@@ -259,6 +284,9 @@ pub fn begin_capture_session(
     app: &AppHandle,
     state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
     prepare_capture_context(app, state)?;
     #[cfg(not(target_os = "macos"))]
     let snapshots = state.capture_service.capture_all_screens()?;

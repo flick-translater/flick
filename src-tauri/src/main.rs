@@ -138,16 +138,8 @@ fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
 }
 
 fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
-    app.plugin(
-        tauri_plugin_global_shortcut::Builder::new()
-            .with_handler(|app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    let state = app.state::<AppState>();
-                    let _ = commands::begin_capture_session(app, &state);
-                }
-            })
-            .build(),
-    )?;
+    eprintln!("[shortcut] initializing plugin");
+    app.plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
 
     let shortcut = {
         let state = app.state::<AppState>();
@@ -157,12 +149,18 @@ fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
             .map_err(|_| anyhow::anyhow!("settings mutex poisoned"))?;
         settings.capture_shortcut.clone()
     };
+    eprintln!("[shortcut] registering initial shortcut: {}", shortcut);
     app.global_shortcut().on_shortcut(shortcut.as_str(), |app, _, event| {
+        eprintln!(
+            "[shortcut] initial handler fired: state={:?}",
+            event.state
+        );
         if event.state == ShortcutState::Pressed {
             let state = app.state::<AppState>();
             let _ = commands::begin_capture_session(app, &state);
         }
     })?;
+    eprintln!("[shortcut] initial shortcut registered");
 
     Ok(())
 }
