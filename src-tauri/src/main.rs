@@ -226,13 +226,14 @@ pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow
 
     WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
         .title("Flick")
-        .inner_size(1080.0, 760.0)
-        .min_inner_size(920.0, 640.0)
+        .inner_size(1240.0, 800.0)
+        .min_inner_size(1040.0, 680.0)
         .resizable(true)
         .visible(true)
         .focused(true)
         .center()
-        .title_bar_style(TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .title_bar_style(TitleBarStyle::Transparent)
         .build()
 }
 

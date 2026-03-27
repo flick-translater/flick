@@ -9,7 +9,9 @@ export default function TopBar({ title, onToggleWidget }: TopBarProps) {
   return (
     <header className="sticky top-0 z-30 flex shrink-0 items-center justify-between gap-4 border-b border-outline-variant/10 bg-surface/80 px-4 py-3 backdrop-blur-md sm:px-6 lg:px-8">
       <div className="min-w-0 flex-1">
-        <h2 className="truncate font-headline text-lg font-extrabold tracking-tight text-primary sm:text-xl lg:text-2xl">{title}</h2>
+        <h2 className="truncate font-headline text-lg font-extrabold tracking-tight text-primary sm:text-xl lg:text-2xl">
+          {title}
+        </h2>
       </div>
       
       <button 
