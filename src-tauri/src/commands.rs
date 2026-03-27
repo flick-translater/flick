@@ -113,7 +113,7 @@ pub fn complete_capture(
                 .lock()
                 .map_err(|_| FlickError::Message("history mutex poisoned".into()))?;
             history.push_front(record.clone());
-            history.truncate(20);
+            history.truncate(3);
             drop(history);
 
             emit_capture_status(&app_handle, "capture-finished", &record);
