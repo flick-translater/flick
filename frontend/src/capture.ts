@@ -24,7 +24,7 @@ if (!root) {
 
 root.innerHTML = `
   <div class="overlay">
-    <div id="hint" class="hint">正在准备截图区域…</div>
+    <div id="hint" class="hint">正在准备截图区域...</div>
     <div id="selection" class="selection hidden"></div>
     <div id="crosshair-x" class="crosshair-x"></div>
     <div id="crosshair-y" class="crosshair-y"></div>
@@ -78,7 +78,7 @@ function setReadyState(ready: boolean) {
   isReady = ready;
   document.body.classList.toggle('capture-ready', ready);
   if (hintElement) {
-    hintElement.textContent = ready ? '拖拽选择区域，松开鼠标立即截图，Esc 取消' : '正在准备截图区域…';
+    hintElement.textContent = ready ? '拖拽选择区域，松开鼠标立即截图，Esc 取消' : '正在准备截图区域...';
   }
 }
 
@@ -219,8 +219,7 @@ window.addEventListener('focus', () => {
   });
 });
 
-void loadCaptureContext()
-  .catch((error: unknown) => {
-    console.error('Failed to load capture context', error);
-    setReadyState(false);
-  });
+void loadCaptureContext().catch((error: unknown) => {
+  console.error('Failed to load capture context', error);
+  setReadyState(false);
+});

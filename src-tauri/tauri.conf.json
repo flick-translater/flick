@@ -1,10 +1,10 @@
 {
-  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "$schema": "../frontend/node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Flick",
   "version": "0.1.0",
   "identifier": "com.yang.flick",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run dev -- --port 1420 --strictPort",
     "beforeBuildCommand": "npm run build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
