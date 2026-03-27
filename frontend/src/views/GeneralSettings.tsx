@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Power, Database, FolderOpen, Keyboard, Edit2, Globe, LoaderCircle } from 'lucide-react';
+import { Database, Edit2, FolderOpen, Globe, Keyboard, LoaderCircle, Power } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import Toggle from '../components/Toggle';
-import { AppSettings } from '../types';
+import { AppSettings, StorageInfo } from '../types';
 
 type ShortcutField = keyof Pick<AppSettings, 'capture_shortcut' | 'translate_shortcut'>;
 
@@ -12,13 +12,22 @@ const shortcutCommandMap: Record<ShortcutField, 'update_capture_shortcut' | 'upd
   translate_shortcut: 'update_translate_shortcut',
 };
 
+const defaultStorageInfo: StorageInfo = {
+  data_dir: '',
+  screenshot_dir: '',
+};
+
 export default function GeneralSettings() {
   const { t, i18n } = useTranslation();
   const [startup, setStartup] = useState(true);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [storageInfo, setStorageInfo] = useState<StorageInfo>(defaultStorageInfo);
   const [recordingField, setRecordingField] = useState<ShortcutField | null>(null);
   const [savingField, setSavingField] = useState<ShortcutField | null>(null);
   const [shortcutError, setShortcutError] = useState('');
+  const [generalError, setGeneralError] = useState('');
+  const [isUpdatingRetention, setIsUpdatingRetention] = useState(false);
+  const [isUpdatingAutostart, setIsUpdatingAutostart] = useState(false);
   const isMac = useMemo(
     () => /Mac|iPhone|iPad/i.test(navigator.platform),
     [],
@@ -29,10 +38,18 @@ export default function GeneralSettings() {
   );
 
   useEffect(() => {
-    void invoke<AppSettings>('get_app_settings')
-      .then(setSettings)
+    void Promise.all([
+      invoke<AppSettings>('get_app_settings'),
+      invoke<StorageInfo>('get_storage_info'),
+      invoke<{ enabled: boolean }>('get_autostart_status'),
+    ])
+      .then(([appSettings, storage, autostartStatus]) => {
+        setSettings(appSettings);
+        setStorageInfo(storage);
+        setStartup(autostartStatus.enabled);
+      })
       .catch((error: unknown) => {
-        setShortcutError(String(error));
+        setGeneralError(String(error));
       });
   }, []);
 
@@ -85,33 +102,35 @@ export default function GeneralSettings() {
     };
   }, [recordingField, t]);
 
+  const maxScreenshots = settings?.max_screenshots ?? 500;
+
   return (
     <div className="mx-auto max-w-5xl animate-in fade-in duration-500">
       <div className="grid grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-2 lg:gap-6">
-        <section className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-5 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2 sm:p-6 lg:p-8">
+        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2 sm:p-6 lg:p-8">
           <div className="mb-6 flex items-start justify-between gap-4 sm:mb-8">
             <div>
-              <h2 className="text-lg font-bold text-primary mb-1 font-headline">{t('general.systemLanguage')}</h2>
+              <h2 className="mb-1 font-headline text-lg font-bold text-primary">{t('general.systemLanguage')}</h2>
               <p className="text-sm text-on-surface-variant">{t('general.systemLanguageDesc')}</p>
             </div>
-            <div className="p-3 bg-primary/5 rounded-lg text-primary">
+            <div className="rounded-lg bg-primary/5 p-3 text-primary">
               <Globe size={24} />
             </div>
           </div>
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1 relative group">
-              <label className="block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant mb-2 ml-1">{t('general.interfaceLanguage')}</label>
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <div className="relative flex-1 group">
+              <label className="ml-1 mb-2 block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant">{t('general.interfaceLanguage')}</label>
               <div className="relative">
                 <select
                   value={i18n.language}
                   onChange={(e) => i18n.changeLanguage(e.target.value)}
-                  className="w-full bg-surface-container border border-outline-variant/30 rounded-xl py-3.5 px-4 text-sm appearance-none focus:ring-2 focus:ring-primary outline-none cursor-pointer text-on-surface font-medium transition-all"
+                  className="w-full cursor-pointer appearance-none rounded-xl border border-outline-variant/30 bg-surface-container px-4 py-3.5 text-sm font-medium text-on-surface outline-none transition-all focus:ring-2 focus:ring-primary"
                 >
                   <option value="en">English</option>
                   <option value="zh">简体中文</option>
                   <option value="ja">日本語</option>
                 </select>
-                <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-on-surface-variant">
+                <div className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-on-surface-variant">
                   <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M1.41 0.589966L6 5.16997L10.59 0.589966L12 1.99997L6 7.99997L0 1.99997L1.41 0.589966Z" fill="currentColor" />
                   </svg>
@@ -124,78 +143,115 @@ export default function GeneralSettings() {
         <section className="flex flex-col justify-between rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-shadow duration-300 hover:shadow-md sm:p-6 lg:p-8">
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="text-lg font-bold text-primary mb-1 font-headline">{t('general.appStartup')}</h2>
-              <p className="text-sm text-on-surface-variant leading-relaxed">{t('general.appStartupDesc')}</p>
+              <h2 className="mb-1 font-headline text-lg font-bold text-primary">{t('general.appStartup')}</h2>
+              <p className="text-sm leading-relaxed text-on-surface-variant">{t('general.appStartupDesc')}</p>
             </div>
-            <div className="p-3 bg-primary/5 rounded-lg text-primary">
+            <div className="rounded-lg bg-primary/5 p-3 text-primary">
               <Power size={24} />
             </div>
           </div>
-          <div className="mt-8 flex items-center justify-between">
+          <div className="mt-8 flex items-center justify-between gap-4">
             <span className="text-sm font-semibold text-on-surface">{t('general.launchAtStartup')}</span>
-            <Toggle checked={startup} onChange={setStartup} />
+            <div className="flex items-center gap-3">
+              {isUpdatingAutostart && <LoaderCircle size={16} className="animate-spin text-primary" />}
+              <Toggle
+                checked={startup}
+                onChange={(checked) => {
+                  setStartup(checked);
+                  setIsUpdatingAutostart(true);
+                  void invoke('set_autostart_enabled', { enabled: checked })
+                    .catch((error: unknown) => {
+                      setStartup(!checked);
+                      setGeneralError(String(error));
+                    })
+                    .finally(() => {
+                      setIsUpdatingAutostart(false);
+                    });
+                }}
+              />
+            </div>
           </div>
         </section>
 
-        <section className="flex flex-col justify-between rounded-xl bg-surface-container p-5 shadow-sm transition-shadow duration-300 hover:shadow-md sm:p-6 lg:p-8">
+        <section className="flex flex-col justify-between rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-shadow duration-300 hover:shadow-md sm:p-6 lg:p-8">
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="text-lg font-bold text-primary mb-1 font-headline">{t('general.dataRetention')}</h2>
-              <p className="text-sm text-on-surface-variant leading-relaxed">{t('general.dataRetentionDesc')}</p>
+              <h2 className="mb-1 font-headline text-lg font-bold text-primary">{t('general.dataRetention')}</h2>
+              <p className="text-sm leading-relaxed text-on-surface-variant">{t('general.dataRetentionDesc')}</p>
             </div>
-            <div className="p-3 bg-primary/5 rounded-lg text-primary">
+            <div className="rounded-lg bg-primary/5 p-3 text-primary">
               <Database size={24} />
             </div>
           </div>
           <div className="mt-8 space-y-4">
-            <div className="flex justify-between items-end">
+            <div className="flex items-end justify-between gap-4">
               <label htmlFor="retention" className="text-sm font-semibold text-on-surface">{t('general.maxScreenshots')}</label>
-              <span className="text-xl font-black text-primary font-headline">500 <span className="text-xs font-normal text-on-surface-variant">{t('general.items')}</span></span>
+              <span className="font-headline text-xl font-black text-primary">
+                {maxScreenshots} <span className="text-xs font-normal text-on-surface-variant">{t('general.items')}</span>
+              </span>
             </div>
             <input
               type="range"
               id="retention"
-              min="50"
+              min="10"
               max="1000"
-              defaultValue="500"
-              className="w-full h-1.5 bg-surface-container-highest rounded-lg appearance-none cursor-pointer accent-primary-container"
+              step="10"
+              value={maxScreenshots}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                setSettings((current) => current ? { ...current, max_screenshots: value } : current);
+                setIsUpdatingRetention(true);
+                void invoke<AppSettings>('update_max_screenshots', { maxScreenshots: value })
+                  .then((updated) => {
+                    setSettings(updated);
+                    setGeneralError('');
+                  })
+                  .catch((error: unknown) => {
+                    setGeneralError(String(error));
+                  })
+                  .finally(() => {
+                    setIsUpdatingRetention(false);
+                  });
+              }}
+              className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-surface-container-highest accent-primary-container"
             />
+            <div className="flex items-center justify-between text-xs text-on-surface-variant">
+              <span>10</span>
+              <span>{t('general.retentionHint')}</span>
+              <span>1000</span>
+            </div>
+            {isUpdatingRetention && (
+              <div className="flex items-center gap-2 text-xs text-primary">
+                <LoaderCircle size={14} className="animate-spin" />
+                {t('general.saving')}
+              </div>
+            )}
           </div>
         </section>
 
-        <section className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-5 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2 sm:p-6 lg:p-8">
+        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2 sm:p-6 lg:p-8">
           <div className="mb-6 flex items-start justify-between gap-4 sm:mb-8">
             <div>
-              <h2 className="text-lg font-bold text-primary mb-1 font-headline">{t('general.storagePath')}</h2>
+              <h2 className="mb-1 font-headline text-lg font-bold text-primary">{t('general.storagePath')}</h2>
               <p className="text-sm text-on-surface-variant">{t('general.storagePathDesc')}</p>
             </div>
-            <div className="p-3 bg-primary/5 rounded-lg text-primary">
+            <div className="rounded-lg bg-primary/5 p-3 text-primary">
               <FolderOpen size={24} />
             </div>
           </div>
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1 relative group">
-              <label className="block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant mb-2 ml-1">{t('general.screenshotSavePath')}</label>
-              <div className="flex min-w-0 items-center rounded-xl border border-transparent bg-surface-container px-4 py-3.5 transition-all group-focus-within:border-primary-container/30">
-                <FolderOpen className="text-on-surface-variant mr-3" size={18} />
-                <span className="truncate text-sm font-medium text-on-surface opacity-80">/Users/User/Pictures/Flick</span>
-              </div>
-            </div>
-            <div className="flex items-end">
-              <button className="w-full sm:w-auto h-[52px] px-6 bg-surface-container-highest text-primary font-bold text-sm rounded-xl hover:bg-primary hover:text-white transition-all duration-200">
-                {t('general.changePath')}
-              </button>
-            </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <StoragePathCard label={t('general.appDataDirectory')} path={storageInfo.data_dir} />
+            <StoragePathCard label={t('general.screenshotDirectory')} path={storageInfo.screenshot_dir} />
           </div>
         </section>
 
-        <section className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-5 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2 sm:p-6 lg:p-8">
+        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2 sm:p-6 lg:p-8">
           <div className="mb-6 flex items-start justify-between gap-4 sm:mb-8">
             <div>
-              <h2 className="text-lg font-bold text-primary mb-1 font-headline">{t('general.globalHotkeys')}</h2>
+              <h2 className="mb-1 font-headline text-lg font-bold text-primary">{t('general.globalHotkeys')}</h2>
               <p className="text-sm text-on-surface-variant">{t('general.globalHotkeysDesc')}</p>
             </div>
-            <div className="p-3 bg-primary/5 rounded-lg text-primary">
+            <div className="rounded-lg bg-primary/5 p-3 text-primary">
               <Keyboard size={24} />
             </div>
           </div>
@@ -228,16 +284,25 @@ export default function GeneralSettings() {
             />
           </div>
           <div className="mt-4 min-h-5 text-sm">
-            {recordingField && (
-              <p className="text-primary">
-                {t('general.pressShortcut')}
-              </p>
-            )}
-            {shortcutError && (
-              <p className="text-error">{shortcutError}</p>
-            )}
+            {recordingField && <p className="text-primary">{t('general.pressShortcut')}</p>}
+            {shortcutError && <p className="text-error">{shortcutError}</p>}
+            {!shortcutError && generalError && <p className="text-error">{generalError}</p>}
           </div>
         </section>
+      </div>
+    </div>
+  );
+}
+
+function StoragePathCard({ label, path }: { label: string; path: string }) {
+  return (
+    <div className="group relative">
+      <label className="ml-1 mb-2 block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant">{label}</label>
+      <div className="flex min-w-0 items-center rounded-xl bg-surface-container px-4 py-3.5">
+        <FolderOpen className="mr-3 shrink-0 text-on-surface-variant" size={18} />
+        <span className="truncate text-sm font-medium text-on-surface opacity-80" title={path}>
+          {path || '...'}
+        </span>
       </div>
     </div>
   );
@@ -269,18 +334,18 @@ function ShortcutCard({
   return (
     <div className="flex flex-col gap-4 rounded-xl bg-surface-container-low p-5 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex flex-col">
-        <span className="text-xs font-bold uppercase tracking-widest text-on-surface-variant opacity-70 mb-1">{label}</span>
+        <span className="mb-1 text-xs font-bold uppercase tracking-widest text-on-surface-variant opacity-70">{label}</span>
         <span className="text-sm font-bold text-on-surface">{actionLabel}</span>
       </div>
       <div className="flex flex-wrap items-center gap-4">
-        <div className="flex min-h-9 flex-wrap gap-1 items-center">
+        <div className="flex min-h-9 flex-wrap items-center gap-1">
           {isRecording ? (
             <span className="text-sm font-semibold text-primary">{recordingText}</span>
           ) : (
             tokens.map((token, index) => (
               <div key={`${token}-${index}`} className="flex items-center gap-1">
-                {index > 0 && <span className="text-on-surface-variant text-xs font-bold">+</span>}
-                <kbd className="px-2.5 py-1.5 bg-white text-primary border border-outline-variant/30 rounded-lg text-xs font-bold shadow-sm">
+                {index > 0 && <span className="text-xs font-bold text-on-surface-variant">+</span>}
+                <kbd className="rounded-lg border border-outline-variant/30 bg-white px-2.5 py-1.5 text-xs font-bold text-primary shadow-sm">
                   {token}
                 </kbd>
               </div>
@@ -290,7 +355,7 @@ function ShortcutCard({
         <button
           onClick={onEdit}
           disabled={isSaving}
-          className="p-2 text-primary hover:bg-white rounded-lg transition-colors shadow-sm disabled:opacity-50"
+          className="rounded-lg p-2 text-primary shadow-sm transition-colors hover:bg-white disabled:opacity-50"
         >
           {isSaving ? <LoaderCircle size={16} className="animate-spin" /> : <Edit2 size={16} />}
         </button>

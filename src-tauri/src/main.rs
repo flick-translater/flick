@@ -13,10 +13,11 @@ use std::{
 
 use commands::{
     cancel_capture, close_translation_widget, complete_capture, get_app_settings,
-    get_autostart_status, get_capture_context, get_translation_widget_pinned, list_capture_history,
-    minimize_translation_widget, mock_ocr, mock_translate, set_autostart_enabled,
-    set_shortcut_recording, set_translation_widget_pinned, show_translation_widget, start_capture,
-    update_capture_shortcut, update_translate_shortcut,
+    get_autostart_status, get_capture_context, get_storage_info, get_translation_widget_pinned,
+    list_capture_history, minimize_translation_widget, mock_ocr, mock_translate,
+    open_file_in_default_app, set_autostart_enabled, set_shortcut_recording,
+    set_translation_widget_pinned, show_translation_widget, start_capture,
+    update_capture_shortcut, update_max_screenshots, update_translate_shortcut,
 };
 use models::{AppSettings, CaptureContext, CaptureRecord};
 use services::{
@@ -39,6 +40,7 @@ pub struct AppState {
     pub capture_context: Mutex<CaptureContext>,
     pub capture_snapshots: Mutex<Vec<CachedScreenCapture>>,
     pub history: Mutex<VecDeque<CaptureRecord>>,
+    pub data_dir: PathBuf,
     pub screenshot_dir: PathBuf,
     pub settings_store: SettingsStore,
     pub settings: Mutex<AppSettings>,
@@ -80,6 +82,8 @@ fn main() {
             complete_capture,
             get_capture_context,
             list_capture_history,
+            get_storage_info,
+            open_file_in_default_app,
             get_app_settings,
             get_autostart_status,
             set_autostart_enabled,
@@ -90,6 +94,7 @@ fn main() {
             minimize_translation_widget,
             close_translation_widget,
             update_capture_shortcut,
+            update_max_screenshots,
             update_translate_shortcut,
             mock_ocr,
             mock_translate,
@@ -130,6 +135,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         capture_context: Mutex::new(CaptureContext::default()),
         capture_snapshots: Mutex::new(Vec::new()),
         history: Mutex::new(VecDeque::new()),
+        data_dir,
         screenshot_dir,
         settings_store,
         settings: Mutex::new(settings),

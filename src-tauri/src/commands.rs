@@ -1,6 +1,13 @@
-use std::{path::PathBuf, sync::MutexGuard, thread};
+use std::{
+    fs,
+    path::Path,
+    process::Command,
+    sync::MutexGuard,
+    thread,
+    time::SystemTime,
+};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
@@ -11,8 +18,8 @@ use crate::{
     ensure_capture_window, ensure_widget_window,
     error::FlickError,
     models::{
-        AppSettings, AutostartStatus, CaptureContext, CaptureRecord, OcrRequest, OcrResponse,
-        SelectionRect, TranslateRequest, TranslateResponse,
+        AppSettings, AutostartStatus, CaptureContext, CaptureHistory, CaptureRecord, OcrRequest,
+        OcrResponse, SelectionRect, StorageInfo, TranslateRequest, TranslateResponse,
     },
     services::{OcrService, ScreenCaptureService, TranslationService},
     show_widget_window,
@@ -116,12 +123,20 @@ pub fn complete_capture(
             };
 
             let state = app_handle.state::<AppState>();
+            let max_screenshots = state
+                .settings
+                .lock()
+                .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
+                .max_screenshots;
+            capture_service.save_png(&image, &path)?;
+            prune_capture_history(&screenshot_dir, max_screenshots)?;
+
             let mut history = state
                 .history
                 .lock()
                 .map_err(|_| FlickError::Message("history mutex poisoned".into()))?;
             history.push_front(record.clone());
-            history.truncate(3);
+            history.truncate(max_screenshots as usize);
             drop(history);
 
             emit_capture_status(&app_handle, "capture-finished", &record);
@@ -147,7 +162,6 @@ pub fn complete_capture(
                 show_widget_window(&app_handle)?;
                 let _ = widget.emit("translation-ready", payload);
             }
-            save_capture_async(image, path);
             Ok(())
         };
 
@@ -192,13 +206,120 @@ pub fn get_capture_context(
 }
 
 #[tauri::command]
-pub fn list_capture_history(state: State<'_, AppState>) -> Result<Vec<CaptureRecord>, FlickError> {
-    let history = state
-        .history
+pub fn list_capture_history(state: State<'_, AppState>) -> Result<CaptureHistory, FlickError> {
+    let max_screenshots = state
+        .settings
         .lock()
-        .map_err(|_| FlickError::Message("history mutex poisoned".into()))?;
+        .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
+        .max_screenshots;
 
-    Ok(history.iter().cloned().collect())
+    Ok(CaptureHistory {
+        directory: state.screenshot_dir.display().to_string(),
+        items: prune_capture_history(&state.screenshot_dir, max_screenshots)?,
+    })
+}
+
+#[tauri::command]
+pub fn get_storage_info(state: State<'_, AppState>) -> Result<StorageInfo, FlickError> {
+    Ok(StorageInfo {
+        data_dir: state.data_dir.display().to_string(),
+        screenshot_dir: state.screenshot_dir.display().to_string(),
+    })
+}
+
+#[tauri::command]
+pub fn open_file_in_default_app(path: String) -> Result<(), FlickError> {
+    if !Path::new(&path).exists() {
+        return Err(FlickError::Message("file does not exist".into()));
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(&path);
+        command
+    };
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", &path]);
+        command
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(&path);
+        command
+    };
+
+    command
+        .spawn()
+        .map_err(|error| FlickError::Message(format!("failed to open file: {error}")))?;
+
+    Ok(())
+}
+
+fn load_capture_history(screenshot_dir: &Path) -> Result<Vec<CaptureRecord>, FlickError> {
+    let mut records = Vec::new();
+    let entries = fs::read_dir(screenshot_dir)
+        .map_err(|error| FlickError::Message(format!("failed to read screenshot dir: {error}")))?;
+
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| FlickError::Message(format!("failed to read screenshot entry: {error}")))?;
+        let path = entry.path();
+
+        if !matches!(path.extension().and_then(|ext| ext.to_str()), Some("png")) {
+            continue;
+        }
+
+        let metadata = entry
+            .metadata()
+            .map_err(|error| FlickError::Message(format!("failed to read screenshot metadata: {error}")))?;
+        if !metadata.is_file() {
+            continue;
+        }
+
+        let (width, height) = image::image_dimensions(&path)
+            .map_err(|error| FlickError::Message(format!("failed to read screenshot dimensions: {error}")))?;
+        let created_at = metadata
+            .modified()
+            .map(DateTime::<Utc>::from)
+            .unwrap_or_else(|_| DateTime::<Utc>::from(SystemTime::UNIX_EPOCH));
+        let id = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+        records.push(CaptureRecord {
+            id,
+            created_at,
+            width,
+            height,
+            path: path.display().to_string(),
+        });
+    }
+
+    records.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    Ok(records)
+}
+
+fn prune_capture_history(
+    screenshot_dir: &Path,
+    max_screenshots: u32,
+) -> Result<Vec<CaptureRecord>, FlickError> {
+    let records = load_capture_history(screenshot_dir)?;
+    let keep_count = max_screenshots.max(1) as usize;
+
+    for record in records.iter().skip(keep_count) {
+        fs::remove_file(&record.path)
+            .map_err(|error| FlickError::Message(format!("failed to remove old screenshot: {error}")))?;
+    }
+
+    Ok(records.into_iter().take(keep_count).collect())
 }
 
 #[tauri::command]
@@ -304,6 +425,30 @@ pub fn update_translate_shortcut(
     shortcut: String,
 ) -> Result<AppSettings, FlickError> {
     update_shortcut(app, state, shortcut, ShortcutKind::Translate)
+}
+
+#[tauri::command]
+pub fn update_max_screenshots(
+    state: State<'_, AppState>,
+    max_screenshots: u32,
+) -> Result<AppSettings, FlickError> {
+    let normalized = max_screenshots.clamp(1, 1000);
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.max_screenshots = normalized;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    let _ = prune_capture_history(&state.screenshot_dir, normalized)?;
+    if let Ok(mut history) = state.history.lock() {
+        history.truncate(normalized as usize);
+    }
+
+    Ok(updated)
 }
 
 #[derive(Clone, Copy)]
@@ -529,12 +674,4 @@ fn lock_capture_context<'a>(
         .capture_context
         .lock()
         .map_err(|_| FlickError::Message("capture context mutex poisoned".into()))
-}
-
-fn save_capture_async(image: image::ImageBuffer<image::Rgba<u8>, Vec<u8>>, path: PathBuf) {
-    thread::spawn(move || {
-        if let Err(error) = image.save(&path) {
-            eprintln!("failed to save screenshot to {}: {}", path.display(), error);
-        }
-    });
 }

@@ -3,6 +3,7 @@ export type ViewState = 'general' | 'history' | 'ocr' | 'ai';
 export type AppSettings = {
   capture_shortcut: string;
   translate_shortcut: string;
+  max_screenshots: number;
 };
 
 export type TranslationPayload = {
@@ -12,4 +13,22 @@ export type TranslationPayload = {
   provider: string;
   detectedSourceLanguage?: string | null;
   targetLanguage: string;
+};
+
+export type CaptureRecord = {
+  id: string;
+  created_at: string;
+  width: number;
+  height: number;
+  path: string;
+};
+
+export type CaptureHistory = {
+  directory: string;
+  items: CaptureRecord[];
+};
+
+export type StorageInfo = {
+  data_dir: string;
+  screenshot_dir: string;
 };

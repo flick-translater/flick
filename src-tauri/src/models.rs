@@ -27,6 +27,18 @@ pub struct CaptureRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureHistory {
+    pub directory: String,
+    pub items: Vec<CaptureRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageInfo {
+    pub data_dir: String,
+    pub screenshot_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutostartStatus {
     pub enabled: bool,
     pub supported: bool,
@@ -70,6 +82,7 @@ pub struct TranslateResponse {
 pub struct AppSettings {
     pub capture_shortcut: String,
     pub translate_shortcut: String,
+    pub max_screenshots: u32,
 }
 
 impl Default for AppSettings {
@@ -77,6 +90,7 @@ impl Default for AppSettings {
         Self {
             capture_shortcut: "CommandOrControl+Alt+A".into(),
             translate_shortcut: "CommandOrControl+Alt+T".into(),
+            max_screenshots: 500,
         }
     }
 }
