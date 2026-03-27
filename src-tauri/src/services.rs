@@ -42,15 +42,14 @@ impl ScreenCaptureService {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn capture_selection_below_window(
+    pub fn capture_selection_on_screen(
         &self,
         selection: &SelectionRect,
-        window_number: u32,
     ) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
         use core_graphics::{
             geometry::{CGPoint, CGRect, CGSize},
             window::{
-                create_image, kCGWindowImageDefault, kCGWindowListOptionOnScreenBelowWindow,
+                create_image, kCGNullWindowID, kCGWindowImageDefault, kCGWindowListOptionOnScreenOnly,
             },
         };
 
@@ -65,11 +64,11 @@ impl ScreenCaptureService {
 
         let cg_image = create_image(
             rect,
-            kCGWindowListOptionOnScreenBelowWindow,
-            window_number,
+            kCGWindowListOptionOnScreenOnly,
+            kCGNullWindowID,
             kCGWindowImageDefault,
         )
-        .ok_or_else(|| anyhow!("failed to capture selection below overlay window"))?;
+        .ok_or_else(|| anyhow!("failed to capture on-screen selection"))?;
 
         let width = cg_image.width();
         let height = cg_image.height();

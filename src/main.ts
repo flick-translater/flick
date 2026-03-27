@@ -100,6 +100,12 @@ function setStatus(message: string) {
   }
 }
 
+function formatShortcutLabel(shortcut: string) {
+  return shortcut
+    .replaceAll('CommandOrControl', 'Command/Ctrl')
+    .replaceAll('Alt', 'Option/Alt');
+}
+
 function renderHistory(items: CaptureRecord[]) {
   if (!history || !historyCount) {
     return;
@@ -143,7 +149,7 @@ async function refreshState() {
   }
 
   if (shortcutValue) {
-    shortcutValue.textContent = settings.capture_shortcut;
+    shortcutValue.textContent = formatShortcutLabel(settings.capture_shortcut);
   }
 
   if (shortcutInput) {
@@ -173,10 +179,19 @@ saveShortcutButton?.addEventListener('click', async () => {
     return;
   }
 
-  setStatus('正在保存快捷键');
-  await invoke<AppSettings>('update_capture_shortcut', { shortcut });
-  await refreshState();
-  setStatus('快捷键已更新');
+  try {
+    setStatus('正在保存快捷键');
+    await invoke<AppSettings>('update_capture_shortcut', { shortcut });
+    await refreshState();
+    setStatus('快捷键已更新');
+  } catch (error: unknown) {
+    const message = String(error);
+    if (message.includes('already registered') || message.includes('already in use')) {
+      setStatus('快捷键已被其他应用占用');
+      return;
+    }
+    setStatus(`快捷键保存失败: ${message}`);
+  }
 });
 
 void listen('capture-finished', async () => {

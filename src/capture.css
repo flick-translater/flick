@@ -27,7 +27,7 @@ body.capture-ready {
 
 .overlay {
   position: relative;
-  background: rgba(17, 16, 16, 0.2);
+  background: transparent;
   pointer-events: none;
 }
 
@@ -42,17 +42,21 @@ body.capture-ready .overlay {
   transform: translateX(-50%);
   padding: 10px 16px;
   border-radius: 999px;
-  background: rgba(16, 16, 16, 0.72);
-  color: #f5efe8;
+  background: rgba(16, 83, 211, 0.9);
+  color: #f5fbff;
   font-size: 14px;
   letter-spacing: 0.02em;
+  box-shadow: 0 12px 36px rgba(13, 63, 152, 0.22);
 }
 
 .selection {
   position: absolute;
-  border: 2px solid rgba(255, 255, 255, 0.95);
-  background: rgba(250, 249, 247, 0.14);
-  box-shadow: 0 0 0 9999px rgba(10, 10, 10, 0.42);
+  border: 2px solid rgba(24, 118, 242, 0.96);
+  background: rgba(66, 153, 255, 0.1);
+  box-shadow:
+    0 0 0 1px rgba(222, 241, 255, 0.9) inset,
+    0 0 0 9999px rgba(20, 110, 236, 0.08);
+  backdrop-filter: saturate(1.08);
 }
 
 .hidden {
@@ -70,7 +74,7 @@ body.capture-ready .overlay {
   left: 0;
   width: 100%;
   height: 1px;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(39, 126, 239, 0.42);
 }
 
 .crosshair-y {
@@ -78,5 +82,5 @@ body.capture-ready .overlay {
   top: 0;
   width: 1px;
   height: 100%;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(39, 126, 239, 0.42);
 }

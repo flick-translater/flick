@@ -1,4 +1,4 @@
-use std::sync::MutexGuard;
+use std::{path::PathBuf, sync::MutexGuard, thread};
 
 use chrono::Utc;
 use tauri::{AppHandle, Manager, State};
@@ -13,7 +13,7 @@ use crate::{
         AppSettings, AutostartStatus, CaptureContext, CaptureRecord, OcrRequest, OcrResponse, SelectionRect,
         TranslateRequest, TranslateResponse,
     },
-    services::{OcrService, TranslationService},
+    services::{OcrService, ScreenCaptureService, TranslationService},
 };
 
 #[tauri::command]
@@ -42,73 +42,91 @@ pub fn complete_capture(
     app: AppHandle,
     state: State<'_, AppState>,
     selection: SelectionRect,
-) -> Result<CaptureRecord, FlickError> {
+) -> Result<(), FlickError> {
+    let screenshot_dir = state.screenshot_dir.clone();
+
+    #[cfg(not(target_os = "macos"))]
+    let cached_screens = {
+        let snapshots = state
+            .capture_snapshots
+            .lock()
+            .map_err(|_| FlickError::Message("capture snapshots mutex poisoned".into()))?;
+        snapshots.clone()
+    };
+
     #[cfg(target_os = "macos")]
-    let image = {
+    {
         use objc2_app_kit::NSWindow;
 
         let overlay = app
             .get_webview_window(CAPTURE_WINDOW_LABEL)
             .ok_or_else(|| FlickError::Message("capture overlay window not found".into()))?;
-        let ns_window = overlay.ns_window()?;
-        let window: &NSWindow = unsafe { &*ns_window.cast() };
-        let window_number = window.windowNumber() as u32;
-        let image = state
-            .capture_service
-            .capture_selection_below_window(&selection, window_number)?;
-        overlay.hide()?;
-        image
-    };
+        let ns_window = overlay.ns_window()? as usize;
+        app.run_on_main_thread(move || {
+            let window: &NSWindow = unsafe { &*(ns_window as *mut std::ffi::c_void).cast() };
+            window.orderOut(None);
+        })?;
+    }
 
     #[cfg(not(target_os = "macos"))]
-    let image = {
+    {
         if let Some(window) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
             window.hide()?;
         }
-
-        let image = {
-            let snapshots = state
-                .capture_snapshots
-                .lock()
-                .map_err(|_| FlickError::Message("capture snapshots mutex poisoned".into()))?;
-            state.capture_service.capture_selection(&selection, &snapshots)?
-        };
-
         if let Ok(mut guard) = state.capture_snapshots.lock() {
             guard.clear();
         }
-
-        image
-    };
-    state.capture_service.copy_to_clipboard(&image)?;
-
-    let id = Uuid::new_v4().to_string();
-    let created_at = Utc::now();
-    let path = state
-        .screenshot_dir
-        .join(format!("{}-{}.png", created_at.format("%Y%m%d-%H%M%S"), &id[..8]));
-
-    state.capture_service.save_png(&image, &path)?;
-
-    let record = CaptureRecord {
-        id,
-        created_at,
-        width: image.width(),
-        height: image.height(),
-        path: path.display().to_string(),
-    };
-
-    let mut history = state.history.lock().map_err(|_| FlickError::Message("history mutex poisoned".into()))?;
-    history.push_front(record.clone());
-    history.truncate(20);
-
-    emit_capture_status(&app, "capture-finished", &record);
-
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
     }
 
-    Ok(record)
+    let app_handle = app.clone();
+    thread::spawn(move || {
+        let run = || -> Result<(), FlickError> {
+            let capture_service = ScreenCaptureService::default();
+
+            #[cfg(target_os = "macos")]
+            let image = capture_service.capture_selection_on_screen(&selection)?;
+
+            #[cfg(not(target_os = "macos"))]
+            let image = capture_service.capture_selection(&selection, &cached_screens)?;
+
+            capture_service.copy_to_clipboard(&image)?;
+
+            let id = Uuid::new_v4().to_string();
+            let created_at = Utc::now();
+            let path = screenshot_dir.join(format!(
+                "{}-{}.png",
+                created_at.format("%Y%m%d-%H%M%S"),
+                &id[..8]
+            ));
+
+            let record = CaptureRecord {
+                id,
+                created_at,
+                width: image.width(),
+                height: image.height(),
+                path: path.display().to_string(),
+            };
+
+            let state = app_handle.state::<AppState>();
+            let mut history = state
+                .history
+                .lock()
+                .map_err(|_| FlickError::Message("history mutex poisoned".into()))?;
+            history.push_front(record.clone());
+            history.truncate(20);
+            drop(history);
+
+            emit_capture_status(&app_handle, "capture-finished", &record);
+            save_capture_async(image, path);
+            Ok(())
+        };
+
+        if let Err(error) = run() {
+            emit_capture_status(&app_handle, "capture-error", error.to_string());
+        }
+    });
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -187,11 +205,22 @@ pub fn update_capture_shortcut(
     if global_shortcut.is_registered(current.as_str()) {
         global_shortcut.unregister(current.as_str())?;
     }
-    global_shortcut.on_shortcut(normalized.as_str(), |app, _, event| {
+    if let Err(error) = global_shortcut.on_shortcut(normalized.as_str(), |app, _, event| {
         if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-            let _ = open_capture_overlay(app);
+            let state = app.state::<AppState>();
+            let _ = begin_capture_session(app, &state);
         }
-    })?;
+    }) {
+        if !current.is_empty() {
+            let _ = global_shortcut.on_shortcut(current.as_str(), |app, _, event| {
+                if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                    let state = app.state::<AppState>();
+                    let _ = begin_capture_session(app, &state);
+                }
+            });
+        }
+        return Err(FlickError::Message(format!("快捷键注册失败，可能已被其他应用占用: {error}")));
+    }
 
     let updated = {
         let mut settings = state
@@ -303,4 +332,15 @@ fn lock_capture_context<'a>(
         .capture_context
         .lock()
         .map_err(|_| FlickError::Message("capture context mutex poisoned".into()))
+}
+
+fn save_capture_async(
+    image: image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    path: PathBuf,
+) {
+    thread::spawn(move || {
+        if let Err(error) = image.save(&path) {
+            eprintln!("failed to save screenshot to {}: {}", path.display(), error);
+        }
+    });
 }
