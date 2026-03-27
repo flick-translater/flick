@@ -1,0 +1,78 @@
+:root {
+  font-family: "SF Pro Display", "PingFang SC", sans-serif;
+}
+
+html,
+body,
+#capture-root,
+.overlay {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  user-select: none;
+  cursor: wait;
+}
+
+body.capture-ready {
+  cursor: crosshair;
+}
+
+.overlay {
+  position: relative;
+  background: rgba(17, 16, 16, 0.2);
+  pointer-events: none;
+}
+
+body.capture-ready .overlay {
+  pointer-events: auto;
+}
+
+.hint {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(16, 16, 16, 0.72);
+  color: #f5efe8;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.selection {
+  position: absolute;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  background: rgba(250, 249, 247, 0.14);
+  box-shadow: 0 0 0 9999px rgba(10, 10, 10, 0.42);
+}
+
+.hidden {
+  display: none;
+}
+
+.crosshair-x,
+.crosshair-y {
+  position: absolute;
+  pointer-events: none;
+}
+
+.crosshair-x {
+  top: var(--crosshair-y, 0);
+  left: 0;
+  width: 100%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.crosshair-y {
+  left: var(--crosshair-x, 0);
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.55);
+}
