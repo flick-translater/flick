@@ -15,10 +15,10 @@ use commands::{
     cancel_capture, clear_all_captures, close_translation_widget, complete_capture, delete_capture,
     get_app_settings, get_autostart_status, get_capture_context, get_storage_info,
     get_translation_widget_pinned, list_capture_history, minimize_translation_widget, mock_ocr,
-    mock_translate, open_file_in_default_app, read_image_as_data_url, set_autostart_enabled,
-    set_shortcut_recording, set_translation_widget_pinned, show_translation_widget, start_capture,
-    update_capture_shortcut, update_interface_language, update_max_screenshots,
-    update_translate_shortcut,
+    mock_translate, open_file_in_default_app, pick_screenshot_directory, read_image_as_data_url,
+    set_autostart_enabled, set_shortcut_recording, set_translation_widget_pinned,
+    show_translation_widget, start_capture, update_capture_shortcut, update_interface_language,
+    update_max_screenshots, update_screenshot_directory, update_translate_shortcut,
 };
 use models::{AppSettings, CaptureContext, CaptureRecord};
 use services::{
@@ -42,7 +42,7 @@ pub struct AppState {
     pub capture_snapshots: Mutex<Vec<CachedScreenCapture>>,
     pub history: Mutex<VecDeque<CaptureRecord>>,
     pub data_dir: PathBuf,
-    pub screenshot_dir: PathBuf,
+    pub screenshot_dir: Mutex<PathBuf>,
     pub settings_store: SettingsStore,
     pub settings: Mutex<AppSettings>,
     pub capture_intent: Mutex<CaptureIntent>,
@@ -86,6 +86,7 @@ fn main() {
             get_capture_context,
             list_capture_history,
             get_storage_info,
+            pick_screenshot_directory,
             open_file_in_default_app,
             read_image_as_data_url,
             get_app_settings,
@@ -100,6 +101,7 @@ fn main() {
             update_capture_shortcut,
             update_interface_language,
             update_max_screenshots,
+            update_screenshot_directory,
             update_translate_shortcut,
             mock_ocr,
             mock_translate,
@@ -131,8 +133,6 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         })
         .map_err(anyhow::Error::from)?;
 
-    let screenshot_dir = data_dir.join("captures");
-    std::fs::create_dir_all(&screenshot_dir)?;
     let settings_store = SettingsStore::new(data_dir.join("settings.json"));
     let mut settings = settings_store.load_settings()?;
     if !settings.interface_language_set {
@@ -140,13 +140,20 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         settings.interface_language_set = false;
         settings_store.save_settings(&settings)?;
     }
+    let default_screenshot_dir = data_dir.join("captures");
+    let screenshot_dir = if settings.screenshot_directory.trim().is_empty() {
+        default_screenshot_dir
+    } else {
+        PathBuf::from(&settings.screenshot_directory)
+    };
+    std::fs::create_dir_all(&screenshot_dir)?;
 
     Ok(AppState {
         capture_context: Mutex::new(CaptureContext::default()),
         capture_snapshots: Mutex::new(Vec::new()),
         history: Mutex::new(VecDeque::new()),
         data_dir,
-        screenshot_dir,
+        screenshot_dir: Mutex::new(screenshot_dir),
         settings_store,
         settings: Mutex::new(settings),
         capture_intent: Mutex::new(CaptureIntent::Capture),

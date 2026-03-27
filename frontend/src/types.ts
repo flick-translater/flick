@@ -6,6 +6,7 @@ export type AppSettings = {
   max_screenshots: number;
   interface_language: string;
   interface_language_set: boolean;
+  screenshot_directory: string;
 };
 
 export type TranslationPayload = {

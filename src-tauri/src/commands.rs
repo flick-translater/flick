@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
     sync::MutexGuard,
     thread,
@@ -53,7 +53,7 @@ pub fn complete_capture(
     state: State<'_, AppState>,
     selection: SelectionRect,
 ) -> Result<(), FlickError> {
-    let screenshot_dir = state.screenshot_dir.clone();
+    let screenshot_dir = current_screenshot_dir(&state)?;
     let intent = *state
         .capture_intent
         .lock()
@@ -213,19 +213,29 @@ pub fn list_capture_history(state: State<'_, AppState>) -> Result<CaptureHistory
         .lock()
         .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
         .max_screenshots;
+    let screenshot_dir = current_screenshot_dir(&state)?;
 
     Ok(CaptureHistory {
-        directory: state.screenshot_dir.display().to_string(),
-        items: prune_capture_history(&state.screenshot_dir, max_screenshots)?,
+        directory: screenshot_dir.display().to_string(),
+        items: prune_capture_history(&screenshot_dir, max_screenshots)?,
     })
 }
 
 #[tauri::command]
 pub fn get_storage_info(state: State<'_, AppState>) -> Result<StorageInfo, FlickError> {
+    let screenshot_dir = current_screenshot_dir(&state)?;
     Ok(StorageInfo {
         data_dir: state.data_dir.display().to_string(),
-        screenshot_dir: state.screenshot_dir.display().to_string(),
+        screenshot_dir: screenshot_dir.display().to_string(),
     })
+}
+
+#[tauri::command]
+pub fn pick_screenshot_directory() -> Result<Option<String>, FlickError> {
+    Ok(rfd::FileDialog::new()
+        .set_title("Select Screenshot Directory")
+        .pick_folder()
+        .map(|path| path.display().to_string()))
 }
 
 #[tauri::command]
@@ -273,9 +283,9 @@ pub fn read_image_as_data_url(path: String) -> Result<String, FlickError> {
 #[tauri::command]
 pub fn delete_capture(state: State<'_, AppState>, path: String) -> Result<(), FlickError> {
     let capture_path = Path::new(&path);
-    let screenshot_dir = &state.screenshot_dir;
+    let screenshot_dir = current_screenshot_dir(&state)?;
 
-    if !capture_path.starts_with(screenshot_dir) {
+    if !capture_path.starts_with(&screenshot_dir) {
         return Err(FlickError::Message("capture path is outside screenshot directory".into()));
     }
 
@@ -295,11 +305,12 @@ pub fn delete_capture(state: State<'_, AppState>, path: String) -> Result<(), Fl
 
 #[tauri::command]
 pub fn clear_all_captures(state: State<'_, AppState>) -> Result<(), FlickError> {
-    let records = load_capture_history(&state.screenshot_dir)?;
+    let screenshot_dir = current_screenshot_dir(&state)?;
+    let records = load_capture_history(&screenshot_dir)?;
 
     for record in records {
         let capture_path = Path::new(&record.path);
-        if capture_path.starts_with(&state.screenshot_dir) && capture_path.exists() {
+        if capture_path.starts_with(&screenshot_dir) && capture_path.exists() {
             fs::remove_file(capture_path)
                 .map_err(|error| FlickError::Message(format!("failed to delete capture: {error}")))?;
         }
@@ -494,7 +505,8 @@ pub fn update_max_screenshots(
     };
 
     state.settings_store.save_settings(&updated)?;
-    let _ = prune_capture_history(&state.screenshot_dir, normalized)?;
+    let screenshot_dir = current_screenshot_dir(&state)?;
+    let _ = prune_capture_history(&screenshot_dir, normalized)?;
     if let Ok(mut history) = state.history.lock() {
         history.truncate(normalized as usize);
     }
@@ -521,6 +533,41 @@ pub fn update_interface_language(
             .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
         settings.interface_language = normalized;
         settings.interface_language_set = true;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn update_screenshot_directory(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = path.trim();
+    if normalized.is_empty() {
+        return Err(FlickError::Message("screenshot directory cannot be empty".into()));
+    }
+
+    let next_dir = PathBuf::from(normalized);
+    fs::create_dir_all(&next_dir)
+        .map_err(|error| FlickError::Message(format!("failed to create screenshot directory: {error}")))?;
+
+    {
+        let mut screenshot_dir = state
+            .screenshot_dir
+            .lock()
+            .map_err(|_| FlickError::Message("screenshot dir mutex poisoned".into()))?;
+        *screenshot_dir = next_dir.clone();
+    }
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.screenshot_directory = next_dir.display().to_string();
         settings.clone()
     };
 
@@ -751,4 +798,12 @@ fn lock_capture_context<'a>(
         .capture_context
         .lock()
         .map_err(|_| FlickError::Message("capture context mutex poisoned".into()))
+}
+
+fn current_screenshot_dir(state: &State<'_, AppState>) -> Result<PathBuf, FlickError> {
+    state
+        .screenshot_dir
+        .lock()
+        .map_err(|_| FlickError::Message("screenshot dir mutex poisoned".into()))
+        .map(|path| path.clone())
 }

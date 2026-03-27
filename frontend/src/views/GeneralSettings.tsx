@@ -27,6 +27,7 @@ export default function GeneralSettings() {
   const [shortcutError, setShortcutError] = useState('');
   const [generalError, setGeneralError] = useState('');
   const [isUpdatingAutostart, setIsUpdatingAutostart] = useState(false);
+  const [isPickingDirectory, setIsPickingDirectory] = useState(false);
   const isMac = useMemo(
     () => /Mac|iPhone|iPad/i.test(navigator.platform),
     [],
@@ -239,9 +240,41 @@ export default function GeneralSettings() {
               <FolderOpen size={24} />
             </div>
           </div>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <StoragePathCard label={t('general.appDataDirectory')} path={storageInfo.data_dir} />
-            <StoragePathCard label={t('general.screenshotDirectory')} path={storageInfo.screenshot_dir} />
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <div className="flex-1">
+              <StoragePathCard label={t('general.screenshotDirectory')} path={storageInfo.screenshot_dir} />
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                disabled={isPickingDirectory}
+                onClick={() => {
+                  setIsPickingDirectory(true);
+                  void invoke<string | null>('pick_screenshot_directory')
+                    .then((path) => {
+                      if (!path) {
+                        return null;
+                      }
+
+                      return invoke<AppSettings>('update_screenshot_directory', { path })
+                        .then((updated) => {
+                          setSettings(updated);
+                          setStorageInfo((current) => ({ ...current, screenshot_dir: path }));
+                          setGeneralError('');
+                        });
+                    })
+                    .catch((error: unknown) => {
+                      setGeneralError(String(error));
+                    })
+                    .finally(() => {
+                      setIsPickingDirectory(false);
+                    });
+                }}
+                className="h-[52px] rounded-xl bg-surface-container-highest px-6 text-sm font-bold text-primary transition-all duration-200 hover:bg-primary hover:text-white disabled:opacity-50"
+              >
+                {t('general.changePath')}
+              </button>
+            </div>
           </div>
         </section>
 

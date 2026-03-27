@@ -85,6 +85,7 @@ pub struct AppSettings {
     pub max_screenshots: u32,
     pub interface_language: String,
     pub interface_language_set: bool,
+    pub screenshot_directory: String,
 }
 
 impl Default for AppSettings {
@@ -95,6 +96,7 @@ impl Default for AppSettings {
             max_screenshots: 500,
             interface_language: "en".into(),
             interface_language_set: false,
+            screenshot_directory: String::new(),
         }
     }
 }
