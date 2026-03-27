@@ -7,6 +7,10 @@ import './index.css';
 import './i18n/config';
 import { TranslationPayload } from './types';
 
+window.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+});
+
 const placeholderPayload: TranslationPayload = {
   imagePath: '',
   sourceText: '等待翻译结果',

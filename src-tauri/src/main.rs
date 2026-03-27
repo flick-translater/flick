@@ -332,6 +332,7 @@ pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow
 
     WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
         .title("Flick")
+        .devtools(false)
         .inner_size(1240.0, 800.0)
         .min_inner_size(1040.0, 680.0)
         .resizable(true)
@@ -392,6 +393,7 @@ pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWind
         WebviewUrl::App("translation-window.html".into()),
     )
     .title("Flick Widget")
+    .devtools(false)
     .inner_size(480.0, 640.0)
     .min_inner_size(360.0, 480.0)
     .resizable(true)

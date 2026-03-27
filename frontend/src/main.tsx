@@ -6,6 +6,10 @@ import './index.css';
 import { normalizeLanguage, setupI18n } from './i18n/config';
 import type { AppSettings } from './types';
 
+window.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+});
+
 async function bootstrap() {
   let initialLanguage = normalizeLanguage(navigator.language);
 
