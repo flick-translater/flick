@@ -13,14 +13,17 @@ use std::{
 
 use commands::{
     cancel_capture, clear_all_captures, close_translation_widget, complete_capture, delete_capture,
-    get_app_settings, get_autostart_status, get_capture_context, get_storage_info, refresh_capture_context,
+    focus_capture_window, get_app_settings, get_autostart_status, get_capture_context,
+    get_global_cursor_position,
+    get_storage_info,
+    refresh_capture_context,
     get_translation_widget_pinned, list_capture_history, minimize_translation_widget, mock_ocr,
     mock_translate, open_file_in_default_app, pick_screenshot_directory, read_image_as_data_url,
     set_autostart_enabled, set_shortcut_recording, set_translation_widget_pinned,
     show_translation_widget, start_capture, update_capture_shortcut, update_interface_language,
     update_max_screenshots, update_screenshot_directory, update_translate_shortcut,
 };
-use models::{AppSettings, CaptureContext, CaptureRecord};
+use models::{AppSettings, CaptureContexts, CaptureRecord};
 use services::{
     CachedScreenCapture, MockOcrService, MockTranslationService, ScreenCaptureService,
     SettingsStore,
@@ -35,10 +38,10 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 
 const MAIN_WINDOW_LABEL: &str = "main";
-const CAPTURE_WINDOW_LABEL: &str = "capture";
+const CAPTURE_WINDOW_LABEL_PREFIX: &str = "capture";
 const WIDGET_WINDOW_LABEL: &str = "widget";
 pub struct AppState {
-    pub capture_context: Mutex<CaptureContext>,
+    pub capture_contexts: Mutex<CaptureContexts>,
     pub capture_snapshots: Mutex<Vec<CachedScreenCapture>>,
     pub history: Mutex<VecDeque<CaptureRecord>>,
     pub data_dir: PathBuf,
@@ -70,7 +73,7 @@ fn main() {
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Regular);
             ensure_main_window(app.handle())?;
-            ensure_capture_window(app.handle())?;
+            initialize_capture_windows(app.handle())?;
             ensure_widget_window(app.handle())?;
             let state = build_state(app.handle())?;
             app.manage(state);
@@ -83,8 +86,10 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             start_capture,
+            focus_capture_window,
             cancel_capture,
             complete_capture,
+            get_global_cursor_position,
             delete_capture,
             clear_all_captures,
             refresh_capture_context,
@@ -154,7 +159,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
     std::fs::create_dir_all(&screenshot_dir)?;
 
     Ok(AppState {
-        capture_context: Mutex::new(CaptureContext::default()),
+        capture_contexts: Mutex::new(CaptureContexts::default()),
         capture_snapshots: Mutex::new(Vec::new()),
         history: Mutex::new(VecDeque::new()),
         data_dir,
@@ -230,7 +235,6 @@ pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyho
 
     for shortcut in [&settings.capture_shortcut, &settings.translate_shortcut] {
         if global_shortcut.is_registered(shortcut.as_str()) {
-            eprintln!("[shortcut] unregister existing binding: {}", shortcut);
             global_shortcut.unregister(shortcut.as_str())?;
         }
     }
@@ -338,14 +342,22 @@ pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow
         .build()
 }
 
-pub fn ensure_capture_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
-    if let Some(window) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
+pub fn capture_window_label(index: usize) -> String {
+    format!("{CAPTURE_WINDOW_LABEL_PREFIX}-{index}")
+}
+
+pub fn is_capture_window_label(label: &str) -> bool {
+    label.starts_with(&format!("{CAPTURE_WINDOW_LABEL_PREFIX}-"))
+}
+
+pub fn ensure_capture_window(app: &AppHandle, label: &str) -> tauri::Result<tauri::WebviewWindow> {
+    if let Some(window) = app.get_webview_window(label) {
         return Ok(window);
     }
 
     WebviewWindowBuilder::new(
         app,
-        CAPTURE_WINDOW_LABEL,
+        label,
         WebviewUrl::App("capture.html".into()),
     )
     .transparent(true)
@@ -356,6 +368,15 @@ pub fn ensure_capture_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWin
     .visible(false)
     .resizable(false)
     .build()
+}
+
+fn initialize_capture_windows(app: &AppHandle) -> tauri::Result<()> {
+    let monitors = app.available_monitors()?;
+    for index in 0..monitors.len() {
+        let label = capture_window_label(index);
+        ensure_capture_window(app, &label)?;
+    }
+    Ok(())
 }
 
 pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {

@@ -15,12 +15,12 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
 use uuid::Uuid;
 
 use crate::{
-    AppState, CAPTURE_WINDOW_LABEL, CaptureIntent, apply_shortcut_bindings, emit_capture_status,
-    ensure_capture_window, ensure_widget_window,
+    AppState, CaptureIntent, apply_shortcut_bindings, capture_window_label, emit_capture_status,
+    ensure_capture_window, ensure_widget_window, is_capture_window_label,
     error::FlickError,
     models::{
-        AppSettings, AutostartStatus, CaptureContext, CaptureHistory, CaptureRecord, OcrRequest,
-        OcrResponse, SelectionRect, StorageInfo, TranslateRequest, TranslateResponse,
+        AppSettings, AutostartStatus, CaptureContext, CaptureHistory, CaptureRecord, CursorPosition,
+        OcrRequest, OcrResponse, SelectionRect, StorageInfo, TranslateRequest, TranslateResponse,
     },
     services::{OcrService, ScreenCaptureService, TranslationService},
     show_widget_window,
@@ -32,8 +32,83 @@ pub fn start_capture(app: AppHandle, state: State<'_, AppState>) -> Result<(), F
 }
 
 #[tauri::command]
+pub fn focus_capture_window(app: AppHandle, label: String) -> Result<(), FlickError> {
+    let mut target_window = None;
+    for (_, window) in app
+        .webview_windows()
+        .into_iter()
+        .filter(|(window_label, _)| is_capture_window_label(window_label))
+    {
+        let is_target = window.label() == label;
+        let _ = window.set_focusable(is_target);
+        if is_target {
+            target_window = Some(window);
+        }
+    }
+
+    let window = target_window
+        .ok_or_else(|| FlickError::Message(format!("capture window not found: {label}")))?;
+    window.set_focus()?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn current_global_cursor_position(app: &AppHandle) -> Result<CursorPosition, FlickError> {
+    use objc2_app_kit::NSEvent;
+
+    let location = NSEvent::mouseLocation();
+    let monitors = app.available_monitors()?;
+    let logical_monitors = monitors
+        .iter()
+        .map(|monitor| {
+            let scale = monitor.scale_factor();
+            let x = monitor.position().x as f64 / scale;
+            let y = monitor.position().y as f64 / scale;
+            let width = monitor.size().width as f64 / scale;
+            let height = monitor.size().height as f64 / scale;
+            (x, y, width, height)
+        })
+        .collect::<Vec<_>>();
+    let min_y = logical_monitors
+        .iter()
+        .map(|(_, y, _, _)| *y)
+        .reduce(f64::min)
+        .unwrap_or(0.0);
+    let max_y = logical_monitors
+        .iter()
+        .map(|(_, y, _, height)| y + height)
+        .reduce(f64::max)
+        .unwrap_or(0.0);
+
+    let x = location.x;
+    let y = max_y - location.y + min_y;
+    Ok(CursorPosition { x, y })
+}
+
+#[tauri::command]
+pub fn get_global_cursor_position(app: AppHandle) -> Result<CursorPosition, FlickError> {
+    #[cfg(target_os = "macos")]
+    {
+        return current_global_cursor_position(&app);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err(FlickError::Message(
+            "global cursor position is only implemented on macOS".into(),
+        ))
+    }
+}
+
+#[tauri::command]
 pub fn cancel_capture(app: AppHandle) -> Result<(), FlickError> {
-    if let Some(window) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
+    emit_capture_event_to_windows(&app, "capture-ended", "cancelled");
+    for (_, window) in app
+        .webview_windows()
+        .into_iter()
+        .filter(|(label, _)| is_capture_window_label(label))
+    {
         window.hide()?;
     }
 
@@ -78,19 +153,30 @@ pub fn complete_capture(
     {
         use objc2_app_kit::NSWindow;
 
-        let overlay = app
-            .get_webview_window(CAPTURE_WINDOW_LABEL)
-            .ok_or_else(|| FlickError::Message("capture overlay window not found".into()))?;
-        let ns_window = overlay.ns_window()? as usize;
-        app.run_on_main_thread(move || {
-            let window: &NSWindow = unsafe { &*(ns_window as *mut std::ffi::c_void).cast() };
-            window.orderOut(None);
-        })?;
+        emit_capture_event_to_windows(&app, "capture-ended", "finished");
+        let overlays = app
+            .webview_windows()
+            .into_iter()
+            .filter(|(label, _)| is_capture_window_label(label))
+            .map(|(_, overlay)| overlay)
+            .collect::<Vec<_>>();
+        for overlay in overlays {
+            let ns_window = overlay.ns_window()? as usize;
+            app.run_on_main_thread(move || {
+                let window: &NSWindow = unsafe { &*(ns_window as *mut std::ffi::c_void).cast() };
+                window.orderOut(None);
+            })?;
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        if let Some(window) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
+        emit_capture_event_to_windows(&app, "capture-ended", "finished");
+        for (_, window) in app
+            .webview_windows()
+            .into_iter()
+            .filter(|(label, _)| is_capture_window_label(label))
+        {
             window.hide()?;
         }
         if let Ok(mut guard) = state.capture_snapshots.lock() {
@@ -205,10 +291,11 @@ pub fn complete_capture(
 pub fn refresh_capture_context(
     app: AppHandle,
     state: State<'_, AppState>,
+    label: String,
 ) -> Result<CaptureContext, FlickError> {
     let window = app
-        .get_webview_window(CAPTURE_WINDOW_LABEL)
-        .ok_or_else(|| FlickError::Message("capture window not found".into()))?;
+        .get_webview_window(&label)
+        .ok_or_else(|| FlickError::Message(format!("capture window not found: {label}")))?;
     let scale = window.scale_factor()?;
     let position = window.inner_position()?;
     let size = window.inner_size()?;
@@ -221,10 +308,10 @@ pub fn refresh_capture_context(
     };
 
     let mut guard = state
-        .capture_context
+        .capture_contexts
         .lock()
-        .map_err(|_| FlickError::Message("capture context mutex poisoned".into()))?;
-    *guard = context.clone();
+        .map_err(|_| FlickError::Message("capture contexts mutex poisoned".into()))?;
+    guard.insert(label, context.clone());
 
     Ok(context)
 }
@@ -232,12 +319,16 @@ pub fn refresh_capture_context(
 #[tauri::command]
 pub fn get_capture_context(
     state: State<'_, AppState>,
+    label: String,
 ) -> Result<CaptureContext, FlickError> {
-    Ok(state
-        .capture_context
+    let context = state
+        .capture_contexts
         .lock()
-        .map_err(|_| FlickError::Message("capture context mutex poisoned".into()))?
-        .clone())
+        .map_err(|_| FlickError::Message("capture contexts mutex poisoned".into()))?
+        .get(&label)
+        .cloned()
+        .ok_or_else(|| FlickError::Message(format!("capture context not found for {label}")))?;
+    Ok(context)
 }
 
 #[tauri::command]
@@ -622,14 +713,7 @@ fn update_shortcut(
     kind: ShortcutKind,
 ) -> Result<AppSettings, FlickError> {
     let normalized = shortcut.trim().to_string();
-    eprintln!(
-        "[shortcut] update request received: kind={} raw='{}' normalized='{}'",
-        shortcut_kind_name(&kind),
-        shortcut,
-        normalized
-    );
     if normalized.is_empty() {
-        eprintln!("[shortcut] rejected: empty shortcut");
         return Err(FlickError::Message("快捷键不能为空".into()));
     }
 
@@ -644,14 +728,7 @@ fn update_shortcut(
         ShortcutKind::Capture => current_settings.capture_shortcut.clone(),
         ShortcutKind::Translate => current_settings.translate_shortcut.clone(),
     };
-    eprintln!(
-        "[shortcut] current {} shortcut: {}",
-        shortcut_kind_name(&kind),
-        current
-    );
-
     if current == normalized {
-        eprintln!("[shortcut] no-op update, shortcut unchanged");
         return get_app_settings(state);
     }
 
@@ -667,11 +744,6 @@ fn update_shortcut(
             "快捷键注册失败，可能已被其他应用占用: {error}"
         )));
     }
-    eprintln!(
-        "[shortcut] register success: capture={} translate={}",
-        next_settings.capture_shortcut, next_settings.translate_shortcut
-    );
-
     let updated = {
         let mut settings = state
             .settings
@@ -680,24 +752,9 @@ fn update_shortcut(
         *settings = next_settings.clone();
         settings.clone()
     };
-    eprintln!(
-        "[shortcut] in-memory settings updated: capture={} translate={}",
-        updated.capture_shortcut, updated.translate_shortcut
-    );
 
     state.settings_store.save_settings(&updated)?;
-    eprintln!(
-        "[shortcut] persisted settings to store: capture={} translate={}",
-        updated.capture_shortcut, updated.translate_shortcut
-    );
     Ok(updated)
-}
-
-fn shortcut_kind_name(kind: &ShortcutKind) -> &'static str {
-    match kind {
-        ShortcutKind::Capture => "capture",
-        ShortcutKind::Translate => "translate",
-    }
 }
 
 #[tauri::command]
@@ -720,12 +777,81 @@ pub fn mock_translate(
 }
 
 pub fn open_capture_overlay(app: &AppHandle) -> Result<(), FlickError> {
-    let window = ensure_capture_window(app)?;
-    window.show()?;
-    window.set_focus()?;
+    let mut capture_windows = app
+        .webview_windows()
+        .into_iter()
+        .filter(|(label, _)| is_capture_window_label(label))
+        .map(|(_, window)| window)
+        .collect::<Vec<_>>();
+
+    capture_windows.sort_by(|a, b| a.label().cmp(&b.label()));
+    let mut focus_label = capture_windows.first().map(|window| window.label().to_string());
+    #[cfg(target_os = "macos")]
+    if let Ok(cursor) = current_global_cursor_position(app) {
+        if let Some((label, _)) = app
+            .state::<AppState>()
+            .capture_contexts
+            .lock()
+            .map_err(|_| FlickError::Message("capture contexts mutex poisoned".into()))?
+            .iter()
+            .find(|(_, context)| {
+                cursor.x >= context.x
+                    && cursor.x <= context.x + context.width
+                    && cursor.y >= context.y
+                    && cursor.y <= context.y + context.height
+            })
+        {
+            focus_label = Some(label.clone());
+        }
+    }
+
+    if let Some(label) = focus_label.clone() {
+        capture_windows.sort_by_key(|window| if window.label() == label { 0 } else { 1 });
+    }
+
+    if let Some(target_label) = focus_label.clone() {
+        for window in &capture_windows {
+            let should_focus = window.label() == target_label;
+            let _ = window.set_focusable(should_focus);
+        }
+    }
+
+    if let Some(target_window) = capture_windows.first() {
+        target_window.show()?;
+        target_window.set_focus()?;
+    }
+
+    for window in capture_windows.iter().skip(1) {
+        window.show()?;
+    }
+
+    if let Some(label) = focus_label {
+        if let Some(window) = capture_windows.iter().find(|window| window.label() == label) {
+            window.set_focus()?;
+        }
+    }
     thread::sleep(std::time::Duration::from_millis(16));
-    emit_capture_status(app, "capture-started", "started");
+    emit_capture_event_to_windows(app, "capture-started", "started");
+    let app_handle = app.clone();
+    thread::spawn(move || {
+        thread::sleep(std::time::Duration::from_millis(120));
+        emit_capture_event_to_windows(&app_handle, "capture-started", "started");
+    });
     Ok(())
+}
+
+fn emit_capture_event_to_windows(
+    app: &AppHandle,
+    event: &str,
+    payload: impl serde::Serialize + Clone,
+) {
+    for (_, window) in app
+        .webview_windows()
+        .into_iter()
+        .filter(|(label, _)| is_capture_window_label(label))
+    {
+        let _ = window.emit(event, payload.clone());
+    }
 }
 
 pub fn begin_capture_session(
@@ -740,6 +866,7 @@ pub fn begin_capture_session_with_intent(
     state: &State<'_, AppState>,
     intent: CaptureIntent,
 ) -> Result<(), FlickError> {
+    let mut main_window_hidden_for_capture = false;
     {
         let mut guard = state
             .capture_intent
@@ -764,9 +891,14 @@ pub fn begin_capture_session_with_intent(
         let should_hide_main_window = !is_visible || is_minimized;
         if should_hide_main_window {
             let _ = window.hide();
+            main_window_hidden_for_capture = true;
         }
     }
     prepare_capture_context(app, state)?;
+    #[cfg(target_os = "macos")]
+    if main_window_hidden_for_capture {
+        let _ = app.show();
+    }
     #[cfg(not(target_os = "macos"))]
     let snapshots = state.capture_service.capture_all_screens()?;
     #[cfg(not(target_os = "macos"))]
@@ -783,73 +915,57 @@ pub fn begin_capture_session_with_intent(
 
 fn prepare_capture_context(app: &AppHandle, state: &State<'_, AppState>) -> Result<(), FlickError> {
     let monitors = app.available_monitors()?;
-    let logical_monitors = monitors
-        .iter()
-        .map(|monitor| {
-            let scale = monitor.scale_factor();
-            let x = monitor.position().x as f64 / scale;
-            let y = monitor.position().y as f64 / scale;
-            let width = monitor.size().width as f64 / scale;
-            let height = monitor.size().height as f64 / scale;
+    let mut contexts = Vec::with_capacity(monitors.len());
 
-            (x, y, width, height)
-        })
-        .collect::<Vec<_>>();
+    for (index, monitor) in monitors.iter().enumerate() {
+        let scale = monitor.scale_factor();
+        let x = monitor.position().x as f64 / scale;
+        let y = monitor.position().y as f64 / scale;
+        let width = monitor.size().width as f64 / scale;
+        let height = monitor.size().height as f64 / scale;
+        let label = capture_window_label(index);
+        let context = CaptureContext { x, y, width, height };
 
-    let min_x = logical_monitors
-        .iter()
-        .map(|(x, _, _, _)| *x)
-        .reduce(f64::min)
-        .unwrap_or(0.0);
-    let min_y = logical_monitors
-        .iter()
-        .map(|(_, y, _, _)| *y)
-        .reduce(f64::min)
-        .unwrap_or(0.0);
-    let max_x = logical_monitors
-        .iter()
-        .map(|(x, _, width, _)| x + width)
-        .reduce(f64::max)
-        .unwrap_or(1440.0);
-    let max_y = logical_monitors
-        .iter()
-        .map(|(_, y, _, height)| y + height)
-        .reduce(f64::max)
-        .unwrap_or(900.0);
-
-    let width = (max_x - min_x).max(1.0);
-    let height = (max_y - min_y).max(1.0);
-
-    let context = CaptureContext {
-        x: min_x,
-        y: min_y,
-        width,
-        height,
-    };
-
-    {
-        let mut guard = lock_capture_context(state)?;
-        *guard = context.clone();
+        let window = ensure_capture_window(app, &label)?;
+        window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)))?;
+        window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)))?;
+        window.set_always_on_top(true)?;
+        contexts.push((label, context));
     }
 
-    let window = ensure_capture_window(app)?;
-    window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-        min_x, min_y,
-    )))?;
-    window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)))?;
-    window.set_always_on_top(true)?;
+    {
+        let mut guard = lock_capture_contexts(state)?;
+        guard.clear();
+        for (label, context) in &contexts {
+            guard.insert(label.clone(), context.clone());
+        }
+    }
+
+    let active_labels = contexts
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect::<Vec<_>>();
+
+    for (label, window) in app
+        .webview_windows()
+        .into_iter()
+        .filter(|(label, _)| is_capture_window_label(label))
+    {
+        if !active_labels.iter().any(|active| active == &label) {
+            let _ = window.close();
+        }
+    }
 
     Ok(())
 }
 
-
-fn lock_capture_context<'a>(
+fn lock_capture_contexts<'a>(
     state: &'a State<'_, AppState>,
-) -> Result<MutexGuard<'a, CaptureContext>, FlickError> {
+) -> Result<MutexGuard<'a, crate::models::CaptureContexts>, FlickError> {
     state
-        .capture_context
+        .capture_contexts
         .lock()
-        .map_err(|_| FlickError::Message("capture context mutex poisoned".into()))
+        .map_err(|_| FlickError::Message("capture contexts mutex poisoned".into()))
 }
 
 fn current_screenshot_dir(state: &State<'_, AppState>) -> Result<PathBuf, FlickError> {

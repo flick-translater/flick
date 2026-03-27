@@ -1,13 +1,18 @@
 import './capture.css';
 
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
 type CaptureContext = {
   x: number;
   y: number;
   width: number;
   height: number;
+};
+
+type CursorPosition = {
+  x: number;
+  y: number;
 };
 
 type Selection = {
@@ -18,6 +23,7 @@ type Selection = {
 };
 
 const root = document.querySelector<HTMLDivElement>('#capture-root');
+const currentWindow = getCurrentWebviewWindow();
 
 if (!root) {
   throw new Error('Capture root not found');
@@ -26,6 +32,7 @@ if (!root) {
 root.innerHTML = `
   <div class="overlay">
     <div id="hint" class="hint"></div>
+    <div id="monitor-frame" class="monitor-frame"></div>
     <div id="selection" class="selection hidden"></div>
     <div id="crosshair-x" class="crosshair-x"></div>
     <div id="crosshair-y" class="crosshair-y"></div>
@@ -36,14 +43,23 @@ const hintElement = document.querySelector<HTMLDivElement>('#hint');
 const selectionElement = document.querySelector<HTMLDivElement>('#selection');
 const crosshairX = document.querySelector<HTMLDivElement>('#crosshair-x');
 const crosshairY = document.querySelector<HTMLDivElement>('#crosshair-y');
+const captureChannel = typeof BroadcastChannel !== 'undefined'
+  ? new BroadcastChannel('capture-session')
+  : null;
 
 let context: CaptureContext = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
 let startPoint: { x: number; y: number } | null = null;
 let currentSelection: Selection | null = null;
 let isSubmitting = false;
 let isReady = false;
+let isLoadingContext = false;
 let captureSequence = 0;
 let currentCaptureSequence = 0;
+let cursorPollTimer: number | null = null;
+let hasAutoFocusedFromCursor = false;
+let isCaptureSessionActive = false;
+
+let isFocusingWindow = false;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -52,6 +68,23 @@ function clamp(value: number, min: number, max: number) {
 function updateCrosshair(x: number, y: number) {
   crosshairX?.style.setProperty('--crosshair-y', `${y}px`);
   crosshairY?.style.setProperty('--crosshair-x', `${x}px`);
+}
+
+function clearCrosshair() {
+  crosshairX?.style.setProperty('--crosshair-y', `-9999px`);
+  crosshairY?.style.setProperty('--crosshair-x', `-9999px`);
+}
+
+function stopCursorPolling() {
+  if (cursorPollTimer !== null) {
+    window.clearInterval(cursorPollTimer);
+    cursorPollTimer = null;
+  }
+}
+
+function setHovered(active: boolean, source: string) {
+  document.body.classList.toggle('capture-hovered', active);
+  void source;
 }
 
 function drawSelection(selection: Selection | null) {
@@ -79,10 +112,35 @@ function resetSelection() {
 
 function setReadyState(ready: boolean) {
   isReady = ready;
+  hasAutoFocusedFromCursor = false;
   document.body.classList.toggle('capture-ready', ready);
+  document.body.classList.remove('capture-hovered');
+  if (!ready && !isCaptureSessionActive) {
+    stopCursorPolling();
+  }
+  if (!ready) {
+    clearCrosshair();
+  }
   if (hintElement) {
     hintElement.textContent = ready ? '拖拽选择区域，松开鼠标立即截图，Esc 取消' : '';
   }
+}
+
+function activateCaptureSession(source: string, broadcast: boolean) {
+  isCaptureSessionActive = true;
+  startCursorPolling();
+  if (broadcast) {
+    captureChannel?.postMessage({ type: 'capture-started' });
+  }
+  void source;
+}
+
+function deactivateCaptureSession(source: string, broadcast: boolean) {
+  isCaptureSessionActive = false;
+  if (broadcast) {
+    captureChannel?.postMessage({ type: 'capture-ended' });
+  }
+  void source;
 }
 
 function nextFrame() {
@@ -107,16 +165,117 @@ async function waitForViewport(contextToMatch: CaptureContext) {
 }
 
 async function loadCaptureContext() {
+  if (isLoadingContext) {
+    return;
+  }
+
+  isLoadingContext = true;
+  const pendingStartPoint = startPoint;
   setReadyState(false);
-  resetSelection();
+  if (!pendingStartPoint) {
+    resetSelection();
+  }
   currentCaptureSequence = captureSequence + 1;
   await nextFrame();
   await nextFrame();
-  await invoke<CaptureContext>('refresh_capture_context');
-  context = await invoke<CaptureContext>('get_capture_context');
+  await invoke<CaptureContext>('refresh_capture_context', { label: currentWindow.label });
+  context = await invoke<CaptureContext>('get_capture_context', { label: currentWindow.label });
   await waitForViewport(context);
   captureSequence = currentCaptureSequence;
   setReadyState(true);
+  isLoadingContext = false;
+  if (pendingStartPoint) {
+    startPoint = pendingStartPoint;
+    currentSelection = null;
+    setHovered(true, 'restore-pending');
+    updateCrosshair(pendingStartPoint.x, pendingStartPoint.y);
+  }
+  startCursorPolling();
+}
+
+function ensureCaptureReady(reason: string) {
+  if (isReady || isLoadingContext) {
+    return;
+  }
+
+  void loadCaptureContext().catch((error: unknown) => {
+    console.error('Failed to refresh capture context', error);
+    isLoadingContext = false;
+    setReadyState(false);
+  });
+  void reason;
+}
+
+function isCursorInsideContext(cursor: CursorPosition) {
+  return (
+    cursor.x >= context.x &&
+    cursor.x <= context.x + context.width &&
+    cursor.y >= context.y &&
+    cursor.y <= context.y + context.height
+  );
+}
+
+async function pollGlobalCursor() {
+  if (!isCaptureSessionActive || startPoint) {
+    return;
+  }
+
+  try {
+    const cursor = await invoke<CursorPosition>('get_global_cursor_position');
+    if (!isReady) {
+      if (isLoadingContext) {
+        return;
+      }
+
+      const pendingContext = await invoke<CaptureContext>('get_capture_context', {
+        label: currentWindow.label
+      }).catch(() => null);
+      if (!pendingContext) {
+        return;
+      }
+
+      const insidePendingContext =
+        cursor.x >= pendingContext.x &&
+        cursor.x <= pendingContext.x + pendingContext.width &&
+        cursor.y >= pendingContext.y &&
+        cursor.y <= pendingContext.y + pendingContext.height;
+
+      setHovered(insidePendingContext, 'global-cursor');
+      if (!insidePendingContext) {
+        clearCrosshair();
+        return;
+      }
+
+      ensureCaptureReady('global-cursor');
+      return;
+    }
+
+    const inside = isCursorInsideContext(cursor);
+    setHovered(inside, 'global-cursor');
+    if (!inside) {
+      hasAutoFocusedFromCursor = false;
+      clearCrosshair();
+      return;
+    }
+
+    if (!hasAutoFocusedFromCursor) {
+      hasAutoFocusedFromCursor = true;
+      void invoke('focus_capture_window', { label: currentWindow.label }).catch(() => {});
+    }
+
+    updateCrosshair(cursor.x - context.x, cursor.y - context.y);
+  } catch {
+  }
+}
+
+function startCursorPolling() {
+  if (cursorPollTimer !== null) {
+    window.clearInterval(cursorPollTimer);
+  }
+
+  cursorPollTimer = window.setInterval(() => {
+    void pollGlobalCursor();
+  }, 16);
 }
 
 function toSelection(endX: number, endY: number): Selection | null {
@@ -130,6 +289,13 @@ function toSelection(endX: number, endY: number): Selection | null {
   const height = Math.abs(startPoint.y - endY);
 
   return { x, y, width, height };
+}
+
+function beginSelection(x: number, y: number, source: string) {
+  startPoint = { x, y };
+  currentSelection = null;
+  drawSelection(null);
+  void source;
 }
 
 async function confirmSelection() {
@@ -174,24 +340,35 @@ window.addEventListener('mousemove', (event) => {
   const x = clamp(event.clientX, 0, window.innerWidth);
   const y = clamp(event.clientY, 0, window.innerHeight);
 
-  updateCrosshair(x, y);
+  if (!startPoint) {
+    if ((event.buttons & 1) === 1) {
+      beginSelection(x, y, 'mousemove-with-button');
+    }
+  }
 
   if (!startPoint) {
     return;
   }
 
+  updateCrosshair(x, y);
   currentSelection = toSelection(x, y);
   drawSelection(currentSelection);
 });
 
 window.addEventListener('mousedown', (event) => {
-  if (!isReady || event.button !== 0) {
+  if (event.button !== 0) {
     return;
   }
 
-  startPoint = { x: event.clientX, y: event.clientY };
-  currentSelection = null;
-  drawSelection(null);
+  if (!isReady) {
+    beginSelection(event.clientX, event.clientY, 'mousedown-pending');
+    setHovered(true, 'mousedown-pending');
+    ensureCaptureReady('mousedown');
+    return;
+  }
+
+  beginSelection(event.clientX, event.clientY, 'mousedown');
+  setHovered(true, 'mousedown');
 });
 
 window.addEventListener('mouseup', (event) => {
@@ -203,6 +380,25 @@ window.addEventListener('mouseup', (event) => {
   drawSelection(currentSelection);
   startPoint = null;
   void confirmSelection();
+});
+
+window.addEventListener('mouseenter', () => {
+  if (isReady) {
+    setHovered(true, 'mouseenter');
+  }
+  if (!isFocusingWindow) {
+    isFocusingWindow = true;
+    void invoke('focus_capture_window', { label: currentWindow.label }).catch(() => {}).finally(() => {
+      isFocusingWindow = false;
+    });
+  }
+});
+
+window.addEventListener('mouseleave', () => {
+  if (!startPoint) {
+    setHovered(false, 'mouseleave');
+    clearCrosshair();
+  }
 });
 
 window.addEventListener('keydown', async (event) => {
@@ -230,9 +426,36 @@ window.addEventListener('contextmenu', async (event) => {
   await invoke('cancel_capture');
 });
 
-void listen('capture-started', () => {
+void currentWindow.listen('capture-started', () => {
+  activateCaptureSession('event:capture-started', true);
   void loadCaptureContext().catch((error: unknown) => {
     console.error('Failed to refresh capture context', error);
+    isLoadingContext = false;
     setReadyState(false);
   });
+});
+
+void currentWindow.listen('capture-ended', () => {
+  deactivateCaptureSession('event:capture-ended', true);
+  resetSelection();
+  setReadyState(false);
+});
+
+window.addEventListener('focus', () => {
+  activateCaptureSession('window-focus', true);
+  ensureCaptureReady('window-focus');
+});
+
+captureChannel?.addEventListener('message', (event) => {
+  const type = (event.data as { type?: string } | null)?.type;
+  if (type === 'capture-started') {
+    activateCaptureSession('broadcast:capture-started', false);
+    return;
+  }
+
+  if (type === 'capture-ended') {
+    deactivateCaptureSession('broadcast:capture-ended', false);
+    resetSelection();
+    setReadyState(false);
+  }
 });
