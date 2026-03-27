@@ -1,4 +1,6 @@
+import type { MouseEvent } from 'react';
 import { Zap } from 'lucide-react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 interface TopBarProps {
   title: string;
@@ -6,8 +8,30 @@ interface TopBarProps {
 }
 
 export default function TopBar({ title, onToggleWidget }: TopBarProps) {
+  const handleMouseDown = async (event: MouseEvent<HTMLElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, input, select, textarea, a, [role="button"]')) {
+      return;
+    }
+
+    try {
+      await getCurrentWindow().startDragging();
+    } catch (error) {
+      console.error('Failed to start dragging window', error);
+    }
+  };
+
   return (
-    <header className="sticky top-0 z-30 flex shrink-0 items-center justify-between gap-4 border-b border-outline-variant/10 bg-surface/80 px-4 py-3 backdrop-blur-md sm:px-6 lg:px-8">
+    <header
+      className="sticky top-0 z-30 flex shrink-0 items-center justify-between gap-4 border-b border-outline-variant/10 bg-surface/80 px-4 py-3 pl-20 backdrop-blur-md sm:px-6 sm:pl-24 lg:px-8 lg:pl-28"
+      onMouseDown={(event) => {
+        void handleMouseDown(event);
+      }}
+    >
       <div className="min-w-0 flex-1">
         <h2 className="truncate font-headline text-lg font-extrabold tracking-tight text-primary sm:text-xl lg:text-2xl">
           {title}

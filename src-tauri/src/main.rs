@@ -19,7 +19,8 @@ use commands::{
 use models::{AppSettings, CaptureContext, CaptureRecord};
 use services::{CachedScreenCapture, MockOcrService, MockTranslationService, ScreenCaptureService, SettingsStore};
 use tauri::{
-    ActivationPolicy, AppHandle, Emitter, Manager, RunEvent, TitleBarStyle, WebviewUrl, WebviewWindowBuilder,
+    ActivationPolicy, AppHandle, Emitter, LogicalPosition, Manager, RunEvent, TitleBarStyle, WebviewUrl,
+    WebviewWindowBuilder,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuId, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -233,7 +234,8 @@ pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow
         .focused(true)
         .center()
         .hidden_title(true)
-        .title_bar_style(TitleBarStyle::Transparent)
+        .title_bar_style(TitleBarStyle::Overlay)
+        .traffic_light_position(LogicalPosition::new(16.0, 18.0))
         .build()
 }
 
