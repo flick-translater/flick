@@ -130,7 +130,30 @@ pub fn complete_capture(
 }
 
 #[tauri::command]
-pub fn get_capture_context(state: State<'_, AppState>) -> Result<CaptureContext, FlickError> {
+pub fn get_capture_context(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CaptureContext, FlickError> {
+    if let Some(window) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
+        let scale = window.scale_factor()?;
+        let position = window.inner_position()?;
+        let size = window.inner_size()?;
+
+        let context = CaptureContext {
+            x: position.x as f64 / scale,
+            y: position.y as f64 / scale,
+            width: size.width as f64 / scale,
+            height: size.height as f64 / scale,
+        };
+
+        let mut guard = state
+            .capture_context
+            .lock()
+            .map_err(|_| FlickError::Message("capture context mutex poisoned".into()))?;
+        *guard = context.clone();
+        return Ok(context);
+    }
+
     Ok(state
         .capture_context
         .lock()
