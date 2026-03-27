@@ -39,9 +39,14 @@ export default function TranslationWidget({ payload, onClose, standalone = false
     event.preventDefault();
 
     try {
-      await windowHandle?.startDragging();
+      await invoke('begin_translation_widget_drag');
     } catch (error) {
-      console.error('Failed to start dragging widget window', error);
+      try {
+        await windowHandle?.setFocus();
+        await windowHandle?.startDragging();
+      } catch (fallbackError) {
+        console.error('Failed to start dragging widget window', fallbackError ?? error);
+      }
     }
   };
 

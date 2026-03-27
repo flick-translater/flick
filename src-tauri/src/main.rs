@@ -17,7 +17,8 @@ use commands::{
     get_global_cursor_position,
     get_storage_info,
     refresh_capture_context,
-    get_translation_widget_pinned, list_capture_history, minimize_translation_widget, mock_ocr,
+    begin_translation_widget_drag, get_translation_widget_pinned, list_capture_history,
+    minimize_translation_widget, mock_ocr,
     mock_translate, open_file_in_default_app, pick_screenshot_directory, read_image_as_data_url,
     set_autostart_enabled, set_shortcut_recording, set_translation_widget_pinned,
     show_translation_widget, start_capture, update_capture_shortcut, update_interface_language,
@@ -108,6 +109,7 @@ fn main() {
             set_translation_widget_pinned,
             minimize_translation_widget,
             close_translation_widget,
+            begin_translation_widget_drag,
             update_capture_shortcut,
             update_interface_language,
             update_max_screenshots,
@@ -396,6 +398,7 @@ pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWind
     .visible(false)
     .focused(false)
     .always_on_top(false)
+    .accept_first_mouse(true)
     .transparent(true)
     .decorations(false)
     .shadow(true)
