@@ -107,6 +107,8 @@ async function waitForViewport(contextToMatch: CaptureContext) {
 async function loadCaptureContext() {
   setReadyState(false);
   resetSelection();
+  await nextFrame();
+  await nextFrame();
   context = await invoke<CaptureContext>('get_capture_context');
   await waitForViewport(context);
   setReadyState(true);
@@ -136,8 +138,10 @@ async function confirmSelection() {
 
   isSubmitting = true;
 
-  const scaleX = context.width / window.innerWidth;
-  const scaleY = context.height / window.innerHeight;
+  const widthDiff = Math.abs(context.width - window.innerWidth);
+  const heightDiff = Math.abs(context.height - window.innerHeight);
+  const scaleX = widthDiff < 2 ? 1 : context.width / window.innerWidth;
+  const scaleY = heightDiff < 2 ? 1 : context.height / window.innerHeight;
   const selection = currentSelection;
   resetSelection();
   setReadyState(false);
@@ -145,10 +149,10 @@ async function confirmSelection() {
   try {
     await invoke('complete_capture', {
       selection: {
-        x: Math.round(context.x + selection.x * scaleX),
-        y: Math.round(context.y + selection.y * scaleY),
-        width: Math.round(selection.width * scaleX),
-        height: Math.round(selection.height * scaleY)
+        x: Math.floor(context.x + selection.x * scaleX),
+        y: Math.floor(context.y + selection.y * scaleY),
+        width: Math.ceil(selection.width * scaleX),
+        height: Math.ceil(selection.height * scaleY)
       }
     });
   } finally {

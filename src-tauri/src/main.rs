@@ -46,6 +46,10 @@ pub struct AppState {
     pub settings_store: SettingsStore,
     pub settings: Mutex<AppSettings>,
     pub capture_intent: Mutex<CaptureIntent>,
+    #[cfg(target_os = "macos")]
+    pub capture_previous_frontmost_pid: Mutex<Option<i32>>,
+    #[cfg(target_os = "macos")]
+    pub capture_main_window_suppressed: Mutex<bool>,
     pub capture_service: ScreenCaptureService,
     pub ocr_service: Arc<MockOcrService>,
     pub translation_service: Arc<MockTranslationService>,
@@ -157,6 +161,10 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         settings_store,
         settings: Mutex::new(settings),
         capture_intent: Mutex::new(CaptureIntent::Capture),
+        #[cfg(target_os = "macos")]
+        capture_previous_frontmost_pid: Mutex::new(None),
+        #[cfg(target_os = "macos")]
+        capture_main_window_suppressed: Mutex::new(false),
         capture_service: ScreenCaptureService::default(),
         ocr_service: Arc::new(MockOcrService),
         translation_service: Arc::new(MockTranslationService),

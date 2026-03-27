@@ -41,6 +41,10 @@ pub fn cancel_capture(app: AppHandle) -> Result<(), FlickError> {
         if let Ok(mut guard) = state.capture_snapshots.lock() {
             guard.clear();
         }
+        #[cfg(target_os = "macos")]
+        restore_main_window_after_capture(&app, &state);
+        #[cfg(target_os = "macos")]
+        restore_previous_frontmost_app(&state);
     }
 
     emit_capture_status(&app, "capture-cancelled", "cancelled");
@@ -95,6 +99,7 @@ pub fn complete_capture(
     }
 
     let app_handle = app.clone();
+    let should_restore_previous_frontmost = intent == CaptureIntent::Capture;
     thread::spawn(move || {
         let run = || -> Result<(), FlickError> {
             let capture_service = ScreenCaptureService::default();
@@ -106,6 +111,18 @@ pub fn complete_capture(
             let image = capture_service.capture_selection(&selection, &cached_screens)?;
 
             capture_service.copy_to_clipboard(&image)?;
+
+            #[cfg(target_os = "macos")]
+            {
+                let state = app_handle.state::<AppState>();
+                restore_main_window_after_capture(&app_handle, &state);
+            }
+
+            #[cfg(target_os = "macos")]
+            if should_restore_previous_frontmost {
+                let state = app_handle.state::<AppState>();
+                restore_previous_frontmost_app(&state);
+            }
 
             let id = Uuid::new_v4().to_string();
             let created_at = Utc::now();
@@ -167,6 +184,16 @@ pub fn complete_capture(
         };
 
         if let Err(error) = run() {
+            #[cfg(target_os = "macos")]
+            {
+                let state = app_handle.state::<AppState>();
+                restore_main_window_after_capture(&app_handle, &state);
+            }
+            #[cfg(target_os = "macos")]
+            if should_restore_previous_frontmost {
+                let state = app_handle.state::<AppState>();
+                restore_previous_frontmost_app(&state);
+            }
             emit_capture_status(&app_handle, "capture-error", error.to_string());
         }
     });
@@ -176,29 +203,8 @@ pub fn complete_capture(
 
 #[tauri::command]
 pub fn get_capture_context(
-    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<CaptureContext, FlickError> {
-    if let Some(window) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
-        let scale = window.scale_factor()?;
-        let position = window.inner_position()?;
-        let size = window.inner_size()?;
-
-        let context = CaptureContext {
-            x: position.x as f64 / scale,
-            y: position.y as f64 / scale,
-            width: size.width as f64 / scale,
-            height: size.height as f64 / scale,
-        };
-
-        let mut guard = state
-            .capture_context
-            .lock()
-            .map_err(|_| FlickError::Message("capture context mutex poisoned".into()))?;
-        *guard = context.clone();
-        return Ok(context);
-    }
-
     Ok(state
         .capture_context
         .lock()
@@ -688,8 +694,9 @@ pub fn mock_translate(
 pub fn open_capture_overlay(app: &AppHandle) -> Result<(), FlickError> {
     let window = ensure_capture_window(app)?;
     window.show()?;
-    emit_capture_status(app, "capture-started", "started");
     window.set_focus()?;
+    thread::sleep(std::time::Duration::from_millis(16));
+    emit_capture_status(app, "capture-started", "started");
     Ok(())
 }
 
@@ -713,11 +720,20 @@ pub fn begin_capture_session_with_intent(
         *guard = intent;
     }
 
+    #[cfg(target_os = "macos")]
+    remember_previous_frontmost_app(state);
+
     if let Some(window) = app.get_webview_window("main") {
-        let should_hide_main_window = match window.is_focused() {
-            Ok(is_focused) => !is_focused,
-            Err(_) => true,
-        };
+        let is_visible = window.is_visible().unwrap_or(false);
+        let is_minimized = window.is_minimized().unwrap_or(false);
+        #[cfg(target_os = "macos")]
+        {
+            let is_focused = window.is_focused().unwrap_or(false);
+            if is_visible && !is_minimized && !is_focused {
+                suppress_main_window_for_capture(app, state);
+            }
+        }
+        let should_hide_main_window = !is_visible || is_minimized;
         if should_hide_main_window {
             let _ = window.hide();
         }
@@ -798,6 +814,7 @@ fn prepare_capture_context(app: &AppHandle, state: &State<'_, AppState>) -> Resu
     Ok(())
 }
 
+
 fn lock_capture_context<'a>(
     state: &'a State<'_, AppState>,
 ) -> Result<MutexGuard<'a, CaptureContext>, FlickError> {
@@ -813,4 +830,77 @@ fn current_screenshot_dir(state: &State<'_, AppState>) -> Result<PathBuf, FlickE
         .lock()
         .map_err(|_| FlickError::Message("screenshot dir mutex poisoned".into()))
         .map(|path| path.clone())
+}
+
+#[cfg(target_os = "macos")]
+fn remember_previous_frontmost_app(state: &State<'_, AppState>) {
+    use objc2_app_kit::{NSRunningApplication, NSWorkspace};
+
+    let workspace = NSWorkspace::sharedWorkspace();
+    let current_pid = NSRunningApplication::currentApplication().processIdentifier();
+    let previous_pid = workspace
+        .frontmostApplication()
+        .map(|app| app.processIdentifier())
+        .filter(|pid| *pid != current_pid);
+
+    if let Ok(mut guard) = state.capture_previous_frontmost_pid.lock() {
+        *guard = previous_pid;
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn restore_previous_frontmost_app(state: &State<'_, AppState>) {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+
+    let previous_pid = match state.capture_previous_frontmost_pid.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(_) => None,
+    };
+
+    if let Some(app) =
+        previous_pid.and_then(NSRunningApplication::runningApplicationWithProcessIdentifier)
+    {
+        let _ = app.activateWithOptions(NSApplicationActivationOptions::empty());
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn suppress_main_window_for_capture(app: &AppHandle, state: &State<'_, AppState>) {
+    let should_suppress = match state.capture_main_window_suppressed.lock() {
+        Ok(mut guard) => {
+            if *guard {
+                false
+            } else {
+                *guard = true;
+                true
+            }
+        }
+        Err(_) => false,
+    };
+
+    if should_suppress {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_focusable(false);
+            let _ = window.set_always_on_bottom(true);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn restore_main_window_after_capture(app: &AppHandle, state: &State<'_, AppState>) {
+    let should_restore = match state.capture_main_window_suppressed.lock() {
+        Ok(mut guard) => {
+            let value = *guard;
+            *guard = false;
+            value
+        }
+        Err(_) => false,
+    };
+
+    if should_restore {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_always_on_bottom(false);
+            let _ = window.set_focusable(true);
+        }
+    }
 }
