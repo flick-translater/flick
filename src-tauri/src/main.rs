@@ -13,7 +13,7 @@ use std::{
 
 use commands::{
     cancel_capture, clear_all_captures, close_translation_widget, complete_capture, delete_capture,
-    get_app_settings, get_autostart_status, get_capture_context, get_storage_info,
+    get_app_settings, get_autostart_status, get_capture_context, get_storage_info, refresh_capture_context,
     get_translation_widget_pinned, list_capture_history, minimize_translation_widget, mock_ocr,
     mock_translate, open_file_in_default_app, pick_screenshot_directory, read_image_as_data_url,
     set_autostart_enabled, set_shortcut_recording, set_translation_widget_pinned,
@@ -87,6 +87,7 @@ fn main() {
             complete_capture,
             delete_capture,
             clear_all_captures,
+            refresh_capture_context,
             get_capture_context,
             list_capture_history,
             get_storage_info,
@@ -205,7 +206,6 @@ fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
 }
 
 fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
-    eprintln!("[shortcut] initializing plugin");
     app.plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
 
     let settings = {
@@ -217,7 +217,6 @@ fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
         settings.clone()
     };
     apply_shortcut_bindings(app, &settings)?;
-    eprintln!("[shortcut] initial shortcuts registered");
 
     Ok(())
 }
@@ -255,17 +254,8 @@ fn register_shortcut_handler(
     shortcut: &str,
     intent: CaptureIntent,
 ) -> anyhow::Result<()> {
-    let shortcut_value = shortcut.to_string();
-    eprintln!(
-        "[shortcut] registering initial shortcut: {} ({intent:?})",
-        shortcut_value
-    );
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, _, event| {
-            eprintln!(
-                "[shortcut] initial handler fired: shortcut={} intent={intent:?} state={:?}",
-                shortcut_value, event.state
-            );
             if event.state == ShortcutState::Pressed {
                 let state = app.state::<AppState>();
                 let _ = commands::begin_capture_session_with_intent(app, &state, intent);

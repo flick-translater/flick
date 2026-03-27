@@ -42,6 +42,8 @@ let startPoint: { x: number; y: number } | null = null;
 let currentSelection: Selection | null = null;
 let isSubmitting = false;
 let isReady = false;
+let captureSequence = 0;
+let currentCaptureSequence = 0;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -107,10 +109,13 @@ async function waitForViewport(contextToMatch: CaptureContext) {
 async function loadCaptureContext() {
   setReadyState(false);
   resetSelection();
+  currentCaptureSequence = captureSequence + 1;
   await nextFrame();
   await nextFrame();
+  await invoke<CaptureContext>('refresh_capture_context');
   context = await invoke<CaptureContext>('get_capture_context');
   await waitForViewport(context);
+  captureSequence = currentCaptureSequence;
   setReadyState(true);
 }
 
@@ -143,17 +148,18 @@ async function confirmSelection() {
   const scaleX = widthDiff < 2 ? 1 : context.width / window.innerWidth;
   const scaleY = heightDiff < 2 ? 1 : context.height / window.innerHeight;
   const selection = currentSelection;
+  const submittedSelection = {
+    x: Math.floor(context.x + selection.x * scaleX),
+    y: Math.floor(context.y + selection.y * scaleY),
+    width: Math.ceil(selection.width * scaleX),
+    height: Math.ceil(selection.height * scaleY)
+  };
   resetSelection();
   setReadyState(false);
 
   try {
     await invoke('complete_capture', {
-      selection: {
-        x: Math.floor(context.x + selection.x * scaleX),
-        y: Math.floor(context.y + selection.y * scaleY),
-        width: Math.ceil(selection.width * scaleX),
-        height: Math.ceil(selection.height * scaleY)
-      }
+      selection: submittedSelection
     });
   } finally {
     isSubmitting = false;
