@@ -43,21 +43,43 @@ pub fn complete_capture(
     state: State<'_, AppState>,
     selection: SelectionRect,
 ) -> Result<CaptureRecord, FlickError> {
-    if let Some(window) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
-        window.hide()?;
-    }
-
+    #[cfg(target_os = "macos")]
     let image = {
-        let snapshots = state
-            .capture_snapshots
-            .lock()
-            .map_err(|_| FlickError::Message("capture snapshots mutex poisoned".into()))?;
-        state.capture_service.capture_selection(&selection, &snapshots)?
+        use objc2_app_kit::NSWindow;
+
+        let overlay = app
+            .get_webview_window(CAPTURE_WINDOW_LABEL)
+            .ok_or_else(|| FlickError::Message("capture overlay window not found".into()))?;
+        let ns_window = overlay.ns_window()?;
+        let window: &NSWindow = unsafe { &*ns_window.cast() };
+        let window_number = window.windowNumber() as u32;
+        let image = state
+            .capture_service
+            .capture_selection_below_window(&selection, window_number)?;
+        overlay.hide()?;
+        image
     };
 
-    if let Ok(mut guard) = state.capture_snapshots.lock() {
-        guard.clear();
-    }
+    #[cfg(not(target_os = "macos"))]
+    let image = {
+        if let Some(window) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
+            window.hide()?;
+        }
+
+        let image = {
+            let snapshots = state
+                .capture_snapshots
+                .lock()
+                .map_err(|_| FlickError::Message("capture snapshots mutex poisoned".into()))?;
+            state.capture_service.capture_selection(&selection, &snapshots)?
+        };
+
+        if let Ok(mut guard) = state.capture_snapshots.lock() {
+            guard.clear();
+        }
+
+        image
+    };
     state.capture_service.copy_to_clipboard(&image)?;
 
     let id = Uuid::new_v4().to_string();
@@ -209,7 +231,9 @@ pub fn begin_capture_session(
     state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
     prepare_capture_context(app, state)?;
+    #[cfg(not(target_os = "macos"))]
     let snapshots = state.capture_service.capture_all_screens()?;
+    #[cfg(not(target_os = "macos"))]
     {
         let mut guard = state
             .capture_snapshots

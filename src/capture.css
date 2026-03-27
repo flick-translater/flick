@@ -2,6 +2,10 @@
   font-family: "SF Pro Display", "PingFang SC", sans-serif;
 }
 
+* {
+  box-sizing: border-box;
+}
+
 html,
 body,
 #capture-root,

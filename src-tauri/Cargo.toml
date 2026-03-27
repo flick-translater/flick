@@ -20,3 +20,7 @@ tauri-plugin-autostart = "2.5.1"
 tauri-plugin-global-shortcut = "2.3.1"
 thiserror = "2.0.17"
 uuid = { version = "1.18.1", features = ["v4", "serde"] }
+
+[target."cfg(target_os = \"macos\")".dependencies]
+core-graphics = "0.25.0"
+objc2-app-kit = "0.3.2"

@@ -46,6 +46,7 @@ fn main() {
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Regular);
             ensure_main_window(app.handle())?;
+            ensure_capture_window(app.handle())?;
             let state = build_state(app.handle())?;
             app.manage(state);
 
