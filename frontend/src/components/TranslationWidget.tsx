@@ -78,7 +78,7 @@ export default function TranslationWidget({ payload, onClose, standalone = false
 
   return (
     <div className={standalone
-      ? 'flex h-screen flex-col overflow-hidden bg-surface'
+      ? 'flex h-screen flex-col overflow-hidden rounded-[18px] border border-outline-variant/30 bg-surface shadow-2xl'
       : 'fixed inset-x-3 bottom-3 top-24 z-50 flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-xl border border-outline-variant/30 shadow-2xl duration-300 animate-in fade-in glass-panel sm:left-auto sm:right-4 sm:w-[min(480px,calc(100vw-2rem))] lg:right-8 lg:top-20 lg:h-[min(640px,calc(100vh-6rem))] lg:max-h-none'}
     >
       {/* Header */}
@@ -89,7 +89,7 @@ export default function TranslationWidget({ payload, onClose, standalone = false
         }}
       >
         <div className="flex items-center gap-2">
-          <span className="font-headline font-bold text-sm tracking-tight text-on-surface">Flick</span>
+          <span className="cursor-default font-headline text-2xl font-black leading-tight tracking-tight text-primary">Flick</span>
         </div>
         <div className="flex gap-1">
           <button

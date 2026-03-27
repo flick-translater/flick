@@ -396,7 +396,9 @@ pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWind
     .visible(false)
     .focused(false)
     .always_on_top(false)
+    .transparent(true)
     .decorations(false)
+    .shadow(true)
     .build()
 }
 
