@@ -165,8 +165,19 @@ pub fn prepare_for_capture_session(
     app: &AppHandle,
     state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
+    let started_at = Instant::now();
     let overlay = collect_overlay_setup(app)?;
+    eprintln!(
+        "capture-perf: collect_overlay_setup duration_ms={} monitors={}",
+        started_at.elapsed().as_millis(),
+        overlay.geometry.len()
+    );
+    let overlay_started_at = Instant::now();
     frozen_overlay::show_preparing_overlay(app, &overlay.geometry)?;
+    eprintln!(
+        "capture-perf: prepare_for_capture_session duration_ms={}",
+        overlay_started_at.elapsed().as_millis()
+    );
     remember_previous_frontmost_app(state);
 
     if let Some(window) = app.get_webview_window("main") {
@@ -329,10 +340,12 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
 }
 
 fn run_native_capture_session(app: AppHandle, session_id: u64) {
+    let session_started_at = Instant::now();
     // Let AppKit present the blocker panels before the expensive screen freeze starts.
     thread::sleep(Duration::from_millis(32));
 
     let state = app.state::<AppState>();
+    let snapshot_started_at = Instant::now();
     if let Err(error) = cache_frozen_desktop_snapshot(&app, &state) {
         if is_active_session(session_id) {
             emit_capture_status(&app, "capture-error", error.to_string());
@@ -340,11 +353,16 @@ fn run_native_capture_session(app: AppHandle, session_id: u64) {
         }
         return;
     }
+    eprintln!(
+        "capture-perf: cache_frozen_snapshot duration_ms={}",
+        snapshot_started_at.elapsed().as_millis()
+    );
 
     if !is_active_session(session_id) {
         return;
     }
 
+    let overlay_started_at = Instant::now();
     if let Err(error) = show_native_overlay(&app) {
         if is_active_session(session_id) {
             emit_capture_status(&app, "capture-error", error.to_string());
@@ -352,6 +370,11 @@ fn run_native_capture_session(app: AppHandle, session_id: u64) {
         }
         return;
     }
+    eprintln!(
+        "capture-perf: start_interaction_ready duration_ms={} total_ms={}",
+        overlay_started_at.elapsed().as_millis(),
+        session_started_at.elapsed().as_millis()
+    );
 
     run_native_capture_loop(app, session_id);
 }

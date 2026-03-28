@@ -27,6 +27,8 @@ const ACCENT_RED: f64 = 0.45;
 const ACCENT_GREEN: f64 = 0.74;
 const ACCENT_BLUE: f64 = 1.0;
 const ACCENT_ALPHA: f64 = 1.0;
+const PREPARING_BLOCKER_ALPHA: f64 = 0.12;
+const INTERACTIVE_BLOCKER_ALPHA: f64 = 0.001;
 
 #[derive(Debug, Default)]
 struct FrozenOverlayState {
@@ -82,6 +84,7 @@ pub(super) fn show_preparing_overlay(
     geometry: &[SelectionRect],
 ) -> Result<(), FlickError> {
     let geometry = geometry.to_vec();
+    let started_at = std::time::Instant::now();
 
     app.run_on_main_thread(move || {
         let mtm = MainThreadMarker::new().expect("main thread marker unavailable");
@@ -90,6 +93,7 @@ pub(super) fn show_preparing_overlay(
             .expect("frozen overlay mutex poisoned");
         ensure_blocker_windows(&mut state, mtm, geometry.len());
         for (window, rect) in state.blocker_windows.iter().zip(geometry.iter()) {
+            set_window_background(*window, PREPARING_BLOCKER_ALPHA);
             set_window_frame(*window, rect, coordinate_space_for(rect));
             show_window(*window);
         }
@@ -97,6 +101,10 @@ pub(super) fn show_preparing_overlay(
             hide_window(*window);
         }
     })?;
+    eprintln!(
+        "capture-perf: preparing_overlay duration_ms={}",
+        started_at.elapsed().as_millis()
+    );
     Ok(())
 }
 
@@ -111,6 +119,7 @@ pub(super) fn show_native_overlay(
         .map(|snapshot| snapshot.bounds.clone())
         .collect::<Vec<_>>();
     let coordinate_space = build_coordinate_space(&geometry);
+    let started_at = std::time::Instant::now();
 
     app.run_on_main_thread(move || {
         let mtm = MainThreadMarker::new().expect("main thread marker unavailable");
@@ -173,6 +182,7 @@ pub(super) fn show_native_overlay(
             show_window(*window);
         }
         for (window, rect) in state.blocker_windows.iter().zip(geometry.iter()) {
+            set_window_background(*window, INTERACTIVE_BLOCKER_ALPHA);
             set_window_frame(*window, rect, coordinate_space);
             show_window(*window);
         }
@@ -189,6 +199,10 @@ pub(super) fn show_native_overlay(
 
         request_redraw_locked(&state);
     })?;
+    eprintln!(
+        "capture-perf: frozen_overlay duration_ms={}",
+        started_at.elapsed().as_millis()
+    );
     Ok(())
 }
 
@@ -386,6 +400,12 @@ fn show_window(window: WindowHandle) {
 fn hide_window(window: WindowHandle) {
     unsafe {
         window_ref(window).orderOut(None);
+    }
+}
+
+fn set_window_background(window: WindowHandle, alpha: f64) {
+    unsafe {
+        window_ref(window).setBackgroundColor(Some(&panel_color(0.0, 0.0, 0.0, alpha)));
     }
 }
 
