@@ -9,7 +9,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     sync::{Mutex, OnceLock},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
@@ -31,9 +31,7 @@ use crate::{
 use overlay::{OverlayVisuals, collect_overlay_setup};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(16);
-const FAILSAFE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const DRAG_THRESHOLD: f64 = 4.0;
-const SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 const BORDER_THICKNESS: f64 = 3.0;
 const DIM_ALPHA: f64 = 0.1;
 const ESCAPE_KEY_CODE: u16 = 0x35;
@@ -82,8 +80,6 @@ pub fn begin_interactive_capture_session(
 
     let app_handle = app.clone();
     thread::spawn(move || run_native_capture_session(app_handle, session_id));
-    let app_handle = app.clone();
-    thread::spawn(move || run_capture_failsafe(app_handle, session_id));
     install_input_event_tap(app, session_id)?;
 
     Ok(())
@@ -210,7 +206,6 @@ pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
 }
 
 fn run_native_capture_loop(app: AppHandle, session_id: u64) {
-    let started_at = Instant::now();
     let mut drag_anchor: Option<CursorPosition> = None;
     let mut dragging = false;
     let mut active_selection: Option<SelectionRect> = None;
@@ -222,7 +217,7 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
             break;
         }
 
-        if started_at.elapsed() >= SESSION_TIMEOUT || escape_key_is_down() {
+        if escape_key_is_down() {
             let _ = crate::features::capture::cancel_capture(&app);
             break;
         }
@@ -333,23 +328,6 @@ fn run_native_capture_session(app: AppHandle, session_id: u64) {
     }
 
     run_native_capture_loop(app, session_id);
-}
-
-fn run_capture_failsafe(app: AppHandle, session_id: u64) {
-    let started_at = Instant::now();
-
-    loop {
-        if !is_active_session(session_id) {
-            break;
-        }
-
-        if escape_key_is_down() || started_at.elapsed() >= SESSION_TIMEOUT {
-            let _ = crate::features::capture::cancel_capture(&app);
-            break;
-        }
-
-        thread::sleep(FAILSAFE_POLL_INTERVAL);
-    }
 }
 
 fn selection_from_points(start: &CursorPosition, end: &CursorPosition) -> SelectionRect {
