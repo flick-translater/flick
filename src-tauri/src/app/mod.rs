@@ -14,11 +14,9 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 
-#[cfg(not(target_os = "macos"))]
-use crate::services::ScreenCaptureService;
 use crate::{
     commands,
-    models::{AppSettings, CaptureContexts, CaptureRecord},
+    models::{AppSettings, CaptureRecord},
     services::{CachedScreenCapture, MockOcrService, MockTranslationService, SettingsStore},
 };
 
@@ -26,7 +24,6 @@ pub mod windows;
 
 /// Shared application state injected into Tauri commands and feature modules.
 pub struct AppState {
-    pub capture_contexts: Mutex<CaptureContexts>,
     pub capture_snapshots: Mutex<Vec<CachedScreenCapture>>,
     pub history: Mutex<VecDeque<CaptureRecord>>,
     pub data_dir: PathBuf,
@@ -38,8 +35,6 @@ pub struct AppState {
     pub capture_previous_frontmost_pid: Mutex<Option<i32>>,
     #[cfg(target_os = "macos")]
     pub capture_main_window_suppressed: Mutex<bool>,
-    #[cfg(not(target_os = "macos"))]
-    pub capture_service: ScreenCaptureService,
     pub ocr_service: Arc<MockOcrService>,
     pub translation_service: Arc<MockTranslationService>,
 }
@@ -62,7 +57,6 @@ pub fn run() {
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Regular);
             windows::ensure_main_window(app.handle())?;
-            windows::initialize_capture_windows(app.handle())?;
             windows::ensure_widget_window(app.handle())?;
             let state = build_state(app.handle())?;
             app.manage(state);
@@ -74,13 +68,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::capture::start_capture,
-            commands::capture::focus_capture_window,
-            commands::capture::cancel_capture,
-            commands::capture::complete_capture,
-            commands::capture::get_global_cursor_position,
-            commands::capture::refresh_capture_context,
-            commands::capture::get_capture_context,
             commands::capture::list_capture_history,
             commands::capture::get_storage_info,
             commands::capture::pick_screenshot_directory,
@@ -149,7 +136,6 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
     std::fs::create_dir_all(&screenshot_dir)?;
 
     Ok(AppState {
-        capture_contexts: Mutex::new(CaptureContexts::default()),
         capture_snapshots: Mutex::new(Vec::new()),
         history: Mutex::new(VecDeque::new()),
         data_dir,
@@ -161,8 +147,6 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         capture_previous_frontmost_pid: Mutex::new(None),
         #[cfg(target_os = "macos")]
         capture_main_window_suppressed: Mutex::new(false),
-        #[cfg(not(target_os = "macos"))]
-        capture_service: ScreenCaptureService::default(),
         ocr_service: Arc::new(MockOcrService),
         translation_service: Arc::new(MockTranslationService),
     })

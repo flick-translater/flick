@@ -15,5 +15,4 @@ pub use history::{
 pub use io::{open_file_in_default_app, pick_screenshot_directory, read_image_as_data_url};
 pub use session::{
     begin_capture_session, begin_capture_session_with_intent, cancel_capture, complete_capture,
-    focus_capture_window, get_capture_context, get_global_cursor_position, refresh_capture_context,
 };

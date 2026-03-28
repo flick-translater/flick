@@ -6,54 +6,8 @@ use crate::{
     app::{AppState, CaptureIntent},
     error::FlickError,
     features::capture,
-    models::{CaptureContext, CaptureHistory, CursorPosition, SelectionRect, StorageInfo},
+    models::{CaptureHistory, StorageInfo},
 };
-
-#[tauri::command]
-pub fn start_capture(app: AppHandle, state: State<'_, AppState>) -> Result<(), FlickError> {
-    capture::begin_capture_session(&app, &state)
-}
-
-#[tauri::command]
-pub fn focus_capture_window(app: AppHandle, label: String) -> Result<(), FlickError> {
-    capture::focus_capture_window(&app, &label)
-}
-
-#[tauri::command]
-pub fn get_global_cursor_position(app: AppHandle) -> Result<CursorPosition, FlickError> {
-    capture::get_global_cursor_position(&app)
-}
-
-#[tauri::command]
-pub fn cancel_capture(app: AppHandle) -> Result<(), FlickError> {
-    capture::cancel_capture(&app)
-}
-
-#[tauri::command]
-pub fn complete_capture(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    selection: SelectionRect,
-) -> Result<(), FlickError> {
-    capture::complete_capture(&app, &state, selection)
-}
-
-#[tauri::command]
-pub fn refresh_capture_context(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    label: String,
-) -> Result<CaptureContext, FlickError> {
-    capture::refresh_capture_context(&app, &state, &label)
-}
-
-#[tauri::command]
-pub fn get_capture_context(
-    state: State<'_, AppState>,
-    label: String,
-) -> Result<CaptureContext, FlickError> {
-    capture::get_capture_context(&state, &label)
-}
 
 #[tauri::command]
 pub fn list_capture_history(state: State<'_, AppState>) -> Result<CaptureHistory, FlickError> {

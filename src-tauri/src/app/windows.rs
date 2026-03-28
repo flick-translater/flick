@@ -6,7 +6,6 @@ use tauri::{
 };
 
 const MAIN_WINDOW_LABEL: &str = "main";
-const CAPTURE_WINDOW_LABEL_PREFIX: &str = "capture";
 const WIDGET_WINDOW_LABEL: &str = "widget";
 
 pub fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
@@ -47,40 +46,6 @@ pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .title_bar_style(TitleBarStyle::Overlay)
         .traffic_light_position(LogicalPosition::new(16.0, 18.0))
         .build()
-}
-
-pub fn capture_window_label(index: usize) -> String {
-    format!("{CAPTURE_WINDOW_LABEL_PREFIX}-{index}")
-}
-
-pub fn is_capture_window_label(label: &str) -> bool {
-    label.starts_with(&format!("{CAPTURE_WINDOW_LABEL_PREFIX}-"))
-}
-
-pub fn ensure_capture_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
-    // Capture windows are transparent overlays, one per monitor.
-    if let Some(window) = app.get_webview_window(label) {
-        return Ok(window);
-    }
-
-    WebviewWindowBuilder::new(app, label, WebviewUrl::App("capture.html".into()))
-        .transparent(true)
-        .decorations(false)
-        .shadow(false)
-        .skip_taskbar(true)
-        .always_on_top(true)
-        .visible(false)
-        .resizable(false)
-        .build()
-}
-
-pub fn initialize_capture_windows(app: &AppHandle) -> tauri::Result<()> {
-    let monitors = app.available_monitors()?;
-    for index in 0..monitors.len() {
-        let label = capture_window_label(index);
-        ensure_capture_window(app, &label)?;
-    }
-    Ok(())
 }
 
 pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {

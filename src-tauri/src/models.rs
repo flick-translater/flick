@@ -1,25 +1,7 @@
 //! Serializable request/response and state models shared across the backend and frontend.
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CaptureContext {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-pub type CaptureContexts = HashMap<String, CaptureContext>;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CursorPosition {
-    pub x: f64,
-    pub y: f64,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelectionRect {
