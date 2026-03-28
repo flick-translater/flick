@@ -17,7 +17,7 @@ use core_graphics::event::{
     CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
     CallbackResult,
 };
-use objc2_app_kit::{NSApplicationActivationOptions, NSEvent, NSRunningApplication, NSWorkspace};
+use objc2_app_kit::NSEvent;
 use objc2_foundation::NSInteger;
 use tauri::{AppHandle, Manager, State};
 
@@ -163,26 +163,10 @@ fn current_global_cursor_position_from_tap_raw(
 
 pub fn prepare_for_capture_session(
     app: &AppHandle,
-    state: &State<'_, AppState>,
+    _state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
     let overlay = collect_overlay_setup(app)?;
     frozen_overlay::show_preparing_overlay(app, &overlay.geometry)?;
-    remember_previous_frontmost_app(state);
-
-    if let Some(window) = app.get_webview_window("main") {
-        let is_visible = window.is_visible().unwrap_or(false);
-        let is_minimized = window.is_minimized().unwrap_or(false);
-        let is_focused = window.is_focused().unwrap_or(false);
-
-        if is_visible && !is_minimized && !is_focused {
-            suppress_main_window_for_capture(app, state);
-        }
-
-        if !is_visible || is_minimized {
-            let _ = window.hide();
-            let _ = app.show();
-        }
-    }
 
     Ok(())
 }
@@ -205,14 +189,10 @@ pub fn complete_ui_before_capture_processing(
 
 pub fn finalize_capture_session(
     app: &AppHandle,
-    state: &State<'_, AppState>,
-    restore_previous_frontmost: bool,
+    _state: &State<'_, AppState>,
+    _restore_previous_frontmost: bool,
 ) {
     let _ = hide_native_overlay(app);
-    restore_main_window_after_capture(app, state);
-    if restore_previous_frontmost {
-        restore_previous_frontmost_app(state);
-    }
 }
 
 pub fn restore_after_failed_capture(
@@ -226,8 +206,7 @@ pub fn restore_after_failed_capture(
 pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
     clear_active_session();
     let _ = hide_native_overlay(app);
-    restore_main_window_after_capture(app, state);
-    restore_previous_frontmost_app(state);
+    let _ = state;
 }
 
 fn run_native_capture_loop(app: AppHandle, session_id: u64) {
@@ -591,71 +570,6 @@ fn run_input_event_tap(_app: AppHandle, session_id: u64, stop: std::sync::Arc<At
     }
 
     run_loop.remove_source(&source, unsafe { kCFRunLoopCommonModes });
-}
-
-fn remember_previous_frontmost_app(state: &State<'_, AppState>) {
-    let workspace = NSWorkspace::sharedWorkspace();
-    let current_pid = NSRunningApplication::currentApplication().processIdentifier();
-    let previous_pid = workspace
-        .frontmostApplication()
-        .map(|app| app.processIdentifier())
-        .filter(|pid| *pid != current_pid);
-
-    if let Ok(mut guard) = state.capture_previous_frontmost_pid.lock() {
-        *guard = previous_pid;
-    }
-}
-
-fn restore_previous_frontmost_app(state: &State<'_, AppState>) {
-    let previous_pid = match state.capture_previous_frontmost_pid.lock() {
-        Ok(mut guard) => guard.take(),
-        Err(_) => None,
-    };
-
-    if let Some(app) =
-        previous_pid.and_then(NSRunningApplication::runningApplicationWithProcessIdentifier)
-    {
-        let _ = app.activateWithOptions(NSApplicationActivationOptions::empty());
-    }
-}
-
-fn suppress_main_window_for_capture(app: &AppHandle, state: &State<'_, AppState>) {
-    let should_suppress = match state.capture_main_window_suppressed.lock() {
-        Ok(mut guard) => {
-            if *guard {
-                false
-            } else {
-                *guard = true;
-                true
-            }
-        }
-        Err(_) => false,
-    };
-
-    if should_suppress {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.set_focusable(false);
-            let _ = window.set_always_on_bottom(true);
-        }
-    }
-}
-
-fn restore_main_window_after_capture(app: &AppHandle, state: &State<'_, AppState>) {
-    let should_restore = match state.capture_main_window_suppressed.lock() {
-        Ok(mut guard) => {
-            let value = *guard;
-            *guard = false;
-            value
-        }
-        Err(_) => false,
-    };
-
-    if should_restore {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.set_always_on_bottom(false);
-            let _ = window.set_focusable(true);
-        }
-    }
 }
 
 unsafe extern "C" {
