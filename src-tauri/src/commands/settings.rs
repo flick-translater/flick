@@ -1,3 +1,5 @@
+//! Thin Tauri command adapters for settings and app integration points.
+
 use std::{fs, path::PathBuf};
 
 use tauri::{AppHandle, State};

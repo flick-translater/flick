@@ -1,3 +1,5 @@
+//! Replaceable infrastructure services used by the feature layer.
+
 mod ocr;
 mod screen_capture;
 mod settings;

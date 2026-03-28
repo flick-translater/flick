@@ -1,3 +1,8 @@
+//! Capture feature composition root.
+//!
+//! Commands call into this module; the internal split keeps session flow, storage concerns,
+//! file IO helpers, and platform branches isolated from one another.
+
 mod history;
 mod io;
 mod platform;

@@ -1,3 +1,5 @@
+//! Thin Tauri command adapters for the capture feature.
+
 use tauri::{AppHandle, State};
 
 use crate::{

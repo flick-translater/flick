@@ -1,3 +1,5 @@
+//! Non-macOS capture-session behavior.
+
 use tauri::{AppHandle, Manager, State};
 
 use crate::{
@@ -14,6 +16,7 @@ pub fn prepare_for_capture_session(
     _app: &AppHandle,
     state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
+    // On these platforms we capture the full frame first and crop the final selection later.
     let snapshots = state.capture_service.capture_all_screens()?;
     let mut guard = state
         .capture_snapshots

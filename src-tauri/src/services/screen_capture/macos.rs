@@ -1,3 +1,5 @@
+//! macOS capture backend based on Core Graphics.
+
 use anyhow::anyhow;
 use image::{ImageBuffer, Rgba};
 
@@ -32,6 +34,7 @@ pub fn capture_selection(
 
     let width = cg_image.width();
     let height = cg_image.height();
+    // Core Graphics may pad each row, so normalize the buffer before converting color channels.
     let clean_buf = remove_extra_data(
         width,
         height,

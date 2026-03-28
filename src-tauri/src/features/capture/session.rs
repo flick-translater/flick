@@ -1,3 +1,8 @@
+//! Capture workflow orchestration.
+//!
+//! This module owns the end-to-end screenshot session: overlay preparation, final image capture,
+//! persistence, and the optional OCR + translation follow-up path.
+
 use std::{sync::MutexGuard, thread};
 
 use chrono::Utc;
@@ -83,6 +88,7 @@ pub fn complete_capture(
 
     let app_handle = app.clone();
     let should_restore_previous_frontmost = intent == CaptureIntent::Capture;
+    // The expensive capture, disk IO, and OCR/translation chain runs off the UI thread.
     thread::spawn(move || {
         let run = || -> Result<(), FlickError> {
             let capture_service = ScreenCaptureService::default();
@@ -104,6 +110,7 @@ pub fn complete_capture(
                 &id[..8]
             ));
 
+            // Persist enough metadata for history browsing without keeping image bytes in memory.
             let record = CaptureRecord {
                 id,
                 created_at,
@@ -129,6 +136,7 @@ pub fn complete_capture(
             drop(history_guard);
 
             emit_capture_status(&app_handle, "capture-finished", &record);
+            // Translate mode extends the plain capture flow instead of branching before capture.
             if intent == CaptureIntent::Translate {
                 let ocr = ocr::run_with_service(
                     ocr_service.as_ref(),
@@ -237,6 +245,7 @@ pub fn begin_capture_session_with_intent(
 }
 
 fn prepare_capture_context(app: &AppHandle, state: &State<'_, AppState>) -> Result<(), FlickError> {
+    // Rebuild overlay geometry from the current monitor layout on every session start.
     let monitors = app.available_monitors()?;
     let mut contexts = Vec::with_capacity(monitors.len());
 
@@ -299,6 +308,7 @@ fn open_capture_overlay(app: &AppHandle) -> Result<(), FlickError> {
     let mut focus_label = capture_windows
         .first()
         .map(|window| window.label().to_string());
+    // Prefer focusing the overlay on the monitor that currently contains the cursor.
     if let Ok(cursor) = get_global_cursor_position(app) {
         if let Some((label, _)) = app
             .state::<AppState>()

@@ -1,3 +1,8 @@
+//! Cross-platform screenshot service facade.
+//!
+//! The feature layer talks only to this facade; platform-specific capture code stays behind
+//! conditional modules so the outer workflow does not need OS branching everywhere.
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(not(target_os = "macos"))]
@@ -16,6 +21,7 @@ use screenshots::Screen;
 
 #[cfg(not(target_os = "macos"))]
 #[derive(Clone)]
+/// Cached full-screen snapshot used on platforms where region capture is derived from a full frame.
 pub struct CachedScreenCapture {
     pub display_x: i32,
     pub display_y: i32,
@@ -26,6 +32,7 @@ pub struct CachedScreenCapture {
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Default)]
+/// Placeholder type so the higher layers can stay platform-agnostic on macOS.
 pub struct CachedScreenCapture;
 
 #[derive(Default)]
@@ -66,6 +73,7 @@ impl ScreenCaptureService {
         selection: &SelectionRect,
         cached_screens: &[CachedScreenCapture],
     ) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+        // Delegate region extraction to the active platform module.
         #[cfg(target_os = "macos")]
         {
             let _ = cached_screens;
@@ -79,6 +87,7 @@ impl ScreenCaptureService {
     }
 
     pub fn copy_to_clipboard(&self, image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> anyhow::Result<()> {
+        // Clipboard integration is shared, so it stays in the facade instead of per-platform code.
         let mut clipboard = Clipboard::new().context("failed to access clipboard")?;
         let width = usize::try_from(image.width()).context("invalid image width")?;
         let height = usize::try_from(image.height()).context("invalid image height")?;

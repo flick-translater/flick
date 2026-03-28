@@ -1,3 +1,5 @@
+//! Thin Tauri command adapters for translation.
+
 use tauri::State;
 
 use crate::{

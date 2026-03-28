@@ -1,3 +1,5 @@
+//! OCR feature entry points.
+
 use crate::{
     app::AppState,
     error::FlickError,
@@ -13,5 +15,6 @@ pub fn run_with_service(
     service: &dyn OcrService,
     request: OcrRequest,
 ) -> Result<OcrResponse, FlickError> {
+    // The feature layer depends only on the trait, which keeps provider replacement cheap.
     service.run(request).map_err(Into::into)
 }

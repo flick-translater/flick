@@ -1,3 +1,5 @@
+//! Non-macOS capture backend that crops from cached full-screen snapshots.
+
 use anyhow::{Context, anyhow};
 use image::{ImageBuffer, Rgba, imageops};
 
@@ -36,6 +38,7 @@ pub fn capture_selection(
         return Err(anyhow!("selection is outside of the active display"));
     }
 
+    // Convert logical selection coordinates back into the captured bitmap coordinate space.
     let scale_x = screen.image.width() as f64 / screen.display_width.max(1) as f64;
     let scale_y = screen.image.height() as f64 / screen.display_height.max(1) as f64;
 

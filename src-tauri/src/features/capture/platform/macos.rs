@@ -1,3 +1,5 @@
+//! macOS-specific capture-session behavior.
+
 use tauri::{AppHandle, Manager, State};
 
 use crate::{
@@ -41,6 +43,7 @@ pub fn prepare_for_capture_session(
     app: &AppHandle,
     state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
+    // Remember the previously focused app so plain screenshot mode can hand focus back cleanly.
     remember_previous_frontmost_app(state);
 
     if let Some(window) = app.get_webview_window("main") {
@@ -74,6 +77,7 @@ pub fn complete_ui_before_capture_processing(
         .filter(|(label, _)| crate::app::windows::is_capture_window_label(label))
         .map(|(_, overlay)| overlay)
         .collect::<Vec<_>>();
+    // Hide overlays on the main thread before taking the actual screenshot.
     for overlay in overlays {
         let ns_window = overlay.ns_window()? as usize;
         app.run_on_main_thread(move || {

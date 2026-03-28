@@ -1,3 +1,5 @@
+//! Translation feature entry points.
+
 use tauri::{AppHandle, Emitter};
 
 use crate::{
@@ -15,6 +17,7 @@ pub fn run_with_service(
     service: &dyn TranslationService,
     request: TranslateRequest,
 ) -> Result<TranslateResponse, FlickError> {
+    // Keeping translation behind a trait lets the widget flow switch providers without API churn.
     service.translate(request).map_err(Into::into)
 }
 
@@ -24,6 +27,7 @@ pub fn emit_translation_ready(
     source_text: &str,
     translation: TranslateResponse,
 ) -> Result<(), FlickError> {
+    // Widget payload shape stays centralized here so command/session code does not duplicate it.
     let payload = serde_json::json!({
         "imagePath": image_path,
         "sourceText": source_text,

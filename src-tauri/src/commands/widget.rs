@@ -1,3 +1,5 @@
+//! Thin Tauri command adapters for the floating translation widget.
+
 use std::sync::mpsc;
 
 use tauri::AppHandle;

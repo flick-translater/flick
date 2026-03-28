@@ -1,3 +1,5 @@
+//! Small JSON-backed persistence for app settings.
+
 use std::{fs, path::PathBuf};
 
 use serde::{Serialize, de::DeserializeOwned};
@@ -34,6 +36,7 @@ impl SettingsStore {
     }
 
     fn save_json<T: Serialize>(&self, value: &T) -> anyhow::Result<()> {
+        // Ensure the parent directory exists before we write the pretty-printed JSON file.
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }

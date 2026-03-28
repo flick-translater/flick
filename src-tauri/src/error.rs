@@ -1,3 +1,5 @@
+//! Application-level error type returned to the frontend.
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]

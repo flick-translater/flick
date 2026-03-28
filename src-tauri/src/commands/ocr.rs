@@ -1,3 +1,5 @@
+//! Thin Tauri command adapters for OCR.
+
 use tauri::State;
 
 use crate::{

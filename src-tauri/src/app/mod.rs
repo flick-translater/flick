@@ -1,3 +1,5 @@
+//! Application bootstrap and shared runtime state.
+
 use std::{
     collections::VecDeque,
     path::PathBuf,
@@ -22,6 +24,7 @@ use crate::{
 
 pub mod windows;
 
+/// Shared application state injected into Tauri commands and feature modules.
 pub struct AppState {
     pub capture_contexts: Mutex<CaptureContexts>,
     pub capture_snapshots: Mutex<Vec<CachedScreenCapture>>,
@@ -43,10 +46,13 @@ pub struct AppState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureIntent {
+    /// Plain screenshot flow.
     Capture,
+    /// Screenshot followed by OCR + translation flow.
     Translate,
 }
 
+/// Build and run the Tauri desktop application.
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
@@ -114,6 +120,7 @@ pub fn run() {
 }
 
 fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
+    // All runtime data lives under the app cache directory so the app bundle stays clean.
     let data_dir = app
         .path()
         .app_cache_dir()
@@ -126,6 +133,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
 
     let settings_store = SettingsStore::new(data_dir.join("settings.json"));
     let mut settings = settings_store.load_settings()?;
+    // When the user has not picked a UI language yet, initialize it from the system locale.
     if !settings.interface_language_set {
         settings.interface_language = detect_system_language();
         settings.interface_language_set = false;
@@ -175,6 +183,7 @@ fn detect_system_language() -> String {
 }
 
 fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
+    // Keep tray actions minimal and map them back to app-level intents.
     let show = MenuItemBuilder::with_id(MenuId::new("show"), "显示主界面").build(app)?;
     let capture = MenuItemBuilder::with_id(MenuId::new("capture"), "开始截图").build(app)?;
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
@@ -214,6 +223,7 @@ fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
 }
 
 pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
+    // Two global actions are exposed today, so we fail fast on conflicting bindings.
     let global_shortcut = app.global_shortcut();
 
     if settings.capture_shortcut == settings.translate_shortcut {

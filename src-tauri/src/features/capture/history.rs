@@ -1,3 +1,5 @@
+//! Capture history and screenshot storage management.
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -92,6 +94,7 @@ pub fn prune_capture_history(
     screenshot_dir: &Path,
     max_screenshots: u32,
 ) -> Result<Vec<CaptureRecord>, FlickError> {
+    // Storage is bounded eagerly so the screenshot directory cannot grow without limit.
     let records = load_capture_history(screenshot_dir)?;
     let keep_count = max_screenshots.max(1) as usize;
 

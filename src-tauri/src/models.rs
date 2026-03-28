@@ -1,3 +1,5 @@
+//! Serializable request/response and state models shared across the backend and frontend.
+
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};

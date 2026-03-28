@@ -1,3 +1,8 @@
+//! Platform bridge for capture-session behavior.
+//!
+//! This layer covers the parts that differ by OS beyond raw image capture, such as overlay
+//! cleanup, main-window suppression, and snapshot preparation.
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(not(target_os = "macos"))]
@@ -27,6 +32,7 @@ pub fn capture_image(
     selection: &SelectionRect,
     cached_screens: &[CachedScreenCapture],
 ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, FlickError> {
+    // Image acquisition still goes through the service facade so the feature layer stays narrow.
     capture_service
         .capture_selection(selection, cached_screens)
         .map_err(Into::into)

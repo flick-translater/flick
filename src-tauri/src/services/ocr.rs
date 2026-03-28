@@ -1,3 +1,5 @@
+//! OCR service abstraction plus the current mock implementation.
+
 use crate::models::{OcrRequest, OcrResponse, OcrTextBlock};
 
 pub trait OcrService: Send + Sync {
@@ -8,6 +10,7 @@ pub struct MockOcrService;
 
 impl OcrService for MockOcrService {
     fn run(&self, request: OcrRequest) -> anyhow::Result<OcrResponse> {
+        // The mock keeps the OCR pipeline wired while the real provider is still replaceable.
         Ok(OcrResponse {
             provider: "mock-ocr".into(),
             text: format!(

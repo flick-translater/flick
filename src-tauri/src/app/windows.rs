@@ -1,3 +1,5 @@
+//! Window creation and visibility helpers.
+
 use tauri::{
     ActivationPolicy, AppHandle, Emitter, LogicalPosition, Manager, TitleBarStyle, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder,
@@ -27,6 +29,7 @@ pub fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    // Lazily create the main window so setup and reopen paths can share the same entry.
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         return Ok(window);
     }
@@ -55,6 +58,7 @@ pub fn is_capture_window_label(label: &str) -> bool {
 }
 
 pub fn ensure_capture_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
+    // Capture windows are transparent overlays, one per monitor.
     if let Some(window) = app.get_webview_window(label) {
         return Ok(window);
     }
@@ -80,6 +84,7 @@ pub fn initialize_capture_windows(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    // The translation widget is persistent and reused across captures.
     if let Some(window) = app.get_webview_window(WIDGET_WINDOW_LABEL) {
         return Ok(window);
     }
