@@ -2,11 +2,7 @@
 
 use tauri::{AppHandle, State};
 
-use crate::{
-    app::AppState,
-    error::FlickError,
-    services::CachedScreenCapture,
-};
+use crate::{app::AppState, error::FlickError, services::CachedScreenCapture};
 
 pub fn begin_interactive_capture_session(
     _app: &AppHandle,

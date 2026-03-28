@@ -4,8 +4,6 @@ use crate::{error::FlickError, models::SelectionRect};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct CoordinateSpace {
-    pub min_x: f64,
-    pub max_x: f64,
     pub min_y: f64,
     pub max_y: f64,
 }
@@ -13,7 +11,6 @@ pub(super) struct CoordinateSpace {
 #[derive(Debug, Clone)]
 pub(super) struct OverlaySetup {
     pub geometry: Vec<SelectionRect>,
-    pub coordinate_space: CoordinateSpace,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -46,42 +43,7 @@ pub(super) fn collect_overlay_setup(app: &AppHandle) -> Result<OverlaySetup, Fli
             }
         })
         .collect::<Vec<_>>();
-
-    let coordinate_space = build_coordinate_space(&geometry);
-    Ok(OverlaySetup {
-        geometry,
-        coordinate_space,
-    })
-}
-
-fn build_coordinate_space(geometry: &[SelectionRect]) -> CoordinateSpace {
-    let min_x = geometry
-        .iter()
-        .map(|rect| rect.x as f64)
-        .reduce(f64::min)
-        .unwrap_or(0.0);
-    let max_x = geometry
-        .iter()
-        .map(|rect| rect.x as f64 + rect.width as f64)
-        .reduce(f64::max)
-        .unwrap_or(0.0);
-    let min_y = geometry
-        .iter()
-        .map(|rect| rect.y as f64)
-        .reduce(f64::min)
-        .unwrap_or(0.0);
-    let max_y = geometry
-        .iter()
-        .map(|rect| rect.y as f64 + rect.height as f64)
-        .reduce(f64::max)
-        .unwrap_or(0.0);
-
-    CoordinateSpace {
-        min_x,
-        max_x,
-        min_y,
-        max_y,
-    }
+    Ok(OverlaySetup { geometry })
 }
 
 pub(super) fn border_rects(selection: SelectionRect, border_thickness: u32) -> [SelectionRect; 4] {

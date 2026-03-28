@@ -1,43 +1,41 @@
 //! macOS-specific capture-session behavior.
 
-#[path = "macos_renderer.rs"]
-mod renderer;
+#[path = "macos_frozen_overlay.rs"]
+mod frozen_overlay;
 #[path = "macos_overlay.rs"]
 mod overlay;
-#[path = "macos_nspanel_backend.rs"]
-mod nspanel_backend;
-#[path = "macos_core_graphics_backend.rs"]
-mod core_graphics_backend;
 
 use std::{
+    sync::atomic::{AtomicBool, Ordering},
     sync::{Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
 };
 
-use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained};
-use objc2_app_kit::{
-    NSApplicationActivationOptions, NSBackingStoreType, NSColor, NSCursor, NSEvent, NSPanel,
-    NSRunningApplication, NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
+use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
+use core_graphics::event::{
+    CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+    CallbackResult,
 };
-use objc2_foundation::{NSInteger, NSPoint, NSRect, NSSize};
+use objc2_app_kit::{NSApplicationActivationOptions, NSEvent, NSRunningApplication, NSWorkspace};
+use objc2_foundation::NSInteger;
 use tauri::{AppHandle, Manager, State};
 
+use crate::services::screen_capture::macos_frozen;
 use crate::{
     app::{AppState, windows::emit_capture_status},
     error::FlickError,
     models::SelectionRect,
     services::CachedScreenCapture,
 };
-use overlay::{CoordinateSpace, OverlayVisuals, collect_overlay_setup};
-use renderer::RendererBackend;
+use overlay::{OverlayVisuals, collect_overlay_setup};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(16);
+const FAILSAFE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const DRAG_THRESHOLD: f64 = 4.0;
 const SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 const BORDER_THICKNESS: f64 = 3.0;
 const DIM_ALPHA: f64 = 0.1;
-const FILL_ALPHA: f64 = 0.6;
 const ESCAPE_KEY_CODE: u16 = 0x35;
 const EVENT_SOURCE_STATE_COMBINED_SESSION: i32 = 0;
 
@@ -58,18 +56,10 @@ struct CursorPosition {
 struct NativeCaptureRuntime {
     next_session_id: u64,
     active_session_id: Option<u64>,
-    blocker_panels: Vec<PanelHandle>,
-    dim_panels: Vec<PanelHandle>,
-    fill_panels: Vec<PanelHandle>,
-    border_panels: Vec<PanelHandle>,
-    crosshair_panels: Vec<PanelHandle>,
-    coordinate_space: Option<CoordinateSpace>,
-    overlay_geometry: Vec<SelectionRect>,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct PanelHandle {
-    ptr: usize,
+    input_tap_stop: Option<std::sync::Arc<AtomicBool>>,
+    tap_left_down: bool,
+    tap_right_down: bool,
+    tap_cursor_raw: Option<(f64, f64)>,
 }
 
 fn native_runtime() -> &'static Mutex<NativeCaptureRuntime> {
@@ -90,10 +80,11 @@ pub fn begin_interactive_capture_session(
         runtime.next_session_id
     };
 
-    show_native_overlay(app)?;
-
     let app_handle = app.clone();
-    thread::spawn(move || run_native_capture_loop(app_handle, session_id));
+    thread::spawn(move || run_native_capture_session(app_handle, session_id));
+    let app_handle = app.clone();
+    thread::spawn(move || run_capture_failsafe(app_handle, session_id));
+    install_input_event_tap(app, session_id)?;
 
     Ok(())
 }
@@ -104,6 +95,14 @@ pub fn cancel_interactive_capture_session(_app: &AppHandle, _state: &State<'_, A
 
 fn current_global_cursor_position(app: &AppHandle) -> Result<CursorPosition, FlickError> {
     let location = NSEvent::mouseLocation();
+    current_global_cursor_position_from_nsevent_raw(app, location.x, location.y)
+}
+
+fn current_global_cursor_position_from_nsevent_raw(
+    app: &AppHandle,
+    raw_x: f64,
+    raw_y: f64,
+) -> Result<CursorPosition, FlickError> {
     let monitors = app.available_monitors()?;
     let logical_monitors = monitors
         .iter()
@@ -128,8 +127,37 @@ fn current_global_cursor_position(app: &AppHandle) -> Result<CursorPosition, Fli
         .unwrap_or(0.0);
 
     Ok(CursorPosition {
-        x: location.x,
-        y: max_y - location.y + min_y,
+        x: raw_x,
+        y: max_y - raw_y + min_y,
+    })
+}
+
+fn current_global_cursor_position_from_tap_raw(
+    app: &AppHandle,
+    raw_x: f64,
+    raw_y: f64,
+) -> Result<CursorPosition, FlickError> {
+    let monitors = app.available_monitors()?;
+    let logical_monitors = monitors
+        .iter()
+        .map(|monitor| {
+            let scale = monitor.scale_factor();
+            let x = monitor.position().x as f64 / scale;
+            let y = monitor.position().y as f64 / scale;
+            let width = monitor.size().width as f64 / scale;
+            let height = monitor.size().height as f64 / scale;
+            (x, y, width, height)
+        })
+        .collect::<Vec<_>>();
+    let min_y = logical_monitors
+        .iter()
+        .map(|(_, y, _, _)| *y)
+        .reduce(f64::min)
+        .unwrap_or(0.0);
+
+    Ok(CursorPosition {
+        x: raw_x,
+        y: raw_y + min_y,
     })
 }
 
@@ -137,6 +165,8 @@ pub fn prepare_for_capture_session(
     app: &AppHandle,
     state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
+    let overlay = collect_overlay_setup(app)?;
+    frozen_overlay::show_preparing_overlay(app, &overlay.geometry)?;
     remember_previous_frontmost_app(state);
 
     if let Some(window) = app.get_webview_window("main") {
@@ -159,12 +189,18 @@ pub fn prepare_for_capture_session(
 
 pub fn complete_ui_before_capture_processing(
     app: &AppHandle,
-    _state: &State<'_, AppState>,
+    state: &State<'_, AppState>,
 ) -> Result<Vec<CachedScreenCapture>, FlickError> {
     clear_active_session();
     hide_native_overlay(app)?;
-    thread::sleep(Duration::from_millis(16));
-    Ok(Vec::new())
+    let snapshots = {
+        let mut guard = state
+            .capture_snapshots
+            .lock()
+            .map_err(|_| FlickError::Message("capture snapshot mutex poisoned".into()))?;
+        std::mem::take(&mut *guard)
+    };
+    Ok(snapshots)
 }
 
 pub fn finalize_capture_session(
@@ -220,9 +256,12 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
             }
         };
 
-        let buttons = NSEvent::pressedMouseButtons() as u64;
-        let left_down = (buttons & 0b1) != 0;
-        let right_down = (buttons & 0b10) != 0;
+        let (left_down, right_down, tap_cursor_raw) = capture_input_state();
+        let cursor = if let Some((raw_x, raw_y)) = tap_cursor_raw {
+            current_global_cursor_position_from_tap_raw(&app, raw_x, raw_y).unwrap_or(cursor)
+        } else {
+            cursor
+        };
 
         if right_down && !right_was_down {
             let _ = crate::features::capture::cancel_capture(&app);
@@ -272,7 +311,8 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
 
             if let Some(selection) = final_selection {
                 let state = app.state::<AppState>();
-                if let Err(error) = crate::features::capture::complete_capture(&app, &state, selection)
+                if let Err(error) =
+                    crate::features::capture::complete_capture(&app, &state, selection)
                 {
                     emit_capture_status(&app, "capture-error", error.to_string());
                 }
@@ -285,6 +325,51 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
         left_was_down = left_down;
         right_was_down = right_down;
         thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn run_native_capture_session(app: AppHandle, session_id: u64) {
+    // Let AppKit present the blocker panels before the expensive screen freeze starts.
+    thread::sleep(Duration::from_millis(32));
+
+    let state = app.state::<AppState>();
+    if let Err(error) = cache_frozen_desktop_snapshot(&app, &state) {
+        if is_active_session(session_id) {
+            emit_capture_status(&app, "capture-error", error.to_string());
+            let _ = crate::features::capture::cancel_capture(&app);
+        }
+        return;
+    }
+
+    if !is_active_session(session_id) {
+        return;
+    }
+
+    if let Err(error) = show_native_overlay(&app) {
+        if is_active_session(session_id) {
+            emit_capture_status(&app, "capture-error", error.to_string());
+            let _ = crate::features::capture::cancel_capture(&app);
+        }
+        return;
+    }
+
+    run_native_capture_loop(app, session_id);
+}
+
+fn run_capture_failsafe(app: AppHandle, session_id: u64) {
+    let started_at = Instant::now();
+
+    loop {
+        if !is_active_session(session_id) {
+            break;
+        }
+
+        if escape_key_is_down() || started_at.elapsed() >= SESSION_TIMEOUT {
+            let _ = crate::features::capture::cancel_capture(&app);
+            break;
+        }
+
+        thread::sleep(FAILSAFE_POLL_INTERVAL);
     }
 }
 
@@ -316,370 +401,83 @@ fn is_selection_large_enough(selection: &SelectionRect, threshold: f64) -> bool 
 }
 
 fn show_native_overlay(app: &AppHandle) -> Result<(), FlickError> {
-    match renderer::active_backend() {
-        RendererBackend::NsPanel => nspanel_backend::show_native_overlay(app),
-        RendererBackend::CoreGraphics => core_graphics_backend::show_native_overlay(app),
+    let snapshots = app
+        .state::<AppState>()
+        .capture_snapshots
+        .lock()
+        .map_err(|_| FlickError::Message("capture snapshot mutex poisoned".into()))?
+        .clone();
+    if snapshots.is_empty() {
+        return Err(FlickError::Message(
+            "missing frozen desktop snapshots".into(),
+        ));
     }
+    frozen_overlay::show_native_overlay(app, &snapshots, overlay_visuals())
 }
 
 fn hide_native_overlay(app: &AppHandle) -> Result<(), FlickError> {
-    match renderer::active_backend() {
-        RendererBackend::NsPanel => nspanel_backend::hide_native_overlay(app),
-        RendererBackend::CoreGraphics => core_graphics_backend::hide_native_overlay(app),
-    }
+    frozen_overlay::hide_native_overlay(app)
 }
 
 fn update_highlight(app: &AppHandle, selection: Option<SelectionRect>) -> Result<(), FlickError> {
-    match renderer::active_backend() {
-        RendererBackend::NsPanel => nspanel_backend::update_highlight(app, selection),
-        RendererBackend::CoreGraphics => core_graphics_backend::update_highlight(app, selection),
-    }
+    frozen_overlay::update_highlight(app, selection)
 }
 
 fn update_crosshair(app: &AppHandle, cursor: &CursorPosition) -> Result<(), FlickError> {
-    match renderer::active_backend() {
-        RendererBackend::NsPanel => nspanel_backend::update_crosshair(app, cursor),
-        RendererBackend::CoreGraphics => core_graphics_backend::update_crosshair(app, cursor),
-    }
+    frozen_overlay::update_crosshair(app, cursor)
 }
 
 fn hide_crosshair(app: &AppHandle) -> Result<(), FlickError> {
-    match renderer::active_backend() {
-        RendererBackend::NsPanel => nspanel_backend::hide_crosshair(app),
-        RendererBackend::CoreGraphics => core_graphics_backend::hide_crosshair(app),
-    }
+    frozen_overlay::hide_crosshair(app)
 }
 
-fn panel_show_native_overlay(app: &AppHandle) -> Result<(), FlickError> {
-    let overlay = collect_overlay_setup(app)?;
-    let overlay_geometry = overlay.geometry;
-    let coordinate_space = overlay.coordinate_space;
-
-    app.run_on_main_thread({
-        let overlay_geometry = overlay_geometry.clone();
-        move || {
-            let mtm = MainThreadMarker::new().expect("main thread marker unavailable");
-            let mut runtime = native_runtime()
-                .lock()
-                .expect("native capture runtime mutex poisoned");
-            runtime.coordinate_space = Some(coordinate_space);
-            runtime.overlay_geometry = overlay_geometry.clone();
-
-            ensure_blocker_panels(&mut runtime, mtm, overlay_geometry.len());
-            ensure_dim_panels(&mut runtime, mtm, overlay_geometry.len());
-            ensure_fill_panels(&mut runtime, mtm);
-            ensure_border_panels(&mut runtime, mtm);
-            ensure_crosshair_panels(&mut runtime, mtm);
-
-            for (panel, geometry) in runtime.blocker_panels.iter().zip(overlay_geometry.iter()) {
-                set_panel_frame(*panel, geometry, coordinate_space);
-                show_panel(*panel);
-            }
-
-            for (panel, geometry) in runtime.dim_panels.iter().zip(overlay_geometry.iter()) {
-                set_panel_frame(*panel, geometry, coordinate_space);
-                show_panel(*panel);
-            }
-
-            for panel in runtime.blocker_panels.iter().skip(overlay_geometry.len()) {
-                hide_panel(*panel);
-            }
-            for panel in runtime.dim_panels.iter().skip(overlay_geometry.len()) {
-                hide_panel(*panel);
-            }
-            for panel in &runtime.fill_panels {
-                hide_panel(*panel);
-            }
-
-            for panel in &runtime.border_panels {
-                hide_panel(*panel);
-            }
-            for panel in &runtime.crosshair_panels {
-                hide_panel(*panel);
-            }
-
-            let cursor = NSCursor::crosshairCursor();
-            cursor.push();
-            cursor.set();
-        }
-    })?;
-
-    Ok(())
-}
-
-fn panel_hide_native_overlay(app: &AppHandle) -> Result<(), FlickError> {
-    app.run_on_main_thread(move || {
-        let runtime = native_runtime()
-            .lock()
-            .expect("native capture runtime mutex poisoned");
-        for panel in &runtime.blocker_panels {
-            hide_panel(*panel);
-        }
-        for panel in &runtime.dim_panels {
-            hide_panel(*panel);
-        }
-        for panel in &runtime.fill_panels {
-            hide_panel(*panel);
-        }
-        for panel in &runtime.border_panels {
-            hide_panel(*panel);
-        }
-        for panel in &runtime.crosshair_panels {
-            hide_panel(*panel);
-        }
-
-        let cursor = NSCursor::currentCursor();
-        cursor.pop();
-    })?;
-    Ok(())
-}
-
-fn panel_update_highlight(
+fn cache_frozen_desktop_snapshot(
     app: &AppHandle,
-    selection: Option<SelectionRect>,
+    state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
-    app.run_on_main_thread(move || {
-        let runtime = native_runtime()
-            .lock()
-            .expect("native capture runtime mutex poisoned");
-        let coordinate_space = match runtime.coordinate_space {
-            Some(coordinate_space) => coordinate_space,
-            None => return,
-        };
-
-        if let Some(selection) = selection {
-            let border_rects = overlay::border_rects(selection.clone(), overlay_visuals().border_thickness);
-            for (panel, rect) in runtime.dim_panels.iter().zip(runtime.overlay_geometry.iter()) {
-                set_panel_frame(*panel, rect, coordinate_space);
-                show_panel(*panel);
-            }
-            for panel in runtime.dim_panels.iter().skip(runtime.overlay_geometry.len()) {
-                hide_panel(*panel);
-            }
-            if let Some(panel) = runtime.fill_panels.first() {
-                set_panel_frame(*panel, &selection, coordinate_space);
-                show_panel(*panel);
-            }
-            for (panel, rect) in runtime.border_panels.iter().zip(border_rects.iter()) {
-                set_panel_frame(*panel, rect, coordinate_space);
-                show_panel(*panel);
-            }
-        } else {
-            for (panel, rect) in runtime
-                .blocker_panels
-                .iter()
-                .zip(runtime.overlay_geometry.iter())
-            {
-                set_panel_frame(*panel, rect, coordinate_space);
-                show_panel(*panel);
-            }
-            for (index, panel) in runtime.dim_panels.iter().enumerate() {
-                if let Some(rect) = runtime.overlay_geometry.get(index) {
-                    set_panel_frame(*panel, rect, coordinate_space);
-                    show_panel(*panel);
-                } else {
-                    hide_panel(*panel);
-                }
-            }
-            for panel in &runtime.fill_panels {
-                hide_panel(*panel);
-            }
-            for panel in &runtime.border_panels {
-                hide_panel(*panel);
-            }
-        }
-    })?;
-    Ok(())
-}
-
-fn ensure_blocker_panels(runtime: &mut NativeCaptureRuntime, mtm: MainThreadMarker, count: usize) {
-    while runtime.blocker_panels.len() < count {
-        runtime.blocker_panels.push(create_panel(
-            mtm,
-            panel_color(0.0, 0.0, 0.0, 0.001),
-            false,
-        ));
+    let overlay = collect_overlay_setup(app)?;
+    let handles = overlay
+        .geometry
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, bounds)| {
+            thread::spawn(move || {
+                let result = macos_frozen::capture_desktop_snapshot(&bounds);
+                (index, result)
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut indexed = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let (index, snapshot) = handle
+            .join()
+            .map_err(|_| FlickError::Message("capture snapshot worker panicked".into()))?;
+        indexed.push((index, snapshot?));
     }
-}
-
-fn ensure_dim_panels(runtime: &mut NativeCaptureRuntime, mtm: MainThreadMarker, count: usize) {
-    let minimum_panels = count.max(1);
-    while runtime.dim_panels.len() < minimum_panels {
-        runtime.dim_panels.push(create_panel_with_level_offset(
-            mtm,
-            panel_color(0.0, 0.0, 0.0, DIM_ALPHA),
-            false,
-            0,
-        ));
-    }
-}
-
-fn ensure_fill_panels(runtime: &mut NativeCaptureRuntime, mtm: MainThreadMarker) {
-    while runtime.fill_panels.len() < 1 {
-        runtime.fill_panels.push(create_panel_with_level_offset(
-            mtm,
-            panel_color(0.2, 0.7, 1.0, FILL_ALPHA),
-            true,
-            2,
-        ));
-    }
-}
-
-fn ensure_border_panels(runtime: &mut NativeCaptureRuntime, mtm: MainThreadMarker) {
-    while runtime.border_panels.len() < 4 {
-        runtime.border_panels.push(create_panel_with_level_offset(
-            mtm,
-            panel_color(0.12, 0.56, 1.0, 0.95),
-            true,
-            3,
-        ));
-    }
-}
-
-fn ensure_crosshair_panels(runtime: &mut NativeCaptureRuntime, mtm: MainThreadMarker) {
-    while runtime.crosshair_panels.len() < 2 {
-        runtime.crosshair_panels.push(create_panel_with_level_offset(
-            mtm,
-            panel_color(1.0, 1.0, 1.0, 0.8),
-            true,
-            4,
-        ));
-    }
-}
-
-fn create_panel(
-    mtm: MainThreadMarker,
-    color: Retained<NSColor>,
-    ignores_mouse_events: bool,
-) -> PanelHandle {
-    create_panel_with_level_offset(mtm, color, ignores_mouse_events, 1)
-}
-
-fn create_panel_with_level_offset(
-    mtm: MainThreadMarker,
-    color: Retained<NSColor>,
-    ignores_mouse_events: bool,
-    level_offset: NSInteger,
-) -> PanelHandle {
-    let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
-        NSPanel::alloc(mtm),
-        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0)),
-        NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
-        NSBackingStoreType::Buffered,
-        false,
-    );
-
-    panel.setOpaque(false);
-    panel.setHasShadow(false);
-    panel.setBackgroundColor(Some(&color));
-    panel.setIgnoresMouseEvents(ignores_mouse_events);
-    panel.setCollectionBehavior(
-        NSWindowCollectionBehavior::CanJoinAllSpaces
-            | NSWindowCollectionBehavior::FullScreenAuxiliary
-            | NSWindowCollectionBehavior::IgnoresCycle
-            | NSWindowCollectionBehavior::Stationary,
-    );
-    panel.setLevel(shielding_window_level() + level_offset);
-    panel.setFloatingPanel(true);
-    panel.setBecomesKeyOnlyIfNeeded(false);
-    unsafe {
-        panel.setReleasedWhenClosed(false);
-    }
-    panel.orderOut(None);
-
-    PanelHandle {
-        ptr: Retained::into_raw(panel) as usize,
-    }
-}
-
-fn panel_color(red: f64, green: f64, blue: f64, alpha: f64) -> Retained<NSColor> {
-    NSColor::colorWithSRGBRed_green_blue_alpha(red, green, blue, alpha)
-}
-
-fn set_panel_frame(panel: PanelHandle, selection: &SelectionRect, coordinate_space: CoordinateSpace) {
-    let rect = cocoa_rect_for_selection(selection, coordinate_space);
-    unsafe {
-        panel_ref(panel).setFrame_display(rect, false);
-    }
-}
-
-fn show_panel(panel: PanelHandle) {
-    unsafe {
-        panel_ref(panel).orderFrontRegardless();
-    }
-}
-
-fn hide_panel(panel: PanelHandle) {
-    unsafe {
-        panel_ref(panel).orderOut(None);
-    }
-}
-
-unsafe fn panel_ref(panel: PanelHandle) -> &'static NSPanel {
-    unsafe { &*(panel.ptr as *const NSPanel) }
-}
-
-fn cocoa_rect_for_selection(selection: &SelectionRect, coordinate_space: CoordinateSpace) -> NSRect {
-    let width = selection.width as f64;
-    let height = selection.height as f64;
-    let y = coordinate_space.max_y - selection.y as f64 - height + coordinate_space.min_y;
-
-    NSRect::new(
-        NSPoint::new(selection.x as f64, y),
-        NSSize::new(width, height),
-    )
-}
-
-fn panel_update_crosshair(app: &AppHandle, cursor: &CursorPosition) -> Result<(), FlickError> {
-    let cursor = cursor.clone();
-    app.run_on_main_thread(move || {
-        let runtime = native_runtime()
-            .lock()
-            .expect("native capture runtime mutex poisoned");
-        let coordinate_space = match runtime.coordinate_space {
-            Some(coordinate_space) => coordinate_space,
-            None => return,
-        };
-        if runtime.crosshair_panels.len() < 2 {
-            return;
-        }
-
-        let horizontal = SelectionRect {
-            x: coordinate_space.min_x.floor() as i32,
-            y: cursor.y.floor() as i32,
-            width: (coordinate_space.max_x - coordinate_space.min_x).ceil().max(1.0) as u32,
-            height: 1,
-        };
-        let vertical = SelectionRect {
-            x: cursor.x.floor() as i32,
-            y: coordinate_space.min_y.floor() as i32,
-            width: 1,
-            height: (coordinate_space.max_y - coordinate_space.min_y).ceil().max(1.0) as u32,
-        };
-
-        set_panel_frame(runtime.crosshair_panels[0], &horizontal, coordinate_space);
-        set_panel_frame(runtime.crosshair_panels[1], &vertical, coordinate_space);
-        show_panel(runtime.crosshair_panels[0]);
-        show_panel(runtime.crosshair_panels[1]);
-    })?;
-    Ok(())
-}
-
-fn panel_hide_crosshair(app: &AppHandle) -> Result<(), FlickError> {
-    app.run_on_main_thread(move || {
-        let runtime = native_runtime()
-            .lock()
-            .expect("native capture runtime mutex poisoned");
-        for panel in &runtime.crosshair_panels {
-            hide_panel(*panel);
-        }
-    })?;
+    indexed.sort_by_key(|(index, _)| *index);
+    let snapshots = indexed
+        .into_iter()
+        .map(|(_, snapshot)| snapshot)
+        .collect::<Vec<_>>();
+    let mut guard = state
+        .capture_snapshots
+        .lock()
+        .map_err(|_| FlickError::Message("capture snapshot mutex poisoned".into()))?;
+    guard.clear();
+    guard.extend(snapshots);
     Ok(())
 }
 
 fn clear_active_session() {
     if let Ok(mut runtime) = native_runtime().lock() {
         runtime.active_session_id = None;
+        if let Some(stop) = runtime.input_tap_stop.take() {
+            stop.store(true, Ordering::SeqCst);
+        }
+        runtime.tap_left_down = false;
+        runtime.tap_right_down = false;
+        runtime.tap_cursor_raw = None;
     }
 }
 
@@ -692,6 +490,107 @@ fn is_active_session(session_id: u64) -> bool {
         .lock()
         .map(|runtime| runtime.active_session_id == Some(session_id))
         .unwrap_or(false)
+}
+
+fn capture_input_state() -> (bool, bool, Option<(f64, f64)>) {
+    native_runtime()
+        .lock()
+        .map(|runtime| {
+            (
+                runtime.tap_left_down,
+                runtime.tap_right_down,
+                runtime.tap_cursor_raw,
+            )
+        })
+        .unwrap_or((false, false, None))
+}
+
+fn update_tap_input_state(event_type: CGEventType, raw_x: f64, raw_y: f64) {
+    if let Ok(mut runtime) = native_runtime().lock() {
+        runtime.tap_cursor_raw = Some((raw_x, raw_y));
+        match event_type {
+            CGEventType::LeftMouseDown => runtime.tap_left_down = true,
+            CGEventType::LeftMouseUp => runtime.tap_left_down = false,
+            CGEventType::RightMouseDown => runtime.tap_right_down = true,
+            CGEventType::RightMouseUp => runtime.tap_right_down = false,
+            CGEventType::OtherMouseDown => {}
+            CGEventType::OtherMouseUp => {}
+            CGEventType::MouseMoved => {}
+            CGEventType::ScrollWheel => {}
+            CGEventType::LeftMouseDragged
+            | CGEventType::RightMouseDragged
+            | CGEventType::OtherMouseDragged => {}
+            _ => {}
+        }
+    }
+}
+
+fn install_input_event_tap(app: &AppHandle, session_id: u64) -> Result<(), FlickError> {
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    {
+        let mut runtime = native_runtime()
+            .lock()
+            .map_err(|_| FlickError::Message("native capture runtime mutex poisoned".into()))?;
+        runtime.input_tap_stop = Some(stop.clone());
+    }
+
+    let app_handle = app.clone();
+    thread::spawn(move || run_input_event_tap(app_handle, session_id, stop));
+    Ok(())
+}
+
+fn run_input_event_tap(_app: AppHandle, session_id: u64, stop: std::sync::Arc<AtomicBool>) {
+    let event_types = vec![
+        CGEventType::LeftMouseDown,
+        CGEventType::LeftMouseUp,
+        CGEventType::LeftMouseDragged,
+        CGEventType::RightMouseDown,
+        CGEventType::RightMouseUp,
+        CGEventType::RightMouseDragged,
+        CGEventType::OtherMouseDown,
+        CGEventType::OtherMouseUp,
+        CGEventType::OtherMouseDragged,
+        CGEventType::MouseMoved,
+        CGEventType::ScrollWheel,
+    ];
+
+    let tap = match CGEventTap::new(
+        CGEventTapLocation::HID,
+        CGEventTapPlacement::HeadInsertEventTap,
+        CGEventTapOptions::Default,
+        event_types,
+        move |_proxy, event_type, _event| {
+            let location = _event.location();
+            update_tap_input_state(event_type, location.x, location.y);
+            if is_active_session(session_id) {
+                CallbackResult::Drop
+            } else {
+                CallbackResult::Keep
+            }
+        },
+    ) {
+        Ok(tap) => tap,
+        Err(()) => return,
+    };
+
+    let source = match tap.mach_port().create_runloop_source(0) {
+        Ok(source) => source,
+        Err(()) => return,
+    };
+
+    let run_loop = CFRunLoop::get_current();
+    run_loop.add_source(&source, unsafe { kCFRunLoopCommonModes });
+    tap.enable();
+
+    while is_active_session(session_id) && !stop.load(Ordering::SeqCst) {
+        let _ = CFRunLoop::run_in_mode(
+            unsafe { kCFRunLoopDefaultMode },
+            Duration::from_millis(50),
+            true,
+        );
+    }
+
+    run_loop.remove_source(&source, unsafe { kCFRunLoopCommonModes });
 }
 
 fn remember_previous_frontmost_app(state: &State<'_, AppState>) {

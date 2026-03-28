@@ -5,8 +5,10 @@
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_frozen;
 
-use std::{borrow::Cow, path::Path};
+use std::{borrow::Cow, path::Path, sync::Arc};
 
 use anyhow::Context;
 use arboard::{Clipboard, ImageData};
@@ -14,8 +16,20 @@ use image::{ImageBuffer, Rgba};
 
 use crate::models::SelectionRect;
 
-#[derive(Clone, Default)]
-pub struct CachedScreenCapture;
+#[derive(Clone)]
+pub struct CachedScreenCapture {
+    pub bounds: SelectionRect,
+    pub image: Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>,
+}
+
+impl CachedScreenCapture {
+    pub fn new(bounds: SelectionRect, image: ImageBuffer<Rgba<u8>, Vec<u8>>) -> Self {
+        Self {
+            bounds,
+            image: Arc::new(image),
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct ScreenCaptureService;
@@ -29,7 +43,10 @@ impl ScreenCaptureService {
         if cfg!(target_os = "macos") {
             #[cfg(target_os = "macos")]
             {
-                let _ = cached_screens;
+                if !cached_screens.is_empty() {
+                    return macos_frozen::capture_from_snapshot(selection, cached_screens);
+                }
+
                 return macos::capture_selection(selection);
             }
         }

@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 
 use crate::{
-    app::{windows::emit_capture_status, AppState, CaptureIntent},
+    app::{AppState, CaptureIntent, windows::emit_capture_status},
     error::FlickError,
     features::{ocr, translation},
     models::{CaptureRecord, OcrRequest, SelectionRect, TranslateRequest},

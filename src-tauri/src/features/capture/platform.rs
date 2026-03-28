@@ -123,7 +123,8 @@ pub fn capture_image(
     cached_screens: &[CachedScreenCapture],
 ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, FlickError> {
     // Image acquisition still goes through the service facade so the feature layer stays narrow.
-    capture_service
+    let image = capture_service
         .capture_selection(selection, cached_screens)
-        .map_err(Into::into)
+        .map_err(FlickError::from)?;
+    Ok(image)
 }
