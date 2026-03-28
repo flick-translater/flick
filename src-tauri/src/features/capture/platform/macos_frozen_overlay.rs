@@ -1,17 +1,11 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
-use core_graphics::{
-    base::kCGRenderingIntentDefault,
-    color_space::CGColorSpace,
-    data_provider::CGDataProvider,
-    image::{CGImage, CGImageAlphaInfo},
-};
 use foreign_types::ForeignType;
 use objc2::{AnyThread, ClassType, MainThreadOnly, define_class, msg_send, rc::Retained};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSCompositingOperation, NSCursor, NSGraphicsContext, NSImage,
     NSRectFill, NSRectFillUsingOperation, NSView, NSWindow, NSWindowCollectionBehavior,
-    NSWindowStyleMask,
+    NSWindowSharingType, NSWindowStyleMask,
 };
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize};
 use tauri::AppHandle;
@@ -84,8 +78,6 @@ pub(super) fn show_preparing_overlay(
     geometry: &[SelectionRect],
 ) -> Result<(), FlickError> {
     let geometry = geometry.to_vec();
-    let started_at = std::time::Instant::now();
-
     app.run_on_main_thread(move || {
         let mtm = MainThreadMarker::new().expect("main thread marker unavailable");
         let mut state = overlay_state()
@@ -93,6 +85,7 @@ pub(super) fn show_preparing_overlay(
             .expect("frozen overlay mutex poisoned");
         ensure_blocker_windows(&mut state, mtm, geometry.len());
         for (window, rect) in state.blocker_windows.iter().zip(geometry.iter()) {
+            set_window_sharing(*window, NSWindowSharingType::None);
             set_window_background(*window, PREPARING_BLOCKER_ALPHA);
             set_window_frame(*window, rect, coordinate_space_for(rect));
             show_window(*window);
@@ -101,10 +94,6 @@ pub(super) fn show_preparing_overlay(
             hide_window(*window);
         }
     })?;
-    eprintln!(
-        "capture-perf: preparing_overlay duration_ms={}",
-        started_at.elapsed().as_millis()
-    );
     Ok(())
 }
 
@@ -119,8 +108,6 @@ pub(super) fn show_native_overlay(
         .map(|snapshot| snapshot.bounds.clone())
         .collect::<Vec<_>>();
     let coordinate_space = build_coordinate_space(&geometry);
-    let started_at = std::time::Instant::now();
-
     app.run_on_main_thread(move || {
         let mtm = MainThreadMarker::new().expect("main thread marker unavailable");
         let mut state = overlay_state()
@@ -182,6 +169,7 @@ pub(super) fn show_native_overlay(
             show_window(*window);
         }
         for (window, rect) in state.blocker_windows.iter().zip(geometry.iter()) {
+            set_window_sharing(*window, NSWindowSharingType::ReadOnly);
             set_window_background(*window, INTERACTIVE_BLOCKER_ALPHA);
             set_window_frame(*window, rect, coordinate_space);
             show_window(*window);
@@ -199,10 +187,6 @@ pub(super) fn show_native_overlay(
 
         request_redraw_locked(&state);
     })?;
-    eprintln!(
-        "capture-perf: frozen_overlay duration_ms={}",
-        started_at.elapsed().as_millis()
-    );
     Ok(())
 }
 
@@ -272,27 +256,11 @@ pub(super) fn hide_crosshair(app: &AppHandle) -> Result<(), FlickError> {
 }
 
 fn make_ns_image(snapshot: &CachedScreenCapture, mtm: MainThreadMarker) -> Retained<NSImage> {
-    let bytes = Arc::new(snapshot.image.as_raw().clone());
-    let provider = CGDataProvider::from_buffer(bytes);
-    let color_space = CGColorSpace::create_device_rgb();
-    let cg_image = CGImage::new(
-        snapshot.image.width() as usize,
-        snapshot.image.height() as usize,
-        8,
-        32,
-        snapshot.image.width() as usize * 4,
-        &color_space,
-        CGImageAlphaInfo::CGImageAlphaLast as u32,
-        &provider,
-        false,
-        kCGRenderingIntentDefault,
-    );
-
     let _ = mtm;
     unsafe {
         msg_send![
             NSImage::alloc(),
-            initWithCGImage: cg_image.as_ptr().cast::<std::ffi::c_void>(),
+            initWithCGImage: snapshot.image.0.as_ptr().cast::<std::ffi::c_void>(),
             size: NSSize::new(snapshot.bounds.width as f64, snapshot.bounds.height as f64)
         ]
     }
@@ -406,6 +374,12 @@ fn hide_window(window: WindowHandle) {
 fn set_window_background(window: WindowHandle, alpha: f64) {
     unsafe {
         window_ref(window).setBackgroundColor(Some(&panel_color(0.0, 0.0, 0.0, alpha)));
+    }
+}
+
+fn set_window_sharing(window: WindowHandle, sharing_type: NSWindowSharingType) {
+    unsafe {
+        window_ref(window).setSharingType(sharing_type);
     }
 }
 

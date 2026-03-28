@@ -12,17 +12,41 @@ use std::{borrow::Cow, path::Path, sync::Arc};
 
 use anyhow::Context;
 use arboard::{Clipboard, ImageData};
+#[cfg(target_os = "macos")]
+use core_graphics::image::CGImage;
 use image::{ImageBuffer, Rgba};
 
 use crate::models::SelectionRect;
 
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+pub struct CachedCgImage(pub CGImage);
+
+#[cfg(target_os = "macos")]
+unsafe impl Send for CachedCgImage {}
+
+#[cfg(target_os = "macos")]
+unsafe impl Sync for CachedCgImage {}
+
 #[derive(Clone)]
 pub struct CachedScreenCapture {
     pub bounds: SelectionRect,
+    #[cfg(target_os = "macos")]
+    pub image: Arc<CachedCgImage>,
+    #[cfg(not(target_os = "macos"))]
     pub image: Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>,
 }
 
 impl CachedScreenCapture {
+    #[cfg(target_os = "macos")]
+    pub fn new(bounds: SelectionRect, image: CGImage) -> Self {
+        Self {
+            bounds,
+            image: Arc::new(CachedCgImage(image)),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub fn new(bounds: SelectionRect, image: ImageBuffer<Rgba<u8>, Vec<u8>>) -> Self {
         Self {
             bounds,

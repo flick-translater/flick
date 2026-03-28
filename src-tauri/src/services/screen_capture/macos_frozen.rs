@@ -7,6 +7,7 @@ use anyhow::{Context, anyhow};
 use core_graphics::{
     display::CGDisplay,
     geometry::{CGPoint, CGRect, CGSize},
+    image::CGImage,
     window::{
         create_image, kCGNullWindowID, kCGWindowImageDefault, kCGWindowListOptionOnScreenOnly,
     },
@@ -24,19 +25,7 @@ pub fn capture_desktop_snapshot(bounds: &SelectionRect) -> anyhow::Result<Cached
         .or_else(|| capture_window_list_image(bounds))
         .ok_or_else(|| anyhow!("failed to capture full desktop snapshot"))?;
 
-    let width = cg_image.width();
-    let height = cg_image.height();
-    let clean_buf = remove_extra_data(
-        width,
-        height,
-        cg_image.bytes_per_row(),
-        cg_image.data().bytes().to_vec(),
-    );
-
-    let image = bgra_to_rgba_image(width as u32, height as u32, clean_buf)
-        .context("failed to convert desktop snapshot to RGBA")?;
-
-    Ok(CachedScreenCapture::new(bounds.clone(), image))
+    Ok(CachedScreenCapture::new(bounds.clone(), cg_image))
 }
 
 fn capture_display_image(bounds: &SelectionRect) -> Option<core_graphics::image::CGImage> {
@@ -110,17 +99,17 @@ pub fn capture_from_snapshot(
         let relative_right = relative_left + intersection.width as f64;
         let relative_bottom = relative_top + intersection.height as f64;
 
-        let scale_x = snapshot.image.width() as f64 / snapshot_bounds.width as f64;
-        let scale_y = snapshot.image.height() as f64 / snapshot_bounds.height as f64;
+        let scale_x = snapshot.image.0.width() as f64 / snapshot_bounds.width as f64;
+        let scale_y = snapshot.image.0.height() as f64 / snapshot_bounds.height as f64;
 
         let left = (relative_left * scale_x).floor().max(0.0) as u32;
         let top = (relative_top * scale_y).floor().max(0.0) as u32;
         let right = (relative_right * scale_x)
             .ceil()
-            .min(snapshot.image.width() as f64) as u32;
+            .min(snapshot.image.0.width() as f64) as u32;
         let bottom = (relative_bottom * scale_y)
             .ceil()
-            .min(snapshot.image.height() as f64) as u32;
+            .min(snapshot.image.0.height() as f64) as u32;
 
         let width = right.saturating_sub(left);
         let height = bottom.saturating_sub(top);
@@ -145,8 +134,7 @@ pub fn capture_from_snapshot(
 
     let mut output = ImageBuffer::from_pixel(output_width, output_height, Rgba([0, 0, 0, 0]));
     for (snapshot, left, top, width, height, dest_left, dest_top) in pieces {
-        let cropped =
-            imageops::crop_imm(snapshot.image.as_ref(), left, top, width, height).to_image();
+        let cropped = crop_snapshot_to_rgba(&snapshot.image.0, left, top, width, height)?;
         imageops::replace(
             &mut output,
             &cropped,
@@ -156,6 +144,63 @@ pub fn capture_from_snapshot(
     }
 
     Ok(output)
+}
+
+fn crop_snapshot_to_rgba(
+    image: &CGImage,
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
+) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+    let bytes_per_row = image.bytes_per_row();
+    let image_width = image.width();
+    let image_height = image.height();
+    let row_bytes = usize::try_from(width)
+        .context("invalid crop width")?
+        .saturating_mul(4);
+    let left_px = usize::try_from(left).context("invalid crop left")?;
+    let top_px = usize::try_from(top).context("invalid crop top")?;
+    let width_px = usize::try_from(width).context("invalid crop width")?;
+    let height_px = usize::try_from(height).context("invalid crop height")?;
+
+    if left_px.saturating_add(width_px) > image_width
+        || top_px.saturating_add(height_px) > image_height
+    {
+        return Err(anyhow!("cropped region is outside frozen snapshot bounds"));
+    }
+
+    let data = image.data();
+    let bytes = data.bytes();
+    let required_len = bytes_per_row.saturating_mul(image_height);
+    if bytes.len() < required_len {
+        return Err(anyhow!(
+            "frozen snapshot buffer too small: len={} required={}",
+            bytes.len(),
+            required_len
+        ));
+    }
+
+    let mut cropped_buf = Vec::with_capacity(row_bytes.saturating_mul(height_px));
+    for row in 0..height_px {
+        let src_row = top_px + row;
+        let start = src_row
+            .saturating_mul(bytes_per_row)
+            .saturating_add(left_px.saturating_mul(4));
+        let end = start.saturating_add(row_bytes);
+        if end > bytes.len() {
+            return Err(anyhow!(
+                "cropped row is outside frozen snapshot buffer: start={} end={} len={}",
+                start,
+                end,
+                bytes.len()
+            ));
+        }
+        cropped_buf.extend_from_slice(&bytes[start..end]);
+    }
+
+    bgra_to_rgba_image(width, height, cropped_buf)
+        .context("failed to convert cropped snapshot to RGBA")
 }
 
 fn intersect_rect(a: &SelectionRect, b: &SelectionRect) -> Option<SelectionRect> {
@@ -187,13 +232,4 @@ fn bgra_to_rgba_image(
     }
 
     ImageBuffer::from_vec(width, height, rgba_buf).ok_or_else(|| anyhow!("buffer not big enough"))
-}
-
-fn remove_extra_data(width: usize, height: usize, bytes_per_row: usize, buf: Vec<u8>) -> Vec<u8> {
-    let extra_bytes_per_row = bytes_per_row - width * 4;
-    let mut result = Vec::with_capacity(buf.len().saturating_sub(extra_bytes_per_row * height));
-    for row in buf.chunks_exact(bytes_per_row) {
-        result.extend_from_slice(&row[..width * 4]);
-    }
-    result
 }
