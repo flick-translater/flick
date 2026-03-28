@@ -406,6 +406,7 @@ function ScreenshotCard({
   const [openError, setOpenError] = useState<string | null>(null);
   const imageUrl = useImageDataUrl(shot.path);
   const fileName = shot.path.split(/[\\/]/).pop() ?? shot.path;
+  const isViewButtonHoverEnabled = useHoverEnabledAfterFocus();
 
   return (
     <article className="group overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg">
@@ -454,14 +455,16 @@ function ScreenshotCard({
                 setOpenError(error instanceof Error ? error.message : String(error));
               });
             }}
-            className="flex-1 rounded-xl bg-primary px-3 py-2 text-[11px] font-bold text-white transition-opacity hover:opacity-90"
+            className={`flex-1 rounded-xl bg-surface-container px-3 py-2 text-[11px] font-bold text-on-surface transition-colors duration-200 ${
+              isViewButtonHoverEnabled ? 'hover:bg-primary hover:text-white' : ''
+            }`}
           >
             {viewLabel}
           </button>
           <button
             type="button"
             onClick={onDelete}
-            className="inline-flex items-center justify-center rounded-xl bg-surface-container px-2.5 py-2 text-on-surface-variant transition-colors hover:bg-error/10 hover:text-error"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-error/10 hover:text-error"
             title={deleteLabel}
           >
             <Trash2 size={16} />
@@ -473,10 +476,12 @@ function ScreenshotCard({
               setCopied(true);
               window.setTimeout(() => setCopied(false), 1500);
             }}
-            className="inline-flex items-center justify-center rounded-xl bg-surface-container px-2.5 py-2 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+            className={`inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-on-surface-variant transition-colors ${
+              copied ? 'bg-primary text-white hover:bg-primary-container hover:text-white' : 'hover:bg-surface-container hover:text-on-surface'
+            }`}
             title={copyPathLabel}
           >
-            {copied ? <span className="text-[11px] font-bold text-primary">{copiedLabel}</span> : <Copy size={16} />}
+            {copied ? <span className="text-[11px] font-bold">{copiedLabel}</span> : <Copy size={16} />}
           </button>
         </div>
         {openError && <p className="text-xs text-error">{openError}</p>}
@@ -518,23 +523,25 @@ function PreviewModal({
             <button
               type="button"
               onClick={onDelete}
-              className="rounded-xl bg-error/10 px-3 py-2 text-xs font-bold text-error transition-colors hover:bg-error hover:text-white"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-error/10 hover:text-error"
+              title={deleteLabel}
             >
-              {deleteLabel}
+              <Trash2 size={16} />
             </button>
             <button
               type="button"
               onClick={() => {
                 void invoke('open_file_in_default_app', { path: shot.path });
               }}
-              className="rounded-xl bg-primary px-3 py-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface"
+              title={viewLabel}
             >
-              {viewLabel}
+              <FolderOpen size={16} />
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl bg-surface-container p-2 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface"
             >
               <X size={18} />
             </button>
@@ -580,6 +587,28 @@ function useImageDataUrl(path: string) {
   }, [path]);
 
   return imageUrl;
+}
+
+function useHoverEnabledAfterFocus() {
+  const [isHoverEnabled, setIsHoverEnabled] = useState(() => document.hasFocus());
+
+  useEffect(() => {
+    const handleFocus = () => setIsHoverEnabled(false);
+    const handleBlur = () => setIsHoverEnabled(false);
+    const handleMouseMove = () => setIsHoverEnabled(true);
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('mousemove', handleMouseMove);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('mousemove', handleMouseMove);
+    };
+  }, []);
+
+  return isHoverEnabled;
 }
 
 function ConfirmDeleteModal({
