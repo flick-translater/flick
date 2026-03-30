@@ -9,6 +9,7 @@ use std::{
 use tauri::{
     ActivationPolicy, AppHandle, Manager, RunEvent,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuId, MenuItemBuilder},
+    path::BaseDirectory,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
@@ -182,7 +183,17 @@ fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
         .items(&[&show, &capture, &autostart, &quit])
         .build()?;
 
-    TrayIconBuilder::with_id("main-tray")
+    let mut tray = TrayIconBuilder::with_id("main-tray");
+
+    if let Some(icon) = load_tray_icon(app) {
+        tray = tray.icon(icon);
+        #[cfg(target_os = "macos")]
+        {
+            tray = tray.icon_as_template(true);
+        }
+    }
+
+    tray
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| handle_menu_event(app, event))
@@ -190,6 +201,31 @@ fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
         .build(app)?;
 
     Ok(())
+}
+
+fn load_tray_icon(app: &AppHandle) -> Option<tauri::image::Image<'static>> {
+    let resource_icon = ["icons/trayTemplate@2x.png", "icons/trayTemplate.png"]
+        .into_iter()
+        .find_map(|relative_path| {
+            app.path()
+                .resolve(relative_path, BaseDirectory::Resource)
+                .ok()
+                .filter(|path| path.exists())
+                .and_then(|path| std::fs::read(path).ok())
+                .and_then(|bytes| decode_tray_icon(&bytes))
+        });
+
+    resource_icon.or_else(|| app.default_window_icon().cloned().map(|icon| icon.to_owned()))
+}
+
+fn decode_tray_icon(bytes: &[u8]) -> Option<tauri::image::Image<'static>> {
+    let image = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let (width, height) = image.dimensions();
+    Some(tauri::image::Image::new_owned(
+        image.into_raw(),
+        width,
+        height,
+    ))
 }
 
 fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {

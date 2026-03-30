@@ -19,6 +19,10 @@
   },
   "bundle": {
     "active": true,
+    "resources": [
+      "icons/trayTemplate.png",
+      "icons/trayTemplate@2x.png"
+    ],
     "icon": [
       "icons/icon.icns",
       "icons/icon.png",
