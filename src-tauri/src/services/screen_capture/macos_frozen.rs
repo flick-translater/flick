@@ -16,7 +16,15 @@ use image::{ImageBuffer, Rgba, imageops};
 
 use crate::{models::SelectionRect, services::CachedScreenCapture};
 
+use super::capture_desktop_snapshot_via_backend;
+
 pub fn capture_desktop_snapshot(bounds: &SelectionRect) -> anyhow::Result<CachedScreenCapture> {
+    capture_desktop_snapshot_via_backend(bounds)
+}
+
+pub fn capture_desktop_snapshot_with_core_graphics(
+    bounds: &SelectionRect,
+) -> anyhow::Result<CachedScreenCapture> {
     if bounds.width < 2 || bounds.height < 2 {
         return Err(anyhow!("desktop bounds are too small"));
     }
@@ -86,7 +94,6 @@ pub fn capture_from_snapshot(
     let mut output_width = 0_u32;
     let mut output_height = 0_u32;
     let mut had_overlap = false;
-
     for snapshot in cached_screens {
         let Some(intersection) = intersect_rect(selection, &snapshot.bounds) else {
             continue;

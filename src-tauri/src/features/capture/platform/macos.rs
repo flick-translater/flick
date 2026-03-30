@@ -67,7 +67,7 @@ fn native_runtime() -> &'static Mutex<NativeCaptureRuntime> {
 
 pub fn begin_interactive_capture_session(
     app: &AppHandle,
-    _state: &State<'_, AppState>,
+    state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
     let session_id = {
         let mut runtime = native_runtime()
@@ -78,9 +78,18 @@ pub fn begin_interactive_capture_session(
         runtime.next_session_id
     };
 
+    if let Err(error) = cache_frozen_desktop_snapshot(app, state) {
+        clear_active_session();
+        return Err(error);
+    }
+
+    if let Err(error) = install_input_event_tap(app, session_id) {
+        clear_active_session();
+        return Err(error);
+    }
+
     let app_handle = app.clone();
     thread::spawn(move || run_native_capture_session(app_handle, session_id));
-    install_input_event_tap(app, session_id)?;
 
     Ok(())
 }
@@ -158,12 +167,9 @@ fn current_global_cursor_position_from_tap_raw(
 }
 
 pub fn prepare_for_capture_session(
-    app: &AppHandle,
+    _app: &AppHandle,
     _state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
-    let overlay = collect_overlay_setup(app)?;
-    frozen_overlay::show_preparing_overlay(app, &overlay.geometry)?;
-
     Ok(())
 }
 
@@ -303,18 +309,6 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
 }
 
 fn run_native_capture_session(app: AppHandle, session_id: u64) {
-    // Let AppKit present the blocker panels before the expensive screen freeze starts.
-    thread::sleep(Duration::from_millis(32));
-
-    let state = app.state::<AppState>();
-    if let Err(error) = cache_frozen_desktop_snapshot(&app, &state) {
-        if is_active_session(session_id) {
-            emit_capture_status(&app, "capture-error", error.to_string());
-            let _ = crate::features::capture::cancel_capture(&app);
-        }
-        return;
-    }
-
     if !is_active_session(session_id) {
         return;
     }

@@ -29,5 +29,7 @@ core-foundation = "0.10.1"
 core-graphics = "0.25.0"
 foreign-types = "0.5.0"
 objc2 = "0.6.4"
-objc2-app-kit = { version = "0.3.2", features = ["NSColor", "NSPanel", "NSView", "NSResponder", "NSGraphicsContext", "NSWindow", "NSGraphics", "NSImage"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSColor", "NSPanel", "NSView", "NSResponder", "NSGraphicsContext", "NSWindow", "NSGraphics", "NSImage", "NSEvent", "NSWorkspace", "NSRunningApplication", "objc2-quartz-core"] }
 objc2-foundation = "0.3.2"
+objc2-quartz-core = "0.3.2"
+screencapturekit = { version = "1.5.4", features = ["macos_15_2"] }

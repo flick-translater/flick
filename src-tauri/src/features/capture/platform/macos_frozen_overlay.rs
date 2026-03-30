@@ -1,13 +1,20 @@
 use std::sync::{Mutex, OnceLock};
 
+use core_graphics::{
+    context::CGContext,
+    geometry::{CGPoint as CgPoint, CGRect as CgRect, CGSize as CgSize},
+};
 use foreign_types::ForeignType;
-use objc2::{AnyThread, ClassType, MainThreadOnly, define_class, msg_send, rc::Retained};
+use objc2::{
+    AnyThread, ClassType, MainThreadOnly, define_class, msg_send, rc::Retained,
+    runtime::AnyObject,
+};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSCompositingOperation, NSCursor, NSGraphicsContext, NSImage,
-    NSRectFill, NSRectFillUsingOperation, NSView, NSWindow, NSWindowCollectionBehavior,
-    NSWindowSharingType, NSWindowStyleMask,
+    NSBackingStoreType, NSColor, NSCursor, NSGraphicsContext, NSImage, NSRectFill, NSView,
+    NSWindow, NSWindowCollectionBehavior, NSWindowSharingType, NSWindowStyleMask,
 };
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize};
+use objc2_quartz_core::kCAGravityResize;
 use tauri::AppHandle;
 
 use crate::{error::FlickError, models::SelectionRect, services::CachedScreenCapture};
@@ -21,10 +28,9 @@ const ACCENT_RED: f64 = 0.45;
 const ACCENT_GREEN: f64 = 0.74;
 const ACCENT_BLUE: f64 = 1.0;
 const ACCENT_ALPHA: f64 = 1.0;
-const PREPARING_BLOCKER_ALPHA: f64 = 0.12;
 const INTERACTIVE_BLOCKER_ALPHA: f64 = 0.001;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct FrozenOverlayState {
     overlay_visible: bool,
     coordinate_space: Option<CoordinateSpace>,
@@ -33,13 +39,24 @@ struct FrozenOverlayState {
     visuals: Option<OverlayVisuals>,
     image_windows: Vec<WindowHandle>,
     blocker_windows: Vec<WindowHandle>,
-    views: Vec<(usize, usize)>,
+    image_views: Vec<(usize, usize)>,
+    blocker_views: Vec<(usize, usize)>,
+    snapshots: Vec<CachedScreenCapture>,
     snapshot_images: Vec<usize>,
+    render_backend: SnapshotRenderBackend,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct WindowHandle {
     ptr: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+enum SnapshotRenderBackend {
+    #[default]
+    LegacyNsImage,
+    CoreGraphics,
+    CoreAnimationLayer,
 }
 
 fn overlay_state() -> &'static Mutex<FrozenOverlayState> {
@@ -64,6 +81,23 @@ define_class!(
     }
 );
 
+define_class!(
+    #[unsafe(super = NSView)]
+    #[name = "FlickFrozenAnnotationView"]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = ()]
+    struct FrozenAnnotationView;
+
+    unsafe impl NSObjectProtocol for FrozenAnnotationView {}
+
+    impl FrozenAnnotationView {
+        #[unsafe(method(drawRect:))]
+        fn draw_rect(&self, _dirty_rect: NSRect) {
+            draw_annotation_view(self);
+        }
+    }
+);
+
 impl FrozenOverlayView {
     fn new(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(());
@@ -73,28 +107,23 @@ impl FrozenOverlayView {
     }
 }
 
-pub(super) fn show_preparing_overlay(
-    app: &AppHandle,
-    geometry: &[SelectionRect],
-) -> Result<(), FlickError> {
-    let geometry = geometry.to_vec();
-    app.run_on_main_thread(move || {
-        let mtm = MainThreadMarker::new().expect("main thread marker unavailable");
-        let mut state = overlay_state()
-            .lock()
-            .expect("frozen overlay mutex poisoned");
-        ensure_blocker_windows(&mut state, mtm, geometry.len());
-        for (window, rect) in state.blocker_windows.iter().zip(geometry.iter()) {
-            set_window_sharing(*window, NSWindowSharingType::None);
-            set_window_background(*window, PREPARING_BLOCKER_ALPHA);
-            set_window_frame(*window, rect, coordinate_space_for(rect));
-            show_window(*window);
+impl FrozenAnnotationView {
+    fn new(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(());
+        let view: Retained<Self> = unsafe { msg_send![super(this), init] };
+        view.setFrame(frame);
+        view
+    }
+}
+
+impl SnapshotRenderBackend {
+    fn current() -> Self {
+        match std::env::var("FLICK_MACOS_OVERLAY_RENDERER").ok().as_deref() {
+            Some("cg") => Self::CoreGraphics,
+            Some("layer") => Self::CoreAnimationLayer,
+            _ => Self::LegacyNsImage,
         }
-        for window in state.blocker_windows.iter().skip(geometry.len()) {
-            hide_window(*window);
-        }
-    })?;
-    Ok(())
+    }
 }
 
 pub(super) fn show_native_overlay(
@@ -102,13 +131,14 @@ pub(super) fn show_native_overlay(
     snapshots: &[CachedScreenCapture],
     visuals: OverlayVisuals,
 ) -> Result<(), FlickError> {
+    let app = app.clone();
     let snapshots = snapshots.to_vec();
     let geometry = snapshots
         .iter()
         .map(|snapshot| snapshot.bounds.clone())
         .collect::<Vec<_>>();
     let coordinate_space = build_coordinate_space(&geometry);
-    app.run_on_main_thread(move || {
+    app.clone().run_on_main_thread(move || {
         let mtm = MainThreadMarker::new().expect("main thread marker unavailable");
         let mut state = overlay_state()
             .lock()
@@ -129,6 +159,8 @@ pub(super) fn show_native_overlay(
         state.overlay_geometry = geometry.clone();
         state.draw_state = OverlayDrawState::default();
         state.visuals = Some(visuals);
+        state.snapshots = snapshots.clone();
+        state.render_backend = SnapshotRenderBackend::current();
         state.snapshot_images = images
             .into_iter()
             .map(|image| Retained::into_raw(image) as usize)
@@ -137,8 +169,8 @@ pub(super) fn show_native_overlay(
         ensure_image_windows(&mut state, mtm, geometry.len());
         ensure_blocker_windows(&mut state, mtm, geometry.len());
 
-        while state.views.len() < geometry.len() {
-            let screen_index = state.views.len();
+        while state.image_views.len() < geometry.len() {
+            let screen_index = state.image_views.len();
             let rect = &geometry[screen_index];
             let view = FrozenOverlayView::new(
                 mtm,
@@ -151,24 +183,53 @@ pub(super) fn show_native_overlay(
             let view_ref: &FrozenOverlayView = view.as_ref();
             window.setContentView(Some(view_ref.as_super()));
             state
-                .views
+                .image_views
                 .push((screen_index, Retained::into_raw(view) as usize));
         }
 
-        for ((window, rect), (_, view_ptr)) in state
+        while state.blocker_views.len() < geometry.len() {
+            let screen_index = state.blocker_views.len();
+            let rect = &geometry[screen_index];
+            let view = FrozenAnnotationView::new(
+                mtm,
+                NSRect::new(
+                    NSPoint::new(0.0, 0.0),
+                    NSSize::new(rect.width as f64, rect.height as f64),
+                ),
+            );
+            let window = unsafe { window_ref(state.blocker_windows[screen_index]) };
+            let view_ref: &FrozenAnnotationView = view.as_ref();
+            window.setContentView(Some(view_ref.as_super()));
+            state
+                .blocker_views
+                .push((screen_index, Retained::into_raw(view) as usize));
+        }
+
+        for ((window, rect), (screen_index, view_ptr)) in state
             .image_windows
             .iter()
             .zip(geometry.iter())
-            .zip(state.views.iter())
+            .zip(state.image_views.iter())
         {
-            unsafe { overlay_view_ref(*view_ptr) }.setFrame(NSRect::new(
+            let view = unsafe { overlay_view_ref(*view_ptr) };
+            view.setFrame(NSRect::new(
                 NSPoint::new(0.0, 0.0),
                 NSSize::new(rect.width as f64, rect.height as f64),
             ));
+            configure_overlay_view_background(view, &state, *screen_index, rect);
             set_window_frame(*window, rect, coordinate_space);
             show_window(*window);
         }
-        for (window, rect) in state.blocker_windows.iter().zip(geometry.iter()) {
+        for ((window, rect), (_, view_ptr)) in state
+            .blocker_windows
+            .iter()
+            .zip(geometry.iter())
+            .zip(state.blocker_views.iter())
+        {
+            unsafe { annotation_view_ref(*view_ptr) }.setFrame(NSRect::new(
+                NSPoint::new(0.0, 0.0),
+                NSSize::new(rect.width as f64, rect.height as f64),
+            ));
             set_window_sharing(*window, NSWindowSharingType::ReadOnly);
             set_window_background(*window, INTERACTIVE_BLOCKER_ALPHA);
             set_window_frame(*window, rect, coordinate_space);
@@ -200,6 +261,7 @@ pub(super) fn hide_native_overlay(app: &AppHandle) -> Result<(), FlickError> {
         state.overlay_geometry.clear();
         state.draw_state = OverlayDrawState::default();
         state.visuals = None;
+        state.snapshots.clear();
         for window in &state.image_windows {
             hide_window(*window);
         }
@@ -210,6 +272,9 @@ pub(super) fn hide_native_overlay(app: &AppHandle) -> Result<(), FlickError> {
             unsafe {
                 drop(Retained::from_raw(ptr as *mut NSImage));
             }
+        }
+        for (_, view_ptr) in &state.image_views {
+            clear_overlay_view_background(unsafe { overlay_view_ref(*view_ptr) });
         }
 
         let cursor = NSCursor::currentCursor();
@@ -355,13 +420,15 @@ fn set_window_frame(
         NSSize::new(width, height),
     );
     unsafe {
-        window_ref(window).setFrame_display(rect, false);
+        window_ref(window).setFrame_display(rect, true);
     }
 }
 
 fn show_window(window: WindowHandle) {
     unsafe {
-        window_ref(window).orderFrontRegardless();
+        let window = window_ref(window);
+        window.orderFrontRegardless();
+        window.displayIfNeeded();
     }
 }
 
@@ -388,8 +455,8 @@ unsafe fn window_ref(window: WindowHandle) -> &'static NSWindow {
 }
 
 fn request_redraw_locked(state: &FrozenOverlayState) {
-    for (_, view) in &state.views {
-        unsafe { overlay_view_ref(*view) }.setNeedsDisplay(true);
+    for (_, view) in &state.blocker_views {
+        unsafe { annotation_view_ref(*view) }.setNeedsDisplay(true);
     }
 }
 
@@ -403,7 +470,36 @@ fn draw_overlay_view(_view: &FrozenOverlayView) {
     }
 
     let view_ptr = _view as *const FrozenOverlayView as usize;
-    let Some((screen_index, _)) = state.views.iter().find(|(_, ptr)| *ptr == view_ptr) else {
+    let Some((screen_index, _)) = state
+        .image_views
+        .iter()
+        .find(|(_, ptr)| *ptr == view_ptr)
+    else {
+        return;
+    };
+    let Some(bounds) = state.overlay_geometry.get(*screen_index) else {
+        return;
+    };
+
+    let overlay_rect = local_rect(bounds, bounds);
+    render_snapshot_background(&state, *screen_index, bounds, overlay_rect);
+}
+
+fn draw_annotation_view(_view: &FrozenAnnotationView) {
+    let state = match overlay_state().lock() {
+        Ok(state) => state,
+        Err(_) => return,
+    };
+    if !state.overlay_visible {
+        return;
+    }
+
+    let view_ptr = _view as *const FrozenAnnotationView as usize;
+    let Some((screen_index, _)) = state
+        .blocker_views
+        .iter()
+        .find(|(_, ptr)| *ptr == view_ptr)
+    else {
         return;
     };
     let Some(visuals) = state.visuals else {
@@ -414,9 +510,6 @@ fn draw_overlay_view(_view: &FrozenOverlayView) {
     };
 
     let overlay_rect = local_rect(bounds, bounds);
-    if let Some(snapshot_ptr) = state.snapshot_images.get(*screen_index).copied() {
-        unsafe { snapshot_image_ref(snapshot_ptr) }.drawInRect(overlay_rect);
-    }
 
     NSColor::colorWithSRGBRed_green_blue_alpha(0.0, 0.0, 0.0, visuals.dim_alpha).setFill();
     NSRectFill(overlay_rect);
@@ -424,10 +517,7 @@ fn draw_overlay_view(_view: &FrozenOverlayView) {
     if let Some(selection) = state.draw_state.selection.clone() {
         if let Some(intersection) = intersect_rect(&selection, bounds) {
             let fill_rect = local_rect(&intersection, bounds);
-            NSGraphicsContext::saveGraphicsState_class();
-            NSColor::clearColor().setFill();
-            NSRectFillUsingOperation(fill_rect, NSCompositingOperation::Clear);
-            NSGraphicsContext::restoreGraphicsState_class();
+            render_selection_snapshot(&state, *screen_index, bounds, &intersection, fill_rect);
 
             NSColor::colorWithSRGBRed_green_blue_alpha(
                 ACCENT_RED,
@@ -508,8 +598,155 @@ unsafe fn overlay_view_ref(ptr: usize) -> &'static FrozenOverlayView {
     unsafe { &*(ptr as *const FrozenOverlayView) }
 }
 
+unsafe fn annotation_view_ref(ptr: usize) -> &'static FrozenAnnotationView {
+    unsafe { &*(ptr as *const FrozenAnnotationView) }
+}
+
 unsafe fn snapshot_image_ref(ptr: usize) -> &'static NSImage {
     unsafe { &*(ptr as *const NSImage) }
+}
+
+fn render_snapshot_background(
+    state: &FrozenOverlayState,
+    screen_index: usize,
+    bounds: &SelectionRect,
+    overlay_rect: NSRect,
+) {
+    match state.render_backend {
+        SnapshotRenderBackend::LegacyNsImage => {
+            if let Some(snapshot_ptr) = state.snapshot_images.get(screen_index).copied() {
+                unsafe { snapshot_image_ref(snapshot_ptr) }.drawInRect(overlay_rect);
+            }
+        }
+        SnapshotRenderBackend::CoreGraphics => {
+            let Some(snapshot) = state.snapshots.get(screen_index) else {
+                return;
+            };
+            let Some(context) = current_cg_context() else {
+                return;
+            };
+            context.save();
+            context.translate(0.0, bounds.height as f64);
+            context.scale(1.0, -1.0);
+            context.draw_image(
+                CgRect::new(
+                    &CgPoint::new(0.0, 0.0),
+                    &CgSize::new(bounds.width as f64, bounds.height as f64),
+                ),
+                &snapshot.image.0,
+            );
+            context.restore();
+        }
+        SnapshotRenderBackend::CoreAnimationLayer => {}
+    }
+}
+
+fn configure_overlay_view_background(
+    view: &FrozenOverlayView,
+    state: &FrozenOverlayState,
+    screen_index: usize,
+    bounds: &SelectionRect,
+) {
+    match state.render_backend {
+        SnapshotRenderBackend::LegacyNsImage | SnapshotRenderBackend::CoreGraphics => {
+            clear_overlay_view_background(view);
+        }
+        SnapshotRenderBackend::CoreAnimationLayer => {
+            let Some(snapshot) = state.snapshots.get(screen_index) else {
+                return;
+            };
+            view.setWantsLayer(true);
+            let Some(layer) = view.layer() else {
+                return;
+            };
+            unsafe {
+                layer.setContentsGravity(kCAGravityResize);
+            }
+            let scale = snapshot_scale(snapshot, bounds);
+            layer.setContentsScale(scale);
+            unsafe {
+                let image = &*snapshot.image.0.as_ptr().cast::<AnyObject>();
+                layer.setContents(Some(image));
+            }
+        }
+    }
+}
+
+fn clear_overlay_view_background(view: &FrozenOverlayView) {
+    if let Some(layer) = view.layer() {
+        unsafe {
+            layer.setContents(None);
+        }
+    }
+    view.setLayer(None);
+    view.setWantsLayer(false);
+}
+
+fn snapshot_scale(snapshot: &CachedScreenCapture, bounds: &SelectionRect) -> f64 {
+    if bounds.width == 0 {
+        return 1.0;
+    }
+    let pixel_width = snapshot.image.0.width() as f64;
+    let point_width = bounds.width as f64;
+    (pixel_width / point_width).max(1.0)
+}
+
+fn current_cg_context() -> Option<CGContext> {
+    let context = NSGraphicsContext::currentContext()?;
+    #[allow(deprecated)]
+    let port = context.graphicsPort();
+    Some(unsafe {
+        CGContext::from_existing_context_ptr(port.cast::<core_graphics::sys::CGContext>().as_ptr())
+    })
+}
+
+fn render_selection_snapshot(
+    state: &FrozenOverlayState,
+    screen_index: usize,
+    _bounds: &SelectionRect,
+    intersection: &SelectionRect,
+    selection_rect: NSRect,
+) {
+    let Some(snapshot) = state.snapshots.get(screen_index) else {
+        return;
+    };
+    let Some(context) = current_cg_context() else {
+        return;
+    };
+    let scale_x = snapshot.image.0.width() as f64 / snapshot.bounds.width as f64;
+    let scale_y = snapshot.image.0.height() as f64 / snapshot.bounds.height as f64;
+    let relative_left = (intersection.x - snapshot.bounds.x) as f64;
+    let relative_top = (intersection.y - snapshot.bounds.y) as f64;
+    let relative_right = relative_left + intersection.width as f64;
+    let relative_bottom = relative_top + intersection.height as f64;
+    let left = (relative_left * scale_x).floor().max(0.0);
+    let top = (relative_top * scale_y).floor().max(0.0);
+    let right = (relative_right * scale_x)
+        .ceil()
+        .min(snapshot.image.0.width() as f64);
+    let bottom = (relative_bottom * scale_y)
+        .ceil()
+        .min(snapshot.image.0.height() as f64);
+    let crop_rect = CgRect::new(
+        &CgPoint::new(left, top),
+        &CgSize::new((right - left).max(0.0), (bottom - top).max(0.0)),
+    );
+    let Some(cropped) = snapshot.image.0.cropped(crop_rect) else {
+        return;
+    };
+    let _ = context;
+    draw_cropped_snapshot_image(&cropped, selection_rect);
+}
+
+fn draw_cropped_snapshot_image(image: &core_graphics::image::CGImage, rect: NSRect) {
+    let ns_image: Retained<NSImage> = unsafe {
+        msg_send![
+            NSImage::alloc(),
+            initWithCGImage: image.as_ptr().cast::<std::ffi::c_void>(),
+            size: NSSize::new(rect.size.width, rect.size.height)
+        ]
+    };
+    ns_image.drawInRect(rect);
 }
 
 fn build_coordinate_space(geometry: &[SelectionRect]) -> CoordinateSpace {
@@ -525,11 +762,4 @@ fn build_coordinate_space(geometry: &[SelectionRect]) -> CoordinateSpace {
         .unwrap_or(0.0);
 
     CoordinateSpace { min_y, max_y }
-}
-
-fn coordinate_space_for(rect: &SelectionRect) -> CoordinateSpace {
-    CoordinateSpace {
-        min_y: rect.y as f64,
-        max_y: rect.y as f64 + rect.height as f64,
-    }
 }

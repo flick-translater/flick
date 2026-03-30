@@ -3,7 +3,29 @@
 use anyhow::anyhow;
 use image::{ImageBuffer, Rgba};
 
-use crate::models::SelectionRect;
+use crate::{models::SelectionRect, services::screen_capture::MacosCaptureBackend};
+
+pub struct CoreGraphicsCaptureBackend;
+
+impl MacosCaptureBackend for CoreGraphicsCaptureBackend {
+    fn name(&self) -> &'static str {
+        "CoreGraphics"
+    }
+
+    fn capture_selection(
+        &self,
+        selection: &SelectionRect,
+    ) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+        capture_selection(selection)
+    }
+
+    fn capture_desktop_snapshot(
+        &self,
+        bounds: &SelectionRect,
+    ) -> anyhow::Result<crate::services::CachedScreenCapture> {
+        super::macos_frozen::capture_desktop_snapshot_with_core_graphics(bounds)
+    }
+}
 
 pub fn capture_selection(
     selection: &SelectionRect,

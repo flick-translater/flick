@@ -7,6 +7,8 @@
 mod macos;
 #[cfg(target_os = "macos")]
 pub(crate) mod macos_frozen;
+#[cfg(target_os = "macos")]
+mod macos_screen_capture_kit;
 
 use std::{borrow::Cow, path::Path, sync::Arc};
 
@@ -55,6 +57,76 @@ impl CachedScreenCapture {
     }
 }
 
+#[cfg(target_os = "macos")]
+trait MacosCaptureBackend: Sync {
+    fn name(&self) -> &'static str;
+    fn capture_selection(
+        &self,
+        selection: &SelectionRect,
+    ) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>>;
+    fn capture_desktop_snapshot(&self, bounds: &SelectionRect) -> anyhow::Result<CachedScreenCapture>;
+}
+
+#[cfg(target_os = "macos")]
+fn preferred_macos_capture_backend() -> &'static dyn MacosCaptureBackend {
+    &macos_screen_capture_kit::ScreenCaptureKitBackend
+}
+
+#[cfg(target_os = "macos")]
+fn fallback_macos_capture_backend() -> &'static dyn MacosCaptureBackend {
+    &macos::CoreGraphicsCaptureBackend
+}
+
+#[cfg(target_os = "macos")]
+fn capture_selection_via_backend(
+    selection: &SelectionRect,
+) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+    let preferred = preferred_macos_capture_backend();
+    match preferred.capture_selection(selection) {
+        Ok(image) => Ok(image),
+        Err(error) => {
+            eprintln!(
+                "{} capture failed, falling back to {}: {error}",
+                preferred.name(),
+                fallback_macos_capture_backend().name()
+            );
+            fallback_macos_capture_backend()
+                .capture_selection(selection)
+                .with_context(|| {
+                    format!(
+                        "{} capture failed before Core Graphics fallback: {error}",
+                        preferred.name()
+                    )
+                })
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn capture_desktop_snapshot_via_backend(
+    bounds: &SelectionRect,
+) -> anyhow::Result<CachedScreenCapture> {
+    let preferred = preferred_macos_capture_backend();
+    match preferred.capture_desktop_snapshot(bounds) {
+        Ok(snapshot) => Ok(snapshot),
+        Err(error) => {
+            eprintln!(
+                "{} desktop snapshot failed, falling back to {}: {error}",
+                preferred.name(),
+                fallback_macos_capture_backend().name()
+            );
+            fallback_macos_capture_backend()
+                .capture_desktop_snapshot(bounds)
+                .with_context(|| {
+                    format!(
+                        "{} desktop snapshot failed before Core Graphics fallback: {error}",
+                        preferred.name()
+                    )
+                })
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct ScreenCaptureService;
 
@@ -71,7 +143,7 @@ impl ScreenCaptureService {
                     return macos_frozen::capture_from_snapshot(selection, cached_screens);
                 }
 
-                return macos::capture_selection(selection);
+                return capture_selection_via_backend(selection);
             }
         }
 

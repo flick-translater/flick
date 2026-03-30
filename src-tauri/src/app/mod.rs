@@ -12,7 +12,11 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
+#[cfg(not(target_os = "macos"))]
+use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
+
+#[cfg(not(target_os = "macos"))]
+use tauri_plugin_global_shortcut::ShortcutState;
 
 use crate::{
     commands,
@@ -22,6 +26,8 @@ use crate::{
 
 #[cfg(target_os = "macos")]
 mod macos_permissions;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_hotkeys;
 pub mod windows;
 
 /// Shared application state injected into Tauri commands and feature modules.
@@ -188,6 +194,8 @@ fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
 
 fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
     app.plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
+    #[cfg(target_os = "macos")]
+    macos_hotkeys::install_hotkey_tap(app)?;
 
     let settings = {
         let state = app.state::<AppState>();
@@ -204,32 +212,46 @@ fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
 
 pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
     // Two global actions are exposed today, so we fail fast on conflicting bindings.
-    let global_shortcut = app.global_shortcut();
-
     if settings.capture_shortcut == settings.translate_shortcut {
         anyhow::bail!("截图和截图翻译快捷键不能相同");
     }
 
-    for shortcut in [&settings.capture_shortcut, &settings.translate_shortcut] {
-        if global_shortcut.is_registered(shortcut.as_str()) {
-            global_shortcut.unregister(shortcut.as_str())?;
-        }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        macos_hotkeys::apply_shortcuts(
+            settings.capture_shortcut.as_str(),
+            settings.translate_shortcut.as_str(),
+        )?;
+        return Ok(());
     }
 
-    register_shortcut_handler(
-        app,
-        settings.capture_shortcut.as_str(),
-        CaptureIntent::Capture,
-    )?;
-    register_shortcut_handler(
-        app,
-        settings.translate_shortcut.as_str(),
-        CaptureIntent::Translate,
-    )?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        let global_shortcut = app.global_shortcut();
 
-    Ok(())
+        for shortcut in [&settings.capture_shortcut, &settings.translate_shortcut] {
+            if global_shortcut.is_registered(shortcut.as_str()) {
+                global_shortcut.unregister(shortcut.as_str())?;
+            }
+        }
+
+        register_shortcut_handler(
+            app,
+            settings.capture_shortcut.as_str(),
+            CaptureIntent::Capture,
+        )?;
+        register_shortcut_handler(
+            app,
+            settings.translate_shortcut.as_str(),
+            CaptureIntent::Translate,
+        )?;
+
+        Ok(())
+    }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn register_shortcut_handler(
     app: &AppHandle,
     shortcut: &str,
