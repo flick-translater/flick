@@ -28,7 +28,6 @@ pub fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    // Lazily create the main window so setup and reopen paths can share the same entry.
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         return Ok(window);
     }
@@ -39,8 +38,8 @@ pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .inner_size(1240.0, 800.0)
         .min_inner_size(1040.0, 680.0)
         .resizable(true)
-        .visible(true)
-        .focused(true)
+        .visible(false)
+        .focused(false)
         .center()
         .hidden_title(true)
         .title_bar_style(TitleBarStyle::Overlay)
@@ -49,7 +48,6 @@ pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 }
 
 pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    // The translation widget is persistent and reused across captures.
     if let Some(window) = app.get_webview_window(WIDGET_WINDOW_LABEL) {
         return Ok(window);
     }
@@ -82,6 +80,28 @@ pub fn show_widget_window(app: &AppHandle) -> tauri::Result<()> {
     window.unminimize()?;
     window.set_focus()?;
     let _ = window.set_visible_on_all_workspaces(false);
+    Ok(())
+}
+
+pub fn hide_widget_window(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(WIDGET_WINDOW_LABEL) {
+        window.hide()?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+            let is_visible = main_window.is_visible().unwrap_or(false);
+            if !is_visible {
+                let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+                let _ = app.hide();
+            }
+        } else {
+            let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+            let _ = app.hide();
+        }
+    }
+
     Ok(())
 }
 

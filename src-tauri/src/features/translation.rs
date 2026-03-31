@@ -1,9 +1,9 @@
 //! Translation feature entry points.
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
-    app::{AppState, windows},
+    app::{windows, AppState},
     error::FlickError,
     models::{TranslateRequest, TranslateResponse},
     services::TranslationService,
@@ -17,7 +17,6 @@ pub fn run_with_service(
     service: &dyn TranslationService,
     request: TranslateRequest,
 ) -> Result<TranslateResponse, FlickError> {
-    // Keeping translation behind a trait lets the widget flow switch providers without API churn.
     service.translate(request).map_err(Into::into)
 }
 
@@ -27,7 +26,6 @@ pub fn emit_translation_ready(
     source_text: &str,
     translation: TranslateResponse,
 ) -> Result<(), FlickError> {
-    // Widget payload shape stays centralized here so command/session code does not duplicate it.
     let payload = serde_json::json!({
         "imagePath": image_path,
         "sourceText": source_text,
@@ -36,8 +34,15 @@ pub fn emit_translation_ready(
         "detectedSourceLanguage": translation.detected_source_language,
         "targetLanguage": "zh",
     });
-    let widget = windows::ensure_widget_window(app)?;
+
+    windows::ensure_widget_window(app)?;
     windows::show_widget_window(app)?;
-    let _ = widget.emit("translation-ready", payload);
+
+    if let Some(window) = app.get_webview_window("widget") {
+        let _ = window.emit("translation-ready", payload.clone());
+    }
+
+    let _ = app.emit("translation-ready", payload);
+
     Ok(())
 }

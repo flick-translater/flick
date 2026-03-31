@@ -7,10 +7,10 @@ use std::{
 };
 
 use tauri::{
-    ActivationPolicy, AppHandle, Manager, RunEvent,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuId, MenuItemBuilder},
     path::BaseDirectory,
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
+    ActivationPolicy, AppHandle, Manager, RunEvent, WebviewWindow,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 #[cfg(not(target_os = "macos"))]
@@ -22,13 +22,16 @@ use tauri_plugin_global_shortcut::ShortcutState;
 use crate::{
     commands,
     models::{AppSettings, CaptureRecord},
-    services::{CachedScreenCapture, MockOcrService, MockTranslationService, SettingsStore},
+    services::{
+        CachedScreenCapture, MockOcrService, MockTranslationService, OcrService, SettingsStore,
+        VisionOcrService,
+    },
 };
 
 #[cfg(target_os = "macos")]
-mod macos_permissions;
-#[cfg(target_os = "macos")]
 pub(crate) mod macos_hotkeys;
+#[cfg(target_os = "macos")]
+mod macos_permissions;
 pub mod windows;
 
 /// Shared application state injected into Tauri commands and feature modules.
@@ -40,7 +43,7 @@ pub struct AppState {
     pub settings_store: SettingsStore,
     pub settings: Mutex<AppSettings>,
     pub capture_intent: Mutex<CaptureIntent>,
-    pub ocr_service: Arc<MockOcrService>,
+    pub ocr_service: Mutex<Arc<dyn OcrService>>,
     pub translation_service: Arc<MockTranslationService>,
 }
 
@@ -60,7 +63,7 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            app.set_activation_policy(ActivationPolicy::Regular);
+            app.set_activation_policy(ActivationPolicy::Accessory);
             windows::ensure_main_window(app.handle())?;
             windows::ensure_widget_window(app.handle())?;
             let state = build_state(app.handle())?;
@@ -68,7 +71,11 @@ pub fn run() {
 
             setup_tray(app.handle())?;
             register_shortcuts(app.handle())?;
-            windows::show_main_window(app.handle())?;
+
+            if let Some(main_window) = app.get_webview_window("main") {
+                setup_window_close_handler(&main_window);
+            }
+
             #[cfg(target_os = "macos")]
             macos_permissions::launch_startup_permission_check(app.handle());
 
@@ -91,6 +98,7 @@ pub fn run() {
             commands::settings::update_max_screenshots,
             commands::settings::update_screenshot_directory,
             commands::settings::update_translate_shortcut,
+            commands::settings::update_ocr_provider,
             commands::widget::show_translation_widget,
             commands::widget::get_translation_widget_pinned,
             commands::widget::set_translation_widget_pinned,
@@ -101,12 +109,11 @@ pub fn run() {
             commands::translation::mock_translate,
         ])
         .on_menu_event(handle_menu_event)
-        .on_tray_icon_event(handle_tray_event)
         .build(tauri::generate_context!())
         .expect("failed to build Flick application");
 
     app.run(|app, event| match event {
-        RunEvent::Ready | RunEvent::Reopen { .. } => {
+        RunEvent::Reopen { .. } => {
             let _ = windows::show_main_window(app);
         }
         _ => {}
@@ -148,11 +155,18 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         data_dir,
         screenshot_dir: Mutex::new(screenshot_dir),
         settings_store,
-        settings: Mutex::new(settings),
+        settings: Mutex::new(settings.clone()),
         capture_intent: Mutex::new(CaptureIntent::Capture),
-        ocr_service: Arc::new(MockOcrService),
+        ocr_service: Mutex::new(create_ocr_service(&settings.ocr_provider)),
         translation_service: Arc::new(MockTranslationService),
     })
+}
+
+pub fn create_ocr_service(provider: &str) -> Arc<dyn OcrService> {
+    match provider {
+        "mock" => Arc::new(MockOcrService),
+        _ => Arc::new(VisionOcrService),
+    }
 }
 
 fn detect_system_language() -> String {
@@ -170,9 +184,10 @@ fn detect_system_language() -> String {
 }
 
 fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
-    // Keep tray actions minimal and map them back to app-level intents.
     let show = MenuItemBuilder::with_id(MenuId::new("show"), "显示主界面").build(app)?;
     let capture = MenuItemBuilder::with_id(MenuId::new("capture"), "开始截图").build(app)?;
+    let translate_capture =
+        MenuItemBuilder::with_id(MenuId::new("translate_capture"), "截图翻译").build(app)?;
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart = CheckMenuItemBuilder::with_id(MenuId::new("autostart"), "开机启动")
         .checked(autostart_enabled)
@@ -180,7 +195,7 @@ fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
     let quit = MenuItemBuilder::with_id(MenuId::new("quit"), "退出 Flick").build(app)?;
 
     let menu = MenuBuilder::new(app)
-        .items(&[&show, &capture, &autostart, &quit])
+        .items(&[&show, &capture, &translate_capture, &autostart, &quit])
         .build()?;
 
     let mut tray = TrayIconBuilder::with_id("main-tray");
@@ -193,11 +208,9 @@ fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
         }
     }
 
-    tray
-        .menu(&menu)
-        .show_menu_on_left_click(false)
+    tray.menu(&menu)
+        .show_menu_on_left_click(true)
         .on_menu_event(|app, event| handle_menu_event(app, event))
-        .on_tray_icon_event(|tray, event| handle_tray_event(tray.app_handle(), event))
         .build(app)?;
 
     Ok(())
@@ -215,7 +228,11 @@ fn load_tray_icon(app: &AppHandle) -> Option<tauri::image::Image<'static>> {
                 .and_then(|bytes| decode_tray_icon(&bytes))
         });
 
-    resource_icon.or_else(|| app.default_window_icon().cloned().map(|icon| icon.to_owned()))
+    resource_icon.or_else(|| {
+        app.default_window_icon()
+            .cloned()
+            .map(|icon| icon.to_owned())
+    })
 }
 
 fn decode_tray_icon(bytes: &[u8]) -> Option<tauri::image::Image<'static>> {
@@ -313,6 +330,14 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
             let state = app.state::<AppState>();
             let _ = commands::capture::begin_capture_session(app, &state);
         }
+        "translate_capture" => {
+            let state = app.state::<AppState>();
+            let _ = commands::capture::begin_capture_session_with_intent(
+                app,
+                &state,
+                CaptureIntent::Translate,
+            );
+        }
         "autostart" => {
             let enabled = app.autolaunch().is_enabled().unwrap_or(false);
             if enabled {
@@ -326,13 +351,25 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
     }
 }
 
-fn handle_tray_event(app: &AppHandle, event: TrayIconEvent) {
-    if let TrayIconEvent::Click {
-        button: MouseButton::Left,
-        button_state: MouseButtonState::Up,
-        ..
-    } = event
-    {
-        let _ = windows::show_main_window(app);
-    }
+fn setup_window_close_handler(window: &WebviewWindow) {
+    let app_handle = window.app_handle().clone();
+    let window_label = window.label().to_string();
+
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+
+            if window_label == "main" {
+                if let Some(win) = app_handle.get_webview_window(&window_label) {
+                    let _ = win.hide();
+                }
+                let _ = app_handle.hide();
+
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = app_handle.set_activation_policy(ActivationPolicy::Accessory);
+                }
+            }
+        }
+    });
 }

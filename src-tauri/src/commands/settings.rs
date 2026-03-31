@@ -8,7 +8,7 @@ use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
 
 use crate::{
-    app::{AppState, apply_shortcut_bindings},
+    app::{apply_shortcut_bindings, create_ocr_service, AppState},
     error::FlickError,
     features::capture,
     models::{AppSettings, AutostartStatus},
@@ -184,6 +184,40 @@ pub fn update_screenshot_directory(
             .lock()
             .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
         settings.screenshot_directory = next_dir.display().to_string();
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn update_ocr_provider(
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = provider.trim().to_lowercase();
+    if !matches!(normalized.as_str(), "vision" | "mock") {
+        return Err(FlickError::Message(
+            "invalid OCR provider, must be 'vision' or 'mock'".into(),
+        ));
+    }
+
+    let new_service = create_ocr_service(&normalized);
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.ocr_provider = normalized;
+
+        let mut ocr_service = state
+            .ocr_service
+            .lock()
+            .map_err(|_| FlickError::Message("ocr service mutex poisoned".into()))?;
+        *ocr_service = new_service;
+
         settings.clone()
     };
 

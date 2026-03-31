@@ -13,6 +13,8 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     {
+        println!("cargo:rustc-link-lib=framework=Vision");
+
         for swift_runtime_path in [
             "/usr/lib/swift",
             "/Library/Developer/CommandLineTools/usr/lib/swift/macosx",

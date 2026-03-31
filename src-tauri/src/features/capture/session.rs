@@ -1,15 +1,15 @@
-use std::thread;
+use std::{sync::Arc, thread};
 
 use chrono::Utc;
 use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 
 use crate::{
-    app::{AppState, CaptureIntent, windows::emit_capture_status},
+    app::{windows::emit_capture_status, AppState, CaptureIntent},
     error::FlickError,
     features::{ocr, translation},
     models::{CaptureRecord, OcrRequest, SelectionRect, TranslateRequest},
-    services::ScreenCaptureService,
+    services::{OcrService, ScreenCaptureService},
 };
 
 use super::{history, platform};
@@ -37,17 +37,22 @@ pub fn complete_capture(
         .capture_intent
         .lock()
         .map_err(|_| FlickError::Message("capture intent mutex poisoned".into()))?;
-    let ocr_service = state.ocr_service.clone();
+
+    let ocr_service: Arc<dyn OcrService> = state
+        .ocr_service
+        .lock()
+        .map_err(|_| FlickError::Message("ocr service mutex poisoned".into()))?
+        .clone();
     let translation_service = state.translation_service.clone();
     let cached_screens = platform::complete_ui_before_capture_processing(app, state)?;
 
     let app_handle = app.clone();
     let should_restore_previous_frontmost = intent == CaptureIntent::Capture;
-    // The expensive capture, disk IO, and OCR/translation chain runs off the UI thread.
     thread::spawn(move || {
         let run = || -> Result<(), FlickError> {
             let capture_service = ScreenCaptureService::default();
             let image = platform::capture_image(&capture_service, &selection, &cached_screens)?;
+
             let state = app_handle.state::<AppState>();
             platform::finalize_capture_session(
                 &app_handle,
@@ -63,7 +68,6 @@ pub fn complete_capture(
                 &id[..8]
             ));
 
-            // Persist enough metadata for history browsing without keeping image bytes in memory.
             let record = CaptureRecord {
                 id,
                 created_at,
@@ -78,6 +82,7 @@ pub fn complete_capture(
                 .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
                 .max_screenshots;
             capture_service.save_png(&image, &path)?;
+
             if let Err(error) = capture_service.copy_to_clipboard(&image) {
                 eprintln!("failed to write screenshot to clipboard: {error}");
             }
@@ -92,34 +97,53 @@ pub fn complete_capture(
             drop(history_guard);
 
             emit_capture_status(&app_handle, "capture-finished", &record);
-            // Translate mode extends the plain capture flow instead of branching before capture.
+
             if intent == CaptureIntent::Translate {
-                let ocr = ocr::run_with_service(
+                let ocr_result = ocr::run_with_service(
                     ocr_service.as_ref(),
                     OcrRequest {
                         image_path: record.path.clone(),
                         language_hint: None,
                     },
-                )?;
-                let translation = translation::run_with_service(
-                    translation_service.as_ref(),
-                    TranslateRequest {
-                        text: ocr.text.clone(),
-                        source_language: None,
-                        target_language: "zh".into(),
-                    },
-                )?;
-                translation::emit_translation_ready(
-                    &app_handle,
-                    &record.path,
-                    &ocr.text,
-                    translation,
-                )?;
+                );
+
+                match ocr_result {
+                    Ok(ocr) => {
+                        let translation_result = translation::run_with_service(
+                            translation_service.as_ref(),
+                            TranslateRequest {
+                                text: ocr.text.clone(),
+                                source_language: None,
+                                target_language: "zh".into(),
+                            },
+                        );
+
+                        match translation_result {
+                            Ok(translation) => {
+                                translation::emit_translation_ready(
+                                    &app_handle,
+                                    &record.path,
+                                    &ocr.text,
+                                    translation,
+                                )?;
+                            }
+                            Err(e) => {
+                                eprintln!("translation failed: {}", e);
+                                return Err(e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("OCR failed: {}", e);
+                        return Err(e);
+                    }
+                }
             }
             Ok(())
         };
 
         if let Err(error) = run() {
+            eprintln!("capture process failed: {}", error);
             let state = app_handle.state::<AppState>();
             platform::restore_after_failed_capture(
                 &app_handle,

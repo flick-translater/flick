@@ -24,18 +24,25 @@ function WidgetApp() {
   const [payload, setPayload] = useState<TranslationPayload>(placeholderPayload);
 
   useEffect(() => {
+    console.log('[WIDGET] WidgetApp mounted, setting up event listener');
     let unlisten: (() => void) | undefined;
 
     void listen<TranslationPayload>('translation-ready', (event) => {
+      console.log('[WIDGET] translation-ready event received');
+      console.log('[WIDGET] event payload:', event.payload);
       setPayload(event.payload);
     }).then((dispose) => {
+      console.log('[WIDGET] event listener setup complete');
       unlisten = dispose;
     });
 
     return () => {
+      console.log('[WIDGET] cleaning up event listener');
       unlisten?.();
     };
   }, []);
+
+  console.log('[WIDGET] current payload state:', payload);
 
   return (
     <TranslationWidget

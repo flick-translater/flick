@@ -1,12 +1,15 @@
 use std::{
-    sync::{Mutex, OnceLock, mpsc},
+    sync::{mpsc, Mutex, OnceLock},
     thread,
     time::Duration,
 };
 
-use anyhow::{Context, anyhow};
-use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
-use core_graphics::event::{CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType, CallbackResult, EventField};
+use anyhow::{anyhow, Context};
+use core_foundation::runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop};
+use core_graphics::event::{
+    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEventType, CallbackResult, EventField,
+};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 

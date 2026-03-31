@@ -80,6 +80,7 @@ pub struct AppSettings {
     pub interface_language: String,
     pub interface_language_set: bool,
     pub screenshot_directory: String,
+    pub ocr_provider: String,
 }
 
 impl Default for AppSettings {
@@ -91,6 +92,7 @@ impl Default for AppSettings {
             interface_language: "en".into(),
             interface_language_set: false,
             screenshot_directory: String::new(),
+            ocr_provider: "vision".into(),
         }
     }
 }

@@ -31,7 +31,7 @@ pub fn minimize_translation_widget(app: AppHandle) -> Result<(), FlickError> {
 
 #[tauri::command]
 pub fn close_translation_widget(app: AppHandle) -> Result<(), FlickError> {
-    windows::ensure_widget_window(&app)?.close()?;
+    windows::hide_widget_window(&app)?;
     Ok(())
 }
 

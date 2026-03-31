@@ -8,13 +8,16 @@ use crate::{
 };
 
 pub fn run(state: &AppState, request: OcrRequest) -> Result<OcrResponse, FlickError> {
-    run_with_service(state.ocr_service.as_ref(), request)
+    let service = state
+        .ocr_service
+        .lock()
+        .map_err(|_| FlickError::Message("ocr service mutex poisoned".into()))?;
+    run_with_service(service.as_ref(), request)
 }
 
 pub fn run_with_service(
     service: &dyn OcrService,
     request: OcrRequest,
 ) -> Result<OcrResponse, FlickError> {
-    // The feature layer depends only on the trait, which keeps provider replacement cheap.
     service.run(request).map_err(Into::into)
 }
