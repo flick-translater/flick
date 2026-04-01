@@ -1,11 +1,11 @@
 use std::{
-    sync::{mpsc, Mutex, OnceLock},
+    sync::{Mutex, OnceLock, mpsc},
     thread,
     time::Duration,
 };
 
-use anyhow::{anyhow, Context};
-use core_foundation::runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop};
+use anyhow::{Context, anyhow};
+use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventType, CallbackResult, EventField,

@@ -1,23 +1,212 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Network, Key, Terminal, SlidersHorizontal, Eye, EyeOff, ChevronDown, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { invoke } from '@tauri-apps/api/core';
+import type { AISettings, AiTestResult, AppSettings, ProviderSettings } from '../types';
+
+const defaultProviderSettings: ProviderSettings = {
+  api_key: '',
+  api_base_url: 'https://api.openai.com/v1',
+  model: 'gpt-4o-mini',
+  temperature: 0.7,
+  max_tokens: 4096,
+  default_prompt: 'You are a professional translator. Translate the following text accurately while preserving the original meaning and tone. Only output the translated text, nothing else.',
+};
+
+const defaultBaseUrlMap: Record<string, string> = {
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com/v1',
+  openai_compatible: 'https://api.openai.com/v1',
+  anthropic_compatible: 'https://api.anthropic.com/v1',
+  ollama: 'http://localhost:11434/v1',
+  lmstudio: 'http://localhost:1234/v1',
+};
 
 export default function AISettings() {
   const { t } = useTranslation();
-  const [activeProvider, setActiveProvider] = useState('OpenAI');
-  const [usingProvider, setUsingProvider] = useState(t('ai.providerOpenAI'));
+  const [isLoading, setIsLoading] = useState(true);
+  const [aiSettings, setAiSettings] = useState<AISettings>({
+    active_provider: 'openai',
+    openai: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.openai },
+    anthropic: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.anthropic },
+    openai_compatible: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.openai_compatible },
+    anthropic_compatible: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.anthropic_compatible },
+    ollama: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.ollama },
+    lmstudio: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.lmstudio },
+  });
+  const [savedSettings, setSavedSettings] = useState<AISettings | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState('openai');
   const [showKey, setShowKey] = useState(false);
-  const [temperature, setTemperature] = useState(0.7);
-  const [maxTokens, setMaxTokens] = useState(4096);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<AiTestResult | null>(null);
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const appSettings = await invoke<AppSettings>('get_app_settings');
+      const ai = appSettings.ai || {
+        active_provider: 'openai',
+        openai: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.openai },
+        anthropic: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.anthropic },
+        openai_compatible: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.openai_compatible },
+        anthropic_compatible: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.anthropic_compatible },
+        ollama: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.ollama },
+        lmstudio: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.lmstudio },
+      };
+      
+      // Ensure all provider settings exist with defaults
+      const ensureProviderSettings = (settings: ProviderSettings | undefined): ProviderSettings => ({
+        ...defaultProviderSettings,
+        ...(settings || {}),
+      });
+      
+      const normalizedAi: AISettings = {
+        active_provider: ai.active_provider || 'openai',
+        openai: ensureProviderSettings(ai.openai),
+        anthropic: ensureProviderSettings(ai.anthropic),
+        openai_compatible: ensureProviderSettings(ai.openai_compatible),
+        anthropic_compatible: ensureProviderSettings(ai.anthropic_compatible),
+        ollama: ensureProviderSettings(ai.ollama),
+        lmstudio: ensureProviderSettings(ai.lmstudio),
+      };
+      
+      setAiSettings(normalizedAi);
+      setSavedSettings(normalizedAi);
+      setSelectedProvider(normalizedAi.active_provider);
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getCurrentSettings = (): ProviderSettings => {
+    const provider = selectedProvider || 'openai';
+    const key = provider as keyof AISettings;
+    if (key === 'active_provider') {
+      return defaultProviderSettings;
+    }
+    const settings = aiSettings[key];
+    if (!settings) {
+      return { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap[provider] || defaultBaseUrlMap.openai };
+    }
+    return settings as ProviderSettings;
+  };
+
+  const updateCurrentSettings = (updates: Partial<ProviderSettings>) => {
+    const provider = selectedProvider;
+    const key = provider as keyof AISettings;
+    if (key === 'active_provider') return;
+    setAiSettings(prev => {
+      const prevSettings = prev[key] as ProviderSettings | undefined;
+      return {
+        ...prev,
+        [key]: {
+          ...(prevSettings || defaultProviderSettings),
+          ...updates,
+        },
+      };
+    });
+  };
+
+  const handleSave = async (applyProvider = false) => {
+    setIsSaving(true);
+    try {
+      const nextSettings = applyProvider
+        ? { ...aiSettings, active_provider: selectedProvider }
+        : aiSettings;
+      await invoke<AppSettings>('update_ai_settings', { aiSettings: nextSettings });
+      setAiSettings(nextSettings);
+      setSavedSettings(nextSettings);
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const testingSettings = { ...aiSettings, active_provider: selectedProvider };
+      const result = await invoke<AiTestResult>('test_ai_connection', { aiSettings: testingSettings });
+      setTestResult(result);
+    } catch (error) {
+      console.error('Connection test failed:', error);
+      setTestResult({
+        ok: false,
+        provider: selectedProvider,
+        protocol: 'unknown',
+        model: currentSettings.model,
+        latency_ms: 0,
+        message: String(error),
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const handleDiscard = () => {
+    if (savedSettings) {
+      setAiSettings(savedSettings);
+      setSelectedProvider(savedSettings.active_provider);
+      setTestResult(null);
+    }
+  };
+
+  const handleProviderChange = (provider: string) => {
+    setAiSettings(prev => {
+      const key = provider as keyof AISettings;
+      if (key === 'active_provider') return prev;
+      const existingSettings = (prev[key] as ProviderSettings | undefined) || defaultProviderSettings;
+      const baseUrl = defaultBaseUrlMap[provider] || defaultBaseUrlMap.openai;
+      return {
+        ...prev,
+        [key]: {
+          ...existingSettings,
+          api_base_url: existingSettings.api_base_url || baseUrl,
+        },
+      };
+    });
+    setSelectedProvider(provider);
+    setTestResult(null);
+  };
+
+  const hasConfigChanges = savedSettings != null && JSON.stringify(aiSettings) !== JSON.stringify(savedSettings);
+  const canApplyProvider = savedSettings != null && selectedProvider !== savedSettings.active_provider;
+  const currentSettings = getCurrentSettings();
 
   const providers = [
-    t('ai.providerOpenAI'),
-    t('ai.providerAnthropic'),
-    t('ai.providerOpenAICompatible'),
-    t('ai.providerAnthropicCompatible'),
-    t('ai.providerOllama'),
-    t('ai.providerLMStudio'),
+    { key: 'openai', label: t('ai.providerOpenAI') },
+    { key: 'anthropic', label: t('ai.providerAnthropic') },
+    { key: 'openai_compatible', label: t('ai.providerOpenAICompatible') },
+    { key: 'anthropic_compatible', label: t('ai.providerAnthropicCompatible') },
+    { key: 'ollama', label: t('ai.providerOllama') },
+    { key: 'lmstudio', label: t('ai.providerLMStudio') },
   ];
+
+  const openaiModels = [
+    { key: 'gpt-4-turbo-preview', label: t('ai.modelGPT4Turbo') },
+    { key: 'gpt-4o', label: t('ai.modelGPT4o') },
+    { key: 'gpt-3.5-turbo', label: t('ai.modelGPT35Turbo') },
+  ];
+
+  const isStandardProvider = selectedProvider === 'openai' || selectedProvider === 'anthropic';
+
+  if (isLoading) {
+    return (
+      <div className="mx-auto max-w-5xl animate-in fade-in duration-500">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-on-surface-variant">Loading...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-5xl animate-in fade-in duration-500">
@@ -29,16 +218,16 @@ export default function AISettings() {
         <div className="flex flex-wrap gap-1 rounded-xl bg-surface-container-low p-1">
           {providers.map(p => (
             <button
-              key={p}
-              onClick={() => setActiveProvider(p)}
+              key={p.key}
+              onClick={() => handleProviderChange(p.key)}
               className={`rounded-lg px-3 py-2 text-sm font-semibold transition-all flex items-center gap-1.5 ${
-                activeProvider === p
+                selectedProvider === p.key
                   ? 'bg-surface-container-lowest text-primary shadow-sm ring-1 ring-outline-variant/20'
                   : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-lowest/50'
               }`}
             >
-              <span className={`w-2 h-2 rounded-full ${usingProvider === p ? 'bg-primary' : 'bg-outline-variant'}`}></span>
-              {p}
+              <span className={`w-2 h-2 rounded-full ${savedSettings?.active_provider === p.key ? 'bg-primary' : 'bg-outline-variant'}`}></span>
+              {p.label}
             </button>
           ))}
         </div>
@@ -53,18 +242,24 @@ export default function AISettings() {
           <div className="space-y-3">
             <div className="group">
               <label className="block text-xs font-bold text-on-surface-variant mb-1 ml-1">{t('ai.modelSelection')}</label>
-              {activeProvider === t('ai.providerOpenAI') || activeProvider === t('ai.providerAnthropic') ? (
+              {isStandardProvider ? (
                 <div className="relative">
-                  <select className="w-full px-3 py-2.5 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all appearance-none cursor-pointer">
-                    <option>{t('ai.modelGPT4Turbo')}</option>
-                    <option>{t('ai.modelGPT4o')}</option>
-                    <option>{t('ai.modelGPT35Turbo')}</option>
+                  <select 
+                    value={currentSettings.model}
+                    onChange={(e) => updateCurrentSettings({ model: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all appearance-none cursor-pointer"
+                  >
+                    {openaiModels.map(m => (
+                      <option key={m.key} value={m.key}>{m.label}</option>
+                    ))}
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" size={16} />
                 </div>
               ) : (
                 <input
                   type="text"
+                  value={currentSettings.model}
+                  onChange={(e) => updateCurrentSettings({ model: e.target.value })}
                   placeholder={t('ai.modelNamePlaceholder')}
                   className="w-full px-3 py-2.5 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all"
                 />
@@ -74,6 +269,8 @@ export default function AISettings() {
               <label className="block text-xs font-bold text-on-surface-variant mb-1 ml-1">{t('ai.apiAddress')}</label>
               <input
                 type="text"
+                value={currentSettings.api_base_url}
+                onChange={(e) => updateCurrentSettings({ api_base_url: e.target.value })}
                 placeholder={t('ai.apiAddressPlaceholder')}
                 className="w-full px-3 py-2.5 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all"
               />
@@ -84,6 +281,8 @@ export default function AISettings() {
                 <div className="relative flex-1">
                   <input
                     type={showKey ? "text" : "password"}
+                    value={currentSettings.api_key}
+                    onChange={(e) => updateCurrentSettings({ api_key: e.target.value })}
                     placeholder={t('ai.apiKeyPlaceholder')}
                     className="w-full px-3 py-2.5 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all pr-10"
                   />
@@ -95,12 +294,28 @@ export default function AISettings() {
                   </button>
                 </div>
                 <button
-                  onClick={() => {}}
-                  className="px-3 py-2.5 bg-primary text-on-primary rounded-lg text-sm font-semibold hover:bg-primary/90 transition-all shadow-sm whitespace-nowrap"
+                  onClick={handleTestConnection}
+                  disabled={isTesting || !currentSettings.api_key}
+                  className="px-3 py-2.5 bg-primary text-on-primary rounded-lg text-sm font-semibold hover:bg-primary/90 transition-all shadow-sm whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {t('ai.testConnection')}
+                  {isTesting ? '...' : t('ai.testConnection')}
                 </button>
               </div>
+              {testResult && (
+                <div
+                  className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
+                    testResult.ok
+                      ? 'border-green-500/20 bg-green-500/10 text-green-700'
+                      : 'border-red-500/20 bg-red-500/10 text-red-700'
+                  }`}
+                >
+                  <div className="font-semibold">{testResult.message}</div>
+                  <div className="mt-1 opacity-80">
+                    {`${testResult.provider} / ${testResult.protocol} / ${testResult.model}`}
+                    {testResult.latency_ms > 0 ? ` / ${testResult.latency_ms}ms` : ''}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </section>
@@ -112,6 +327,8 @@ export default function AISettings() {
           </div>
           <div className="flex-1 min-h-[140px]">
             <textarea
+              value={currentSettings.default_prompt}
+              onChange={(e) => updateCurrentSettings({ default_prompt: e.target.value })}
               className="w-full h-full p-3 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm resize-none leading-relaxed"
               placeholder={t('ai.defaultPromptPlaceholder')}
             ></textarea>
@@ -128,12 +345,12 @@ export default function AISettings() {
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">{t('ai.maxTokens')}</label>
-              <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-black rounded-full">{maxTokens}</span>
+              <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-black rounded-full">{currentSettings.max_tokens}</span>
             </div>
             <input
               type="number"
-              value={maxTokens}
-              onChange={(e) => setMaxTokens(Number(e.target.value))}
+              value={currentSettings.max_tokens}
+              onChange={(e) => updateCurrentSettings({ max_tokens: Number(e.target.value) })}
               className="w-full px-3 py-2.5 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all"
             />
             <p className="text-[10px] text-on-surface-variant font-medium">{t('ai.maxTokensDesc')}</p>
@@ -141,7 +358,7 @@ export default function AISettings() {
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">{t('ai.temperature')}</label>
-              <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-black rounded-full">{temperature.toFixed(1)}</span>
+              <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-black rounded-full">{currentSettings.temperature.toFixed(1)}</span>
             </div>
             <div className="relative py-2">
               <input
@@ -149,8 +366,8 @@ export default function AISettings() {
                 min="0"
                 max="1"
                 step="0.1"
-                value={temperature}
-                onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                value={currentSettings.temperature}
+                onChange={(e) => updateCurrentSettings({ temperature: parseFloat(e.target.value) })}
                 className="w-full h-2 bg-surface-container-highest rounded-full appearance-none cursor-pointer accent-primary"
               />
               <div className="mt-2 flex justify-between gap-3 px-1">
@@ -164,17 +381,26 @@ export default function AISettings() {
 
       <div className="flex justify-end gap-2 pt-4">
         <button
-          onClick={() => {}}
-          className="px-4 py-2 bg-surface-container-lowest border border-outline-variant/30 text-on-surface-variant rounded-lg text-sm font-semibold hover:bg-surface-container-low transition-all shadow-sm"
+          onClick={handleDiscard}
+          disabled={!hasConfigChanges && !canApplyProvider}
+          className="px-4 py-2 bg-surface-container-lowest border border-outline-variant/30 text-on-surface-variant rounded-lg text-sm font-semibold hover:bg-surface-container-low transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {t('ai.discard')}
         </button>
         <button
-          onClick={() => setUsingProvider(activeProvider)}
-          className="px-4 py-2 bg-primary text-on-primary rounded-lg text-sm font-semibold hover:bg-primary/90 transition-all shadow-sm flex items-center gap-1.5"
+          onClick={() => handleSave(false)}
+          disabled={!hasConfigChanges || isSaving}
+          className="px-4 py-2 bg-primary text-on-primary rounded-lg text-sm font-semibold hover:bg-primary/90 transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Check size={14} />
-          {t('ai.useProvider')}
+          {isSaving ? '...' : t('ai.saveConfig')}
+        </button>
+        <button
+          onClick={() => handleSave(true)}
+          disabled={(!hasConfigChanges && !canApplyProvider) || isSaving}
+          className="px-4 py-2 bg-secondary text-on-secondary rounded-lg text-sm font-semibold hover:bg-secondary/90 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isSaving ? '...' : t('ai.useProvider')}
         </button>
       </div>
     </div>

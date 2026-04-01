@@ -100,7 +100,7 @@ export default {
       temperatureCreative: "1.0 (创意)",
       discard: "放弃",
       saveConfig: "保存配置",
-      useProvider: "使用"
+      useProvider: "应用"
     },
     history: {
       screenshotHistory: "截图历史",

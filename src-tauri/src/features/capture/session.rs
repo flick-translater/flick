@@ -2,10 +2,11 @@ use std::{sync::Arc, thread};
 
 use chrono::Utc;
 use tauri::{AppHandle, Manager, State};
+use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 use crate::{
-    app::{windows::emit_capture_status, AppState, CaptureIntent},
+    app::{AppState, CaptureIntent, windows::emit_capture_status},
     error::FlickError,
     features::translation,
     models::{CaptureRecord, SelectionRect, TranslateRequest},
@@ -59,8 +60,7 @@ fn detect_ocr_language(text: &str) -> Option<String> {
 
         if matches!(
             ch,
-            'à'
-                | 'â'
+            'à' | 'â'
                 | 'æ'
                 | 'ç'
                 | 'è'
@@ -97,8 +97,7 @@ fn detect_ocr_language(text: &str) -> Option<String> {
 
         if matches!(
             ch,
-            'à'
-                | 'è'
+            'à' | 'è'
                 | 'é'
                 | 'ì'
                 | 'í'
@@ -177,11 +176,16 @@ fn detect_ocr_language(text: &str) -> Option<String> {
         };
 
         let german_score = german_char_count
-            + score_tokens(&normalized, &["der", "die", "das", "und", "nicht", "ist", "ich"]);
+            + score_tokens(
+                &normalized,
+                &["der", "die", "das", "und", "nicht", "ist", "ich"],
+            );
         let french_score = french_char_count
             + score_tokens(
                 &normalized,
-                &["le", "la", "les", "des", "une", "est", "pas", "pour", "avec"],
+                &[
+                    "le", "la", "les", "des", "une", "est", "pas", "pour", "avec",
+                ],
             );
         let italian_score = italian_char_count
             + score_tokens(
@@ -191,7 +195,9 @@ fn detect_ocr_language(text: &str) -> Option<String> {
         let dutch_score = dutch_char_count
             + score_tokens(
                 &normalized,
-                &["de", "het", "een", "van", "niet", "met", "voor", "zijn", "dat"],
+                &[
+                    "de", "het", "een", "van", "niet", "met", "voor", "zijn", "dat",
+                ],
             );
 
         let mut best = ("en", 0_usize);
@@ -247,7 +253,12 @@ pub fn complete_capture(
         .lock()
         .map_err(|_| FlickError::Message("ocr service mutex poisoned".into()))?
         .clone();
-    let translation_service = state.translation_service.clone();
+    let ai_settings = state
+        .settings
+        .lock()
+        .map_err(|_| FlickError::LockError("settings".into()))?
+        .ai
+        .clone();
     let cached_screens = platform::complete_ui_before_capture_processing(app, state)?;
 
     let app_handle = app.clone();
@@ -343,14 +354,17 @@ pub fn complete_capture(
                             detected_source_language.as_deref(),
                         )?;
 
-                        let translation_result = translation::run_with_service(
-                            translation_service.as_ref(),
+                        let rt = Runtime::new().map_err(|e| {
+                            FlickError::Message(format!("failed to create tokio runtime: {}", e))
+                        })?;
+                        let translation_result = rt.block_on(translation::run_with_ai_settings(
+                            &ai_settings,
                             TranslateRequest {
                                 text: ocr.text.clone(),
                                 source_language: detected_source_language.clone(),
                                 target_language: "zh".into(),
                             },
-                        );
+                        ));
 
                         match translation_result {
                             Ok(translation) => {
@@ -363,7 +377,7 @@ pub fn complete_capture(
                             }
                             Err(e) => {
                                 eprintln!("translation failed: {}", e);
-                                return Err(e.into());
+                                return Err(e);
                             }
                         }
                     }

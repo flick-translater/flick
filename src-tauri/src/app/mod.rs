@@ -7,10 +7,10 @@ use std::{
 };
 
 use tauri::{
+    ActivationPolicy, AppHandle, Manager, RunEvent, WebviewWindow,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuId, MenuItemBuilder},
     path::BaseDirectory,
     tray::TrayIconBuilder,
-    ActivationPolicy, AppHandle, Manager, RunEvent, WebviewWindow,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 #[cfg(not(target_os = "macos"))]
@@ -22,10 +22,7 @@ use tauri_plugin_global_shortcut::ShortcutState;
 use crate::{
     commands,
     models::{AppSettings, CaptureRecord},
-    services::{
-        CachedScreenCapture, MockOcrService, MockTranslationService, OcrService, SettingsStore,
-        VisionOcrService,
-    },
+    services::{CachedScreenCapture, MockOcrService, OcrService, SettingsStore, VisionOcrService},
 };
 
 #[cfg(target_os = "macos")]
@@ -44,7 +41,6 @@ pub struct AppState {
     pub settings: Mutex<AppSettings>,
     pub capture_intent: Mutex<CaptureIntent>,
     pub ocr_service: Mutex<Arc<dyn OcrService>>,
-    pub translation_service: Arc<MockTranslationService>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,13 +96,15 @@ pub fn run() {
             commands::settings::update_screenshot_directory,
             commands::settings::update_translate_shortcut,
             commands::settings::update_ocr_provider,
+            commands::settings::update_ai_settings,
             commands::widget::show_translation_widget,
             commands::widget::get_translation_widget_pinned,
             commands::widget::set_translation_widget_pinned,
             commands::widget::minimize_translation_widget,
             commands::widget::close_translation_widget,
             commands::widget::begin_translation_widget_drag,
-            commands::translation::mock_translate,
+            commands::translation::translate,
+            commands::translation::test_ai_connection,
         ])
         .on_menu_event(handle_menu_event)
         .build(tauri::generate_context!())
@@ -158,7 +156,6 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         settings: Mutex::new(settings.clone()),
         capture_intent: Mutex::new(CaptureIntent::Capture),
         ocr_service: Mutex::new(create_ocr_service(&settings.ocr_provider)),
-        translation_service: Arc::new(MockTranslationService),
     })
 }
 

@@ -102,7 +102,9 @@ pub fn copy_capture_image(path: &str) -> Result<(), FlickError> {
             height,
             bytes: Cow::Owned(bytes),
         })
-        .map_err(|error| FlickError::Message(format!("failed to copy screenshot image: {error}")))?;
+        .map_err(|error| {
+            FlickError::Message(format!("failed to copy screenshot image: {error}"))
+        })?;
 
     Ok(())
 }

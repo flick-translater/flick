@@ -66,6 +66,74 @@ pub struct TranslateResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiTestResult {
+    pub ok: bool,
+    pub provider: String,
+    pub protocol: String,
+    pub model: String,
+    pub latency_ms: u64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderSettings {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_openai_api_base_url")]
+    pub api_base_url: String,
+    #[serde(default = "default_model")]
+    pub model: String,
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    #[serde(default = "default_prompt")]
+    pub default_prompt: String,
+}
+
+fn default_openai_api_base_url() -> String {
+    "https://api.openai.com/v1".into()
+}
+
+fn default_model() -> String {
+    "gpt-4o-mini".into()
+}
+
+fn default_temperature() -> f32 {
+    0.7
+}
+
+fn default_max_tokens() -> u32 {
+    4096
+}
+
+fn default_prompt() -> String {
+    "You are a professional translator. Translate the following text accurately while preserving the original meaning and tone. Only output the translated text, nothing else.".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AISettings {
+    #[serde(default = "default_provider")]
+    pub active_provider: String,
+    #[serde(default)]
+    pub openai: ProviderSettings,
+    #[serde(default)]
+    pub anthropic: ProviderSettings,
+    #[serde(default)]
+    pub openai_compatible: ProviderSettings,
+    #[serde(default)]
+    pub anthropic_compatible: ProviderSettings,
+    #[serde(default)]
+    pub ollama: ProviderSettings,
+    #[serde(default)]
+    pub lmstudio: ProviderSettings,
+}
+
+fn default_provider() -> String {
+    "openai".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
     pub capture_shortcut: String,
@@ -75,6 +143,7 @@ pub struct AppSettings {
     pub interface_language_set: bool,
     pub screenshot_directory: String,
     pub ocr_provider: String,
+    pub ai: AISettings,
 }
 
 impl Default for AppSettings {
@@ -87,6 +156,7 @@ impl Default for AppSettings {
             interface_language_set: false,
             screenshot_directory: String::new(),
             ocr_provider: "vision".into(),
+            ai: AISettings::default(),
         }
     }
 }

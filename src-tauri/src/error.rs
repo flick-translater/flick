@@ -6,6 +6,8 @@ use thiserror::Error;
 pub enum FlickError {
     #[error("{0}")]
     Message(String),
+    #[error("Lock error: {0}")]
+    LockError(String),
 }
 
 impl From<anyhow::Error> for FlickError {

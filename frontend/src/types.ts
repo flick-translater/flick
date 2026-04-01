@@ -1,5 +1,24 @@
 export type ViewState = 'general' | 'history' | 'ocr' | 'ai';
 
+export type ProviderSettings = {
+  api_key: string;
+  api_base_url: string;
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  default_prompt: string;
+};
+
+export type AISettings = {
+  active_provider: string;
+  openai: ProviderSettings;
+  anthropic: ProviderSettings;
+  openai_compatible: ProviderSettings;
+  anthropic_compatible: ProviderSettings;
+  ollama: ProviderSettings;
+  lmstudio: ProviderSettings;
+};
+
 export type AppSettings = {
   capture_shortcut: string;
   translate_shortcut: string;
@@ -8,6 +27,16 @@ export type AppSettings = {
   interface_language_set: boolean;
   screenshot_directory: string;
   ocr_provider: string;
+  ai: AISettings;
+};
+
+export type AiTestResult = {
+  ok: boolean;
+  provider: string;
+  protocol: string;
+  model: string;
+  latency_ms: number;
+  message: string;
 };
 
 export type OcrPayload = {

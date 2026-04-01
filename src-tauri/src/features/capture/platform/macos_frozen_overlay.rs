@@ -6,7 +6,7 @@ use core_graphics::{
 };
 use foreign_types::ForeignType;
 use objc2::{
-    define_class, msg_send, rc::Retained, runtime::AnyObject, AnyThread, ClassType, MainThreadOnly,
+    AnyThread, ClassType, MainThreadOnly, define_class, msg_send, rc::Retained, runtime::AnyObject,
 };
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSCursor, NSGraphicsContext, NSImage, NSRectFill, NSView,
@@ -19,8 +19,8 @@ use tauri::AppHandle;
 use crate::{error::FlickError, models::SelectionRect, services::CachedScreenCapture};
 
 use super::{
-    overlay::border_rects, overlay::CoordinateSpace, overlay::OverlayDrawState,
-    overlay::OverlayVisuals, shielding_window_level, CursorPosition,
+    CursorPosition, overlay::CoordinateSpace, overlay::OverlayDrawState, overlay::OverlayVisuals,
+    overlay::border_rects, shielding_window_level,
 };
 
 const ACCENT_RED: f64 = 0.45;

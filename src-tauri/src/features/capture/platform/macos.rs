@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use core_foundation::runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop};
+use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
 use core_graphics::event::{
     CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
     CallbackResult,
@@ -23,12 +23,12 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::services::screen_capture::macos_frozen;
 use crate::{
-    app::{windows::emit_capture_status, AppState},
+    app::{AppState, windows::emit_capture_status},
     error::FlickError,
     models::SelectionRect,
     services::CachedScreenCapture,
 };
-use overlay::{collect_overlay_setup, OverlayVisuals};
+use overlay::{OverlayVisuals, collect_overlay_setup};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(16);
 const DRAG_THRESHOLD: f64 = 4.0;

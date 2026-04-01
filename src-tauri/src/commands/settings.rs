@@ -8,10 +8,10 @@ use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
 
 use crate::{
-    app::{apply_shortcut_bindings, create_ocr_service, AppState},
+    app::{AppState, apply_shortcut_bindings, create_ocr_service},
     error::FlickError,
     features::capture,
-    models::{AppSettings, AutostartStatus},
+    models::{AISettings, AppSettings, AutostartStatus},
 };
 
 #[tauri::command]
@@ -77,11 +77,13 @@ pub fn set_shortcut_recording(
 
 #[tauri::command]
 pub fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, FlickError> {
-    Ok(state
+    let settings = state
         .settings
         .lock()
         .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
-        .clone())
+        .clone();
+
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -276,6 +278,24 @@ fn update_shortcut(
             .lock()
             .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
         *settings = next_settings.clone();
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn update_ai_settings(
+    state: State<'_, AppState>,
+    ai_settings: AISettings,
+) -> Result<AppSettings, FlickError> {
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.ai = ai_settings;
         settings.clone()
     };
 

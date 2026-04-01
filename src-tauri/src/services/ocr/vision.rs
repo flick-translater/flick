@@ -194,7 +194,8 @@ mod vision_ffi {
         let () = msg_send![request, setRecognitionLanguages: AsRef::<NSArray<NSString>>::as_ref(&languages)];
 
         let automatically_detects_language: bool = true;
-        let () = msg_send![request, setAutomaticallyDetectsLanguage: automatically_detects_language];
+        let () =
+            msg_send![request, setAutomaticallyDetectsLanguage: automatically_detects_language];
 
         let correction: bool = true;
         let () = msg_send![request, setUsesLanguageCorrection: correction];

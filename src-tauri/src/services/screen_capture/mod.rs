@@ -64,7 +64,10 @@ trait MacosCaptureBackend: Sync {
         &self,
         selection: &SelectionRect,
     ) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>>;
-    fn capture_desktop_snapshot(&self, bounds: &SelectionRect) -> anyhow::Result<CachedScreenCapture>;
+    fn capture_desktop_snapshot(
+        &self,
+        bounds: &SelectionRect,
+    ) -> anyhow::Result<CachedScreenCapture>;
 }
 
 #[cfg(target_os = "macos")]

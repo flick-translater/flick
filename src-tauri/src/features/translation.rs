@@ -1,21 +1,33 @@
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
-    app::{windows, AppState},
+    app::{AppState, windows},
     error::FlickError,
-    models::{TranslateRequest, TranslateResponse},
-    services::TranslationService,
+    models::{AISettings, TranslateRequest, TranslateResponse},
+    services::TranslationGateway,
 };
 
-pub fn run(state: &AppState, request: TranslateRequest) -> Result<TranslateResponse, FlickError> {
-    run_with_service(state.translation_service.as_ref(), request)
-}
-
-pub fn run_with_service(
-    service: &dyn TranslationService,
+pub async fn run(
+    state: &AppState,
     request: TranslateRequest,
 ) -> Result<TranslateResponse, FlickError> {
-    service.translate(request).map_err(Into::into)
+    let ai_settings = state
+        .settings
+        .lock()
+        .map_err(|_| FlickError::LockError("settings".into()))?
+        .ai
+        .clone();
+    run_with_ai_settings(&ai_settings, request).await
+}
+
+pub async fn run_with_ai_settings(
+    ai_settings: &AISettings,
+    request: TranslateRequest,
+) -> Result<TranslateResponse, FlickError> {
+    TranslationGateway::new(ai_settings.clone())
+        .translate(request)
+        .await
+        .map_err(Into::into)
 }
 
 pub fn show_window_immediately(app: &AppHandle, image_path: &str) -> Result<(), FlickError> {

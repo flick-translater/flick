@@ -100,7 +100,7 @@ export default {
       temperatureCreative: "1.0 (創造的)",
       discard: "破棄",
       saveConfig: "設定を保存",
-      useProvider: "使用"
+      useProvider: "適用"
     },
     history: {
       screenshotHistory: "スクリーンショット履歴",

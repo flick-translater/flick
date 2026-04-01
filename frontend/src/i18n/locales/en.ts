@@ -100,7 +100,7 @@ export default {
       temperatureCreative: "1.0 (CREATIVE)",
       discard: "Discard",
       saveConfig: "Save Configuration",
-      useProvider: "Use"
+      useProvider: "Apply"
     },
     history: {
       screenshotHistory: "Screenshot History",
