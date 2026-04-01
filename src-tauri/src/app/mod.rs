@@ -23,8 +23,8 @@ use crate::{
     commands,
     models::{AppSettings, CaptureRecord},
     services::{
-        CachedScreenCapture, OcrService, SettingsStore, available_ocr_engines,
-        create_ocr_service, default_ocr_provider,
+        CachedScreenCapture, OcrService, SettingsStore, TranslationHistoryStore,
+        available_ocr_engines, create_ocr_service, default_ocr_provider,
     },
 };
 
@@ -40,6 +40,7 @@ pub struct AppState {
     pub history: Mutex<VecDeque<CaptureRecord>>,
     pub data_dir: PathBuf,
     pub screenshot_dir: Mutex<PathBuf>,
+    pub translation_history_store: TranslationHistoryStore,
     pub settings_store: SettingsStore,
     pub settings: Mutex<AppSettings>,
     pub capture_intent: Mutex<CaptureIntent>,
@@ -113,6 +114,9 @@ pub fn run() {
             commands::widget::close_translation_widget,
             commands::widget::begin_translation_widget_drag,
             commands::translation::translate,
+            commands::translation::list_translation_history,
+            commands::translation::clear_translation_history,
+            commands::translation::delete_translation_record,
             commands::translation::test_ai_connection,
         ])
         .on_menu_event(handle_menu_event)
@@ -147,6 +151,8 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         .map_err(anyhow::Error::from)?;
 
     let settings_store = SettingsStore::new(data_dir.join("settings.json"));
+    let translation_history_store =
+        TranslationHistoryStore::new(data_dir.join("translations.sqlite3"))?;
     let mut settings = settings_store.load_settings()?;
     let available_engines = available_ocr_engines();
     if !available_engines
@@ -176,6 +182,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         history: Mutex::new(VecDeque::new()),
         data_dir,
         screenshot_dir: Mutex::new(screenshot_dir),
+        translation_history_store,
         settings_store,
         settings: Mutex::new(settings.clone()),
         capture_intent: Mutex::new(CaptureIntent::Capture),

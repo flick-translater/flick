@@ -139,21 +139,21 @@ fn remember_previous_frontmost_app(app: &AppHandle) {
 
 #[cfg(target_os = "macos")]
 fn restore_previous_frontmost_app(app: &AppHandle) {
-    let previous_pid = app
-        .try_state::<AppState>()
-        .and_then(|state| {
-            state
-                .previous_frontmost_app_pid
-                .lock()
-                .ok()
-                .and_then(|mut stored_pid| stored_pid.take())
-        });
+    let previous_pid = app.try_state::<AppState>().and_then(|state| {
+        state
+            .previous_frontmost_app_pid
+            .lock()
+            .ok()
+            .and_then(|mut stored_pid| stored_pid.take())
+    });
 
     let Some(previous_pid) = previous_pid else {
         return;
     };
 
-    if let Some(previous_app) = NSRunningApplication::runningApplicationWithProcessIdentifier(previous_pid) {
+    if let Some(previous_app) =
+        NSRunningApplication::runningApplicationWithProcessIdentifier(previous_pid)
+    {
         let _ = previous_app.activateWithOptions(NSApplicationActivationOptions(0));
     }
 }

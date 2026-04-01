@@ -83,6 +83,22 @@ export type CaptureHistory = {
   items: CaptureRecord[];
 };
 
+export type TranslationRecord = {
+  id: number;
+  created_at: string;
+  source_text: string;
+  translated_text: string;
+  source_language?: string | null;
+  target_language: string;
+  provider: string;
+  image_path?: string | null;
+};
+
+export type TranslationHistory = {
+  database_path: string;
+  items: TranslationRecord[];
+};
+
 export type StorageInfo = {
   data_dir: string;
   screenshot_dir: string;

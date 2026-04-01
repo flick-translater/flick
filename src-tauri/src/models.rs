@@ -27,6 +27,24 @@ pub struct CaptureHistory {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranslationRecord {
+    pub id: i64,
+    pub created_at: DateTime<Utc>,
+    pub source_text: String,
+    pub translated_text: String,
+    pub source_language: Option<String>,
+    pub target_language: String,
+    pub provider: String,
+    pub image_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranslationHistory {
+    pub database_path: String,
+    pub items: Vec<TranslationRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageInfo {
     pub data_dir: String,
     pub screenshot_dir: String,

@@ -3,8 +3,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::{
     app::{AppState, windows},
     error::FlickError,
-    models::{AISettings, TranslateRequest, TranslateResponse},
-    services::TranslationGateway,
+    models::{AISettings, TranslateRequest, TranslateResponse, TranslationHistory},
+    services::{NewTranslationRecord, TranslationGateway},
 };
 
 pub async fn run(
@@ -27,6 +27,50 @@ pub async fn run_with_ai_settings(
     TranslationGateway::new(ai_settings.clone())
         .translate(request)
         .await
+        .map_err(Into::into)
+}
+
+pub fn save_history(
+    state: &AppState,
+    request: &TranslateRequest,
+    response: &TranslateResponse,
+    image_path: Option<&str>,
+) -> Result<(), FlickError> {
+    state
+        .translation_history_store
+        .insert_record(NewTranslationRecord {
+            source_text: &request.text,
+            translated_text: &response.translated_text,
+            source_language: response
+                .detected_source_language
+                .as_deref()
+                .or(request.source_language.as_deref()),
+            target_language: &request.target_language,
+            provider: &response.provider,
+            image_path,
+        })
+        .map_err(Into::into)
+}
+
+pub fn list_history(state: &AppState) -> Result<TranslationHistory, FlickError> {
+    Ok(TranslationHistory {
+        database_path: state
+            .translation_history_store
+            .db_path()
+            .display()
+            .to_string(),
+        items: state.translation_history_store.list_records()?,
+    })
+}
+
+pub fn clear_history(state: &AppState) -> Result<(), FlickError> {
+    state.translation_history_store.clear().map_err(Into::into)
+}
+
+pub fn delete_history_record(state: &AppState, id: i64) -> Result<(), FlickError> {
+    state
+        .translation_history_store
+        .delete_record(id)
         .map_err(Into::into)
 }
 

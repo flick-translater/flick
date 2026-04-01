@@ -3,56 +3,28 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Clock3, Copy, FolderOpen, ImageIcon, RefreshCw, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { CaptureHistory, CaptureRecord } from '../types';
+import { CaptureHistory, CaptureRecord, TranslationHistory, TranslationRecord } from '../types';
 
 type HistoryTab = 'screenshots' | 'translations';
-
-type TranslationMockRecord = {
-  id: number;
-  sourceLang: string;
-  targetLang: string;
-  sourceText: string;
-  targetText: string;
-  time: string;
-  highlight?: boolean;
-};
 
 type DeleteTarget =
   | { kind: 'single'; shot: CaptureRecord }
   | { kind: 'all' };
+
+type TranslationDeleteTarget = {
+  kind: 'single';
+  record: TranslationRecord;
+};
 
 const emptyHistory: CaptureHistory = {
   directory: '',
   items: [],
 };
 
-const translationMocks: TranslationMockRecord[] = [
-  {
-    id: 1,
-    sourceLang: 'Japanese',
-    targetLang: 'English',
-    sourceText: '明日の会議の資料を、午後三時までに共有してください。',
-    targetText: "Please share the materials for tomorrow's meeting by 3:00 PM.",
-    time: 'Today, 10:45 AM',
-  },
-  {
-    id: 2,
-    sourceLang: 'German',
-    targetLang: 'English',
-    sourceText: 'Die Effizienz des Systems wurde durch die neuen AI-Modelle erheblich gesteigert.',
-    targetText: 'The efficiency of the system has been significantly increased by the new AI models.',
-    time: 'Yesterday, 4:12 PM',
-  },
-  {
-    id: 3,
-    sourceLang: 'Spanish',
-    targetLang: 'English',
-    sourceText: 'El diseño de la interfaz debe ser tanto funcional como estéticamente agradable.',
-    targetText: 'The design of the interface must be both functional and aesthetically pleasing.',
-    time: 'Oct 12, 09:20 AM',
-    highlight: true,
-  },
-];
+const emptyTranslationHistory: TranslationHistory = {
+  database_path: '',
+  items: [],
+};
 
 const ITEMS_PER_PAGE = 9;
 
@@ -60,12 +32,18 @@ export default function HistoryView() {
   const { t, i18n } = useTranslation();
   const [activeTab, setActiveTab] = useState<HistoryTab>('screenshots');
   const [history, setHistory] = useState<CaptureHistory>(emptyHistory);
+  const [translationHistory, setTranslationHistory] = useState<TranslationHistory>(emptyTranslationHistory);
   const [isLoading, setIsLoading] = useState(true);
+  const [isTranslationLoading, setIsTranslationLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [translationLoadError, setTranslationLoadError] = useState<string | null>(null);
   const [previewingShot, setPreviewingShot] = useState<CaptureRecord | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
+  const [pendingTranslationDelete, setPendingTranslationDelete] = useState<TranslationDeleteTarget | null>(null);
+  const [pendingClearTranslations, setPendingClearTranslations] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [translationPage, setTranslationPage] = useState(1);
 
   const loadHistory = async () => {
     try {
@@ -79,22 +57,55 @@ export default function HistoryView() {
     }
   };
 
+  const loadTranslationHistory = async () => {
+    try {
+      setTranslationLoadError(null);
+      const nextHistory = await invoke<TranslationHistory>('list_translation_history');
+      setTranslationHistory(nextHistory);
+    } catch (error) {
+      setTranslationLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsTranslationLoading(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     void loadHistory().catch(() => {});
+    void loadTranslationHistory().catch(() => {});
 
-    let unlisten: (() => void) | undefined;
+    let unlistenCapture: (() => void) | undefined;
+    let unlistenTranslation: (() => void) | undefined;
+    let unlistenTranslationHistory: (() => void) | undefined;
     void listen<CaptureRecord>('capture-finished', async () => {
       if (!cancelled) {
         await loadHistory();
       }
     }).then((dispose) => {
-      unlisten = dispose;
+      unlistenCapture = dispose;
+    });
+
+    void listen('translation-ready', async () => {
+      if (!cancelled) {
+        await loadTranslationHistory();
+      }
+    }).then((dispose) => {
+      unlistenTranslation = dispose;
+    });
+
+    void listen('translation-history-updated', async () => {
+      if (!cancelled) {
+        await loadTranslationHistory();
+      }
+    }).then((dispose) => {
+      unlistenTranslationHistory = dispose;
     });
 
     return () => {
       cancelled = true;
-      unlisten?.();
+      unlistenCapture?.();
+      unlistenTranslation?.();
+      unlistenTranslationHistory?.();
     };
   }, []);
 
@@ -122,6 +133,13 @@ export default function HistoryView() {
     }
   }, [currentPage, history.items.length]);
 
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(translationHistory.items.length / ITEMS_PER_PAGE));
+    if (translationPage > totalPages) {
+      setTranslationPage(totalPages);
+    }
+  }, [translationHistory.items.length, translationPage]);
+
   const formatter = useMemo(
     () =>
       new Intl.DateTimeFormat(i18n.language === 'zh' ? 'zh-CN' : i18n.language === 'ja' ? 'ja-JP' : 'en-US', {
@@ -137,6 +155,11 @@ export default function HistoryView() {
   const pageStart = history.items.length === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
   const pageEnd = Math.min(currentPage * ITEMS_PER_PAGE, history.items.length);
   const paginationItems = getPaginationItems(currentPage, totalPages);
+  const translationTotalPages = Math.max(1, Math.ceil(translationHistory.items.length / ITEMS_PER_PAGE));
+  const pagedTranslations = translationHistory.items.slice((translationPage - 1) * ITEMS_PER_PAGE, translationPage * ITEMS_PER_PAGE);
+  const translationPageStart = translationHistory.items.length === 0 ? 0 : (translationPage - 1) * ITEMS_PER_PAGE + 1;
+  const translationPageEnd = Math.min(translationPage * ITEMS_PER_PAGE, translationHistory.items.length);
+  const translationPaginationItems = getPaginationItems(translationPage, translationTotalPages);
 
   return (
     <>
@@ -289,50 +312,92 @@ export default function HistoryView() {
             )}
           </>
         ) : (
-          <div className="space-y-6">
-            {translationMocks.map((trans) => (
-              <article
-                key={trans.id}
-                className={`group relative flex flex-col items-start gap-5 rounded-xl border p-5 shadow-sm transition-all sm:p-6 md:flex-row md:gap-8 ${
-                  trans.highlight
-                    ? 'border-primary/20 bg-gradient-to-br from-primary/5 to-white'
-                    : 'border-outline-variant/20 bg-surface-container-lowest hover:shadow-md'
-                }`}
-              >
-                <div className="flex-1 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${trans.highlight ? 'bg-primary text-white' : 'bg-primary/10 text-primary'}`}>
-                      {trans.sourceLang}
-                    </span>
-                    <span className="text-sm text-outline">→</span>
-                    <span className="inline-flex items-center rounded-md bg-surface-container px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
-                      {trans.targetLang}
-                    </span>
-                  </div>
-                  <div className="space-y-3">
-                    <p className="text-lg font-bold leading-snug text-on-surface">{trans.sourceText}</p>
-                    <p className="text-lg font-medium leading-snug text-primary">{trans.targetText}</p>
-                  </div>
+          <>
+            {isTranslationLoading ? (
+              <div className="rounded-3xl border border-outline-variant/20 bg-surface-container-lowest p-10 text-center text-sm text-on-surface-variant">
+                {t('history.translationLoading')}
+              </div>
+            ) : translationLoadError ? (
+              <div className="rounded-3xl border border-error/20 bg-error/5 p-10 text-center">
+                <p className="text-sm font-semibold text-error">{t('history.translationLoadFailed')}</p>
+                <p className="mt-2 break-all text-xs text-on-surface-variant">{translationLoadError}</p>
+              </div>
+            ) : translationHistory.items.length === 0 ? (
+              <div className="rounded-3xl border border-dashed border-outline-variant/30 bg-surface-container-lowest p-12 text-center">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/8 text-primary">
+                  <Copy size={24} />
                 </div>
-                <div className="flex w-full flex-row items-center justify-between gap-3 md:w-auto md:shrink-0 md:flex-col md:items-end">
-                  <span className="flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant">
-                    <Clock3 size={14} />
-                    {trans.time}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(trans.targetText);
-                    }}
-                    className="rounded-lg bg-surface-container p-2 text-on-surface-variant transition-colors hover:bg-primary-container hover:text-white"
-                    title={t('history.copyTranslation')}
-                  >
-                    <Copy size={16} />
-                  </button>
+                <p className="mt-4 text-base font-bold text-on-surface">{t('history.translationEmptyTitle')}</p>
+                <p className="mt-2 text-sm text-on-surface-variant">{t('history.translationEmptyDesc')}</p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-6">
+                {pagedTranslations.map((trans) => (
+                  <TranslationHistoryCard
+                    key={trans.id}
+                    formatter={formatter}
+                    record={trans}
+                    deleteLabel={t('history.delete')}
+                    onDelete={() => setPendingTranslationDelete({ kind: 'single', record: trans })}
+                  />
+                ))}
                 </div>
-              </article>
-            ))}
-          </div>
+                {translationTotalPages > 1 && (
+                  <div className="mt-8 flex flex-col gap-4 border-t border-surface-container-high pt-6 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                      {t('history.showingRange', {
+                        start: translationPageStart,
+                        end: translationPageEnd,
+                        total: translationHistory.items.length,
+                      })}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={translationPage === 1}
+                        onClick={() => setTranslationPage((page) => Math.max(1, page - 1))}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-container-lowest text-on-surface-variant ring-1 ring-outline-variant/30 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        &lt;
+                      </button>
+                      {translationPaginationItems.map((item, index) =>
+                        item === 'ellipsis' ? (
+                          <span
+                            key={`translation-ellipsis-${index}`}
+                            className="flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold text-on-surface-variant"
+                          >
+                            ...
+                          </span>
+                        ) : (
+                          <button
+                            key={`translation-page-${item}`}
+                            type="button"
+                            onClick={() => setTranslationPage(item)}
+                            className={`flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold transition-colors ${
+                              item === translationPage
+                                ? 'bg-primary text-white'
+                                : 'bg-surface-container-lowest text-on-surface ring-1 ring-outline-variant/30 hover:bg-surface-container'
+                            }`}
+                          >
+                            {item}
+                          </button>
+                        ),
+                      )}
+                      <button
+                        type="button"
+                        disabled={translationPage === translationTotalPages}
+                        onClick={() => setTranslationPage((page) => Math.min(translationTotalPages, page + 1))}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-container-lowest text-on-surface-variant ring-1 ring-outline-variant/30 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        &gt;
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </>
         )}
       </div>
 
@@ -384,7 +449,123 @@ export default function HistoryView() {
           }}
         />
       )}
+
+      {pendingClearTranslations && (
+        <ConfirmDeleteModal
+          fileName={t('history.translationItemCount', { count: translationHistory.items.length })}
+          isDeleting={isDeleting}
+          message={t('history.clearTranslationsConfirm')}
+          cancelLabel={t('history.cancel')}
+          confirmLabel={t('history.clearTranslations')}
+          title={t('history.clearTranslationsTitle')}
+          onCancel={() => {
+            if (!isDeleting) {
+              setPendingClearTranslations(false);
+            }
+          }}
+          onConfirm={() => {
+            setIsDeleting(true);
+            setTranslationLoadError(null);
+            void invoke('clear_translation_history')
+              .then(async () => {
+                setPendingClearTranslations(false);
+                setIsTranslationLoading(true);
+                await loadTranslationHistory();
+              })
+              .catch((error) => {
+                setTranslationLoadError(error instanceof Error ? error.message : String(error));
+              })
+              .finally(() => {
+                setIsDeleting(false);
+              });
+          }}
+        />
+      )}
+
+      {pendingTranslationDelete && (
+        <ConfirmDeleteModal
+          isDeleting={isDeleting}
+          message={t('history.deleteTranslationConfirm')}
+          cancelLabel={t('history.cancel')}
+          confirmLabel={t('history.delete')}
+          title={t('history.deleteTranslationTitle')}
+          onCancel={() => {
+            if (!isDeleting) {
+              setPendingTranslationDelete(null);
+            }
+          }}
+          onConfirm={() => {
+            setIsDeleting(true);
+            setTranslationLoadError(null);
+            void invoke('delete_translation_record', { id: pendingTranslationDelete.record.id })
+              .then(async () => {
+                setPendingTranslationDelete(null);
+                setIsTranslationLoading(true);
+                await loadTranslationHistory();
+              })
+              .catch((error) => {
+                setTranslationLoadError(error instanceof Error ? error.message : String(error));
+              })
+              .finally(() => {
+                setIsDeleting(false);
+              });
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function TranslationHistoryCard({
+  record,
+  formatter,
+  deleteLabel,
+  onDelete,
+}: {
+  record: TranslationRecord;
+  formatter: Intl.DateTimeFormat;
+  deleteLabel: string;
+  onDelete: () => void;
+}) {
+  const sourceLanguage = (record.source_language ?? 'auto').toUpperCase();
+  const targetLanguage = record.target_language.toUpperCase();
+
+  return (
+    <article className="group relative flex flex-col items-start gap-8 rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-6 shadow-sm transition-all hover:shadow-md md:flex-row">
+      <div className="flex-1 space-y-4">
+        <div className="flex items-center gap-3">
+          <span className="inline-flex items-center rounded-md bg-primary/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-primary">
+            {sourceLanguage}
+          </span>
+          <span className="text-sm text-outline">→</span>
+          <span className="inline-flex items-center rounded-md bg-surface-container px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+            {targetLanguage}
+          </span>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-lg font-bold leading-snug text-on-surface">{record.source_text}</p>
+          <p className="text-lg font-medium leading-snug text-primary">{record.translated_text}</p>
+        </div>
+      </div>
+
+      <div className="flex w-full shrink-0 flex-row items-center justify-between gap-3 md:w-auto md:flex-col md:items-end">
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant">
+            <Clock3 size={14} />
+            {formatter.format(new Date(record.created_at))}
+          </span>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="rounded-lg bg-surface-container p-2 text-on-surface-variant transition-colors hover:bg-error/10 hover:text-error"
+            title={deleteLabel}
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -671,7 +852,7 @@ function ConfirmDeleteModal({
 }: {
   title: string;
   message: string;
-  fileName: string;
+  fileName?: string;
   cancelLabel: string;
   confirmLabel: string;
   isDeleting: boolean;
@@ -688,7 +869,11 @@ function ConfirmDeleteModal({
           <div>
             <p className="text-lg font-bold text-on-surface">{title}</p>
             <p className="mt-2 text-sm text-on-surface-variant">{message}</p>
-            <p className="mt-3 break-all rounded-2xl bg-surface-container px-3 py-2 text-xs font-semibold text-on-surface">{fileName}</p>
+            {fileName && (
+              <p className="mt-3 break-all rounded-2xl bg-surface-container px-3 py-2 text-xs font-semibold text-on-surface">
+                {fileName}
+              </p>
+            )}
           </div>
           <button
             type="button"

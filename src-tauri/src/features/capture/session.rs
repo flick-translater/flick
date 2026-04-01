@@ -379,6 +379,17 @@ pub fn complete_capture(
 
                         match translation_result {
                             Ok(translation) => {
+                                let request = TranslateRequest {
+                                    text: ocr.text.clone(),
+                                    source_language: detected_source_language.clone(),
+                                    target_language: ocr_target_language.clone(),
+                                };
+                                translation::save_history(
+                                    &app_handle.state::<AppState>(),
+                                    &request,
+                                    &translation,
+                                    Some(&record.path),
+                                )?;
                                 translation::emit_translation_ready(
                                     &app_handle,
                                     &record.path,
