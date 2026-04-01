@@ -5,7 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import TranslationWidget from './components/TranslationWidget';
 import './index.css';
 import './i18n/config';
-import { TranslationPayload } from './types';
+import { TranslationPayload, OcrPayload } from './types';
 
 window.addEventListener('contextmenu', (event) => {
   event.preventDefault();
@@ -13,8 +13,8 @@ window.addEventListener('contextmenu', (event) => {
 
 const placeholderPayload: TranslationPayload = {
   imagePath: '',
-  sourceText: '等待翻译结果',
-  translatedText: '使用截图翻译快捷键后，结果会显示在这里。',
+  sourceText: '',
+  translatedText: '',
   provider: '',
   detectedSourceLanguage: null,
   targetLanguage: 'zh',
@@ -22,23 +22,57 @@ const placeholderPayload: TranslationPayload = {
 
 function WidgetApp() {
   const [payload, setPayload] = useState<TranslationPayload>(placeholderPayload);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isTranslating, setIsTranslating] = useState(false);
 
   useEffect(() => {
-    console.log('[WIDGET] WidgetApp mounted, setting up event listener');
-    let unlisten: (() => void) | undefined;
+    console.log('[WIDGET] WidgetApp mounted, setting up event listeners');
+    let unlistenOcrLoading: (() => void) | undefined;
+    let unlistenOcr: (() => void) | undefined;
+    let unlistenTranslation: (() => void) | undefined;
+
+    void listen<{ imagePath: string; loading: boolean }>('ocr-loading', (event) => {
+      console.log('[WIDGET] ocr-loading event received');
+      setPayload((prev) => ({
+        ...prev,
+        imagePath: event.payload.imagePath,
+        sourceText: '',
+        translatedText: '',
+      }));
+      setIsLoading(true);
+      setIsTranslating(false);
+    }).then((dispose) => {
+      unlistenOcrLoading = dispose;
+    });
+
+    void listen<OcrPayload>('ocr-ready', (event) => {
+      console.log('[WIDGET] ocr-ready event received');
+      setPayload((prev) => ({
+        ...prev,
+        imagePath: event.payload.imagePath,
+        sourceText: event.payload.sourceText,
+        translatedText: '',
+      }));
+      setIsLoading(false);
+      setIsTranslating(true);
+    }).then((dispose) => {
+      unlistenOcr = dispose;
+    });
 
     void listen<TranslationPayload>('translation-ready', (event) => {
       console.log('[WIDGET] translation-ready event received');
-      console.log('[WIDGET] event payload:', event.payload);
       setPayload(event.payload);
+      setIsLoading(false);
+      setIsTranslating(false);
     }).then((dispose) => {
-      console.log('[WIDGET] event listener setup complete');
-      unlisten = dispose;
+      unlistenTranslation = dispose;
     });
 
     return () => {
-      console.log('[WIDGET] cleaning up event listener');
-      unlisten?.();
+      console.log('[WIDGET] cleaning up event listeners');
+      unlistenOcrLoading?.();
+      unlistenOcr?.();
+      unlistenTranslation?.();
     };
   }, []);
 
@@ -48,6 +82,8 @@ function WidgetApp() {
     <TranslationWidget
       standalone
       payload={payload}
+      isLoading={isLoading}
+      isTranslating={isTranslating}
       onClose={() => {
         void getCurrentWindow().close();
       }}

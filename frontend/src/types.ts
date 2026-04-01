@@ -9,6 +9,11 @@ export type AppSettings = {
   screenshot_directory: string;
 };
 
+export type OcrPayload = {
+  imagePath: string;
+  sourceText: string;
+};
+
 export type TranslationPayload = {
   imagePath: string;
   sourceText: string;

@@ -1,5 +1,3 @@
-//! Translation feature entry points.
-
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
@@ -20,6 +18,41 @@ pub fn run_with_service(
     service.translate(request).map_err(Into::into)
 }
 
+pub fn show_window_immediately(app: &AppHandle, image_path: &str) -> Result<(), FlickError> {
+    windows::ensure_widget_window(app)?;
+    windows::show_widget_window(app)?;
+
+    let payload = serde_json::json!({
+        "imagePath": image_path,
+        "loading": true,
+    });
+
+    if let Some(window) = app.get_webview_window("widget") {
+        let _ = window.emit("ocr-loading", payload.clone());
+    }
+
+    Ok(())
+}
+
+pub fn emit_ocr_ready(
+    app: &AppHandle,
+    image_path: &str,
+    source_text: &str,
+) -> Result<(), FlickError> {
+    let payload = serde_json::json!({
+        "imagePath": image_path,
+        "sourceText": source_text,
+    });
+
+    if let Some(window) = app.get_webview_window("widget") {
+        let _ = window.emit("ocr-ready", payload.clone());
+    }
+
+    let _ = app.emit("ocr-ready", payload);
+
+    Ok(())
+}
+
 pub fn emit_translation_ready(
     app: &AppHandle,
     image_path: &str,
@@ -34,9 +67,6 @@ pub fn emit_translation_ready(
         "detectedSourceLanguage": translation.detected_source_language,
         "targetLanguage": "zh",
     });
-
-    windows::ensure_widget_window(app)?;
-    windows::show_widget_window(app)?;
 
     if let Some(window) = app.get_webview_window("widget") {
         let _ = window.emit("translation-ready", payload.clone());

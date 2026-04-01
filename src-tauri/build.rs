@@ -10,77 +10,27 @@ fn main() {
     println!("cargo:rerun-if-changed=icons/icon_256x256@2x.png");
     println!("cargo:rerun-if-changed=icons/icon_512x512.png");
     println!("cargo:rerun-if-changed=icons/icon_512x512@2x.png");
-    println!("cargo:rerun-if-changed=native/ocr-tool.swift");
 
     #[cfg(target_os = "macos")]
     {
         println!("cargo:rustc-link-lib=framework=Vision");
 
-        for swift_runtime_path in [
-            "/usr/lib/swift",
-            "/Library/Developer/CommandLineTools/usr/lib/swift/macosx",
-            "/Library/Developer/CommandLineTools/usr/lib/swift-5.0/macosx",
-            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx",
-            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx",
-        ] {
-            if std::path::Path::new(swift_runtime_path).exists() {
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{swift_runtime_path}");
-            }
-        }
+        // System Swift runtime (always available on macOS 10.14+)
+        println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
 
-        let out_dir = std::env::var("OUT_DIR").unwrap();
-        let ocr_tool_path = std::path::Path::new("native/ocr-tool.swift");
-
-        if ocr_tool_path.exists() {
-            let output_binary = std::path::Path::new(&out_dir).join("ocr-tool");
-
-            let sdk_path = std::process::Command::new("xcrun")
-                .args(["--sdk", "macosx", "--show-sdk-path"])
-                .output()
-                .ok()
-                .and_then(|output| {
-                    if output.status.success() {
-                        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-                    } else {
-                        None
+        // Try to find additional Swift runtime from Xcode/CommandLineTools
+        if let Ok(output) = std::process::Command::new("xcrun")
+            .args(["--find", "swift"])
+            .output()
+        {
+            if output.status.success() {
+                let swift_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if let Some(swift_dir) = std::path::Path::new(&swift_path).parent() {
+                    let lib_path = swift_dir.join("../lib/swift/macosx");
+                    if lib_path.exists() {
+                        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_path.display());
                     }
-                });
-
-            let target_arch =
-                std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_else(|_| "aarch64".to_string());
-            let target_triple = match target_arch.as_str() {
-                "x86_64" => "x86_64-apple-macosx10.15",
-                "aarch64" => "arm64-apple-macosx11.0",
-                _ => "arm64-apple-macosx11.0",
-            };
-
-            let mut cmd = std::process::Command::new("swiftc");
-            cmd.args([
-                "-O",
-                "-whole-module-optimization",
-                "-target",
-                target_triple,
-                "-o",
-                output_binary.to_str().unwrap(),
-                ocr_tool_path.to_str().unwrap(),
-                "-framework",
-                "Vision",
-                "-framework",
-                "CoreGraphics",
-                "-framework",
-                "Foundation",
-            ]);
-
-            if let Some(ref sdk) = sdk_path {
-                cmd.args(["-sdk", sdk]);
-            }
-
-            let status = cmd.status().expect("Failed to compile Swift OCR tool");
-
-            if !status.success() {
-                eprintln!("Warning: Failed to compile Swift OCR tool, falling back to swift -e");
-            } else {
-                println!("cargo:rustc-env=OCR_TOOL_PATH={}", output_binary.display());
+                }
             }
         }
     }

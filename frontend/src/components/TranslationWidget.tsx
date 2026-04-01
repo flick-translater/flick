@@ -1,20 +1,33 @@
 import { useEffect, useState, type MouseEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, Share2, ScanText } from 'lucide-react';
+import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, Share2, ScanText, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TranslationPayload } from '../types';
+import { useTypewriter } from '../hooks/useTypewriter';
 
 interface TranslationWidgetProps {
   payload: TranslationPayload;
+  isLoading?: boolean;
+  isTranslating?: boolean;
   onClose: () => void;
   standalone?: boolean;
 }
 
-export default function TranslationWidget({ payload, onClose, standalone = false }: TranslationWidgetProps) {
+export default function TranslationWidget({ payload, isLoading = false, isTranslating = false, onClose, standalone = false }: TranslationWidgetProps) {
   const { t } = useTranslation();
   const [isPinned, setIsPinned] = useState(false);
   const windowHandle = standalone ? getCurrentWindow() : null;
+
+  const { displayedText: displayedSource, isTyping: isTypingSource } = useTypewriter(
+    payload.sourceText,
+    { enabled: standalone }
+  );
+
+  const { displayedText: displayedTranslation, isTyping: isTypingTranslation } = useTypewriter(
+    payload.translatedText,
+    { enabled: standalone }
+  );
 
   useEffect(() => {
     if (!windowHandle) {
@@ -144,9 +157,17 @@ export default function TranslationWidget({ payload, onClose, standalone = false
             </button>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-            <p className="font-body text-sm leading-relaxed text-on-surface">
-              {payload.sourceText}
-            </p>
+            {isLoading && !payload.sourceText ? (
+              <div className="flex items-center gap-2 text-on-surface-variant">
+                <Loader2 size={16} className="animate-spin" />
+                <span className="text-sm">{t('widget.recognizing') || '识别中...'}</span>
+              </div>
+            ) : (
+              <p className="font-body text-sm leading-relaxed text-on-surface">
+                {standalone ? displayedSource : payload.sourceText}
+                {isTypingSource && <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse" />}
+              </p>
+            )}
           </div>
         </section>
 
@@ -193,9 +214,17 @@ export default function TranslationWidget({ payload, onClose, standalone = false
             </div>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-            <p className="font-body text-sm leading-relaxed text-primary-container font-medium">
-              {payload.translatedText}
-            </p>
+            {isTranslating && !payload.translatedText ? (
+              <div className="flex items-center gap-2 text-primary">
+                <Loader2 size={16} className="animate-spin" />
+                <span className="text-sm">{t('widget.translating') || '翻译中...'}</span>
+              </div>
+            ) : (
+              <p className="font-body text-sm leading-relaxed text-primary-container font-medium">
+                {standalone ? displayedTranslation : payload.translatedText}
+                {isTypingTranslation && <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse" />}
+              </p>
+            )}
           </div>
         </section>
       </main>

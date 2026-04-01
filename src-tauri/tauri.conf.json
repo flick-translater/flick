@@ -35,6 +35,9 @@
       "icons/icon_512x512@2x.png"
     ],
     "targets": ["dmg"],
-    "createUpdaterArtifacts": false
+    "createUpdaterArtifacts": false,
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
   }
 }

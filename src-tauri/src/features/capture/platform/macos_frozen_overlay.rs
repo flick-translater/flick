@@ -6,8 +6,7 @@ use core_graphics::{
 };
 use foreign_types::ForeignType;
 use objc2::{
-    AnyThread, ClassType, MainThreadOnly, define_class, msg_send, rc::Retained,
-    runtime::AnyObject,
+    define_class, msg_send, rc::Retained, runtime::AnyObject, AnyThread, ClassType, MainThreadOnly,
 };
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSCursor, NSGraphicsContext, NSImage, NSRectFill, NSView,
@@ -20,8 +19,8 @@ use tauri::AppHandle;
 use crate::{error::FlickError, models::SelectionRect, services::CachedScreenCapture};
 
 use super::{
-    CursorPosition, overlay::CoordinateSpace, overlay::OverlayDrawState, overlay::OverlayVisuals,
-    overlay::border_rects, shielding_window_level,
+    overlay::border_rects, overlay::CoordinateSpace, overlay::OverlayDrawState,
+    overlay::OverlayVisuals, shielding_window_level, CursorPosition,
 };
 
 const ACCENT_RED: f64 = 0.45;
@@ -118,7 +117,10 @@ impl FrozenAnnotationView {
 
 impl SnapshotRenderBackend {
     fn current() -> Self {
-        match std::env::var("FLICK_MACOS_OVERLAY_RENDERER").ok().as_deref() {
+        match std::env::var("FLICK_MACOS_OVERLAY_RENDERER")
+            .ok()
+            .as_deref()
+        {
             Some("cg") => Self::CoreGraphics,
             Some("layer") => Self::CoreAnimationLayer,
             _ => Self::LegacyNsImage,
@@ -470,11 +472,7 @@ fn draw_overlay_view(_view: &FrozenOverlayView) {
     }
 
     let view_ptr = _view as *const FrozenOverlayView as usize;
-    let Some((screen_index, _)) = state
-        .image_views
-        .iter()
-        .find(|(_, ptr)| *ptr == view_ptr)
-    else {
+    let Some((screen_index, _)) = state.image_views.iter().find(|(_, ptr)| *ptr == view_ptr) else {
         return;
     };
     let Some(bounds) = state.overlay_geometry.get(*screen_index) else {
@@ -495,10 +493,7 @@ fn draw_annotation_view(_view: &FrozenAnnotationView) {
     }
 
     let view_ptr = _view as *const FrozenAnnotationView as usize;
-    let Some((screen_index, _)) = state
-        .blocker_views
-        .iter()
-        .find(|(_, ptr)| *ptr == view_ptr)
+    let Some((screen_index, _)) = state.blocker_views.iter().find(|(_, ptr)| *ptr == view_ptr)
     else {
         return;
     };

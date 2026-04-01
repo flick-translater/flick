@@ -7,8 +7,8 @@ use uuid::Uuid;
 use crate::{
     app::{windows::emit_capture_status, AppState, CaptureIntent},
     error::FlickError,
-    features::{ocr, translation},
-    models::{CaptureRecord, OcrRequest, SelectionRect, TranslateRequest},
+    features::translation,
+    models::{CaptureRecord, SelectionRect, TranslateRequest},
     services::{OcrService, ScreenCaptureService},
 };
 
@@ -69,7 +69,7 @@ pub fn complete_capture(
             ));
 
             let record = CaptureRecord {
-                id,
+                id: id.clone(),
                 created_at,
                 width: image.width(),
                 height: image.height(),
@@ -81,34 +81,58 @@ pub fn complete_capture(
                 .lock()
                 .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
                 .max_screenshots;
-            capture_service.save_png(&image, &path)?;
-
-            if let Err(error) = capture_service.copy_to_clipboard(&image) {
-                eprintln!("failed to write screenshot to clipboard: {error}");
-            }
-            history::prune_capture_history(&screenshot_dir, max_screenshots)?;
-
-            let mut history_guard = state
-                .history
-                .lock()
-                .map_err(|_| FlickError::Message("history mutex poisoned".into()))?;
-            history_guard.push_front(record.clone());
-            history_guard.truncate(max_screenshots as usize);
-            drop(history_guard);
-
-            emit_capture_status(&app_handle, "capture-finished", &record);
 
             if intent == CaptureIntent::Translate {
-                let ocr_result = ocr::run_with_service(
-                    ocr_service.as_ref(),
-                    OcrRequest {
-                        image_path: record.path.clone(),
-                        language_hint: None,
-                    },
-                );
+                if let Err(e) = translation::show_window_immediately(&app_handle, &record.path) {
+                    eprintln!("Failed to show window: {}", e);
+                }
+
+                let ocr_result = {
+                    let mut image_bytes = Vec::new();
+                    image
+                        .write_to(
+                            &mut std::io::Cursor::new(&mut image_bytes),
+                            image::ImageFormat::Png,
+                        )
+                        .map_err(|e| FlickError::Message(format!("failed to encode PNG: {}", e)))?;
+
+                    ocr_service.run_with_data(&image_bytes)
+                };
+
+                let save_path = path.clone();
+                let save_app = app_handle.clone();
+                let save_screenshot_dir = screenshot_dir.clone();
+                let save_max_screenshots = max_screenshots;
+                let save_record = record.clone();
+                thread::spawn(move || {
+                    let capture_service = ScreenCaptureService::default();
+                    if let Err(e) = capture_service.save_png(&image, &save_path) {
+                        eprintln!("Failed to save image: {}", e);
+                    }
+
+                    if let Err(error) = capture_service.copy_to_clipboard(&image) {
+                        eprintln!("failed to write screenshot to clipboard: {error}");
+                    }
+
+                    if let Err(e) =
+                        history::prune_capture_history(&save_screenshot_dir, save_max_screenshots)
+                    {
+                        eprintln!("Failed to prune history: {}", e);
+                    }
+
+                    let state = save_app.state::<AppState>();
+                    if let Ok(mut history_guard) = state.history.lock() {
+                        history_guard.push_front(save_record.clone());
+                        history_guard.truncate(save_max_screenshots as usize);
+                    }
+
+                    emit_capture_status(&save_app, "capture-finished", &save_record);
+                });
 
                 match ocr_result {
                     Ok(ocr) => {
+                        translation::emit_ocr_ready(&app_handle, &record.path, &ocr.text)?;
+
                         let translation_result = translation::run_with_service(
                             translation_service.as_ref(),
                             TranslateRequest {
@@ -129,15 +153,32 @@ pub fn complete_capture(
                             }
                             Err(e) => {
                                 eprintln!("translation failed: {}", e);
-                                return Err(e);
+                                return Err(e.into());
                             }
                         }
                     }
                     Err(e) => {
                         eprintln!("OCR failed: {}", e);
-                        return Err(e);
+                        return Err(e.into());
                     }
                 }
+            } else {
+                capture_service.save_png(&image, &path)?;
+
+                if let Err(error) = capture_service.copy_to_clipboard(&image) {
+                    eprintln!("failed to write screenshot to clipboard: {error}");
+                }
+                history::prune_capture_history(&screenshot_dir, max_screenshots)?;
+
+                let mut history_guard = state
+                    .history
+                    .lock()
+                    .map_err(|_| FlickError::Message("history mutex poisoned".into()))?;
+                history_guard.push_front(record.clone());
+                history_guard.truncate(max_screenshots as usize);
+                drop(history_guard);
+
+                emit_capture_status(&app_handle, "capture-finished", &record);
             }
             Ok(())
         };

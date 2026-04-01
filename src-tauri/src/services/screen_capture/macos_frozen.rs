@@ -3,7 +3,7 @@
 //! The interactive UI works against a static full-desktop snapshot captured at session start,
 //! so menus and transient popovers remain visible after Flick shows its own overlay.
 
-use anyhow::{Context, anyhow};
+use anyhow::{anyhow, Context};
 use core_graphics::{
     display::CGDisplay,
     geometry::{CGPoint, CGRect, CGSize},
@@ -12,7 +12,7 @@ use core_graphics::{
         create_image, kCGNullWindowID, kCGWindowImageDefault, kCGWindowListOptionOnScreenOnly,
     },
 };
-use image::{ImageBuffer, Rgba, imageops};
+use image::{imageops, ImageBuffer, Rgba};
 
 use crate::{models::SelectionRect, services::CachedScreenCapture};
 
@@ -152,7 +152,6 @@ pub fn capture_from_snapshot(
 
     Ok(output)
 }
-
 fn crop_snapshot_to_rgba(
     image: &CGImage,
     left: u32,
