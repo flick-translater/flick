@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Network, Key, Terminal, SlidersHorizontal, Eye, EyeOff, ChevronDown } from 'lucide-react';
+import { Network, Key, Terminal, SlidersHorizontal, Eye, EyeOff, ChevronDown, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 export default function AISettings() {
   const { t } = useTranslation();
   const [activeProvider, setActiveProvider] = useState('OpenAI');
+  const [usingProvider, setUsingProvider] = useState(t('ai.providerOpenAI'));
   const [showKey, setShowKey] = useState(false);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(4096);
@@ -30,12 +31,13 @@ export default function AISettings() {
             <button
               key={p}
               onClick={() => setActiveProvider(p)}
-              className={`rounded-lg px-4 py-2.5 text-sm font-semibold transition-all sm:px-5 ${
+              className={`rounded-lg px-4 py-2.5 text-sm font-semibold transition-all sm:px-5 flex items-center gap-2 ${
                 activeProvider === p
                   ? 'bg-surface-container-lowest text-primary shadow-sm ring-1 ring-outline-variant/20 scale-[0.98]'
                   : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-lowest/50'
               }`}
             >
+              <span className={`w-2 h-2 rounded-full ${usingProvider === p ? 'bg-primary' : 'bg-outline-variant'}`}></span>
               {p}
             </button>
           ))}
@@ -51,14 +53,22 @@ export default function AISettings() {
           <div className="space-y-4">
             <div className="group">
               <label className="block text-xs font-bold text-on-surface-variant mb-1.5 ml-1">{t('ai.modelSelection')}</label>
-              <div className="relative">
-                <select className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all appearance-none cursor-pointer">
-                  <option>{t('ai.modelGPT4Turbo')}</option>
-                  <option>{t('ai.modelGPT4o')}</option>
-                  <option>{t('ai.modelGPT35Turbo')}</option>
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" size={18} />
-              </div>
+              {activeProvider === t('ai.providerOpenAI') || activeProvider === t('ai.providerAnthropic') ? (
+                <div className="relative">
+                  <select className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all appearance-none cursor-pointer">
+                    <option>{t('ai.modelGPT4Turbo')}</option>
+                    <option>{t('ai.modelGPT4o')}</option>
+                    <option>{t('ai.modelGPT35Turbo')}</option>
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" size={18} />
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  placeholder={t('ai.modelNamePlaceholder')}
+                  className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all"
+                />
+              )}
             </div>
             <div className="group">
               <label className="block text-xs font-bold text-on-surface-variant mb-1.5 ml-1">{t('ai.apiAddress')}</label>
@@ -70,17 +80,25 @@ export default function AISettings() {
             </div>
             <div className="group">
               <label className="block text-xs font-bold text-on-surface-variant mb-1.5 ml-1">{t('ai.apiKey')}</label>
-              <div className="relative">
-                <input
-                  type={showKey ? "text" : "password"}
-                  placeholder={t('ai.apiKeyPlaceholder')}
-                  className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all pr-10"
-                />
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type={showKey ? "text" : "password"}
+                    placeholder={t('ai.apiKeyPlaceholder')}
+                    className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all pr-10"
+                  />
+                  <button
+                    onClick={() => setShowKey(!showKey)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors"
+                  >
+                    {showKey ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
                 <button
-                  onClick={() => setShowKey(!showKey)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors"
+                  onClick={() => {}}
+                  className="px-4 py-3 bg-primary text-on-primary rounded-xl text-sm font-semibold hover:bg-primary/90 transition-all shadow-sm whitespace-nowrap"
                 >
-                  {showKey ? <EyeOff size={18} /> : <Eye size={18} />}
+                  {t('ai.testConnection')}
                 </button>
               </div>
             </div>
@@ -143,6 +161,22 @@ export default function AISettings() {
           </div>
         </div>
       </section>
+
+      <div className="flex justify-end gap-3 pt-6">
+        <button
+          onClick={() => {}}
+          className="px-6 py-3 bg-surface-container-lowest border border-outline-variant/30 text-on-surface-variant rounded-xl text-sm font-semibold hover:bg-surface-container-low transition-all shadow-sm"
+        >
+          {t('ai.discard')}
+        </button>
+        <button
+          onClick={() => setUsingProvider(activeProvider)}
+          className="px-6 py-3 bg-primary text-on-primary rounded-xl text-sm font-semibold hover:bg-primary/90 transition-all shadow-sm flex items-center gap-2"
+        >
+          <Check size={16} />
+          {t('ai.useProvider')}
+        </button>
+      </div>
     </div>
   );
 }

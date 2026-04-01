@@ -48,7 +48,28 @@ export default {
       autoTranslateDesc: "OCR処理後に検出されたテキストを自動的に翻訳します",
       triggerOcrDesc: "ショートカットキーを使用してテキストキャプチャを素早くトリガー",
       discard: "破棄",
-      saveChanges: "変更を保存"
+      saveChanges: "変更を保存",
+      languages: {
+        english: "英語",
+        chineseSimplified: "簡体字中国語",
+        chineseTraditional: "繁体字中国語",
+        japanese: "日本語",
+        korean: "韓国語",
+        spanish: "スペイン語",
+        french: "フランス語",
+        german: "ドイツ語",
+        italian: "イタリア語",
+        portuguese: "ポルトガル語",
+        russian: "ロシア語",
+        arabic: "アラビア語",
+        thai: "タイ語",
+        vietnamese: "ベトナム語",
+        dutch: "オランダ語",
+        polish: "ポーランド語",
+        turkish: "トルコ語",
+        indonesian: "インドネシア語",
+        hindi: "ヒンディー語"
+      }
     },
     ai: {
       providerSelection: "プロバイダーの選択",
@@ -60,6 +81,7 @@ export default {
       providerLMStudio: "LM Studio",
       apiConfig: "API 設定",
       modelSelection: "モデルの選択",
+      modelNamePlaceholder: "モデル名を入力、例: gpt-4o-mini",
       modelGPT4Turbo: "gpt-4-turbo-preview",
       modelGPT4o: "gpt-4o",
       modelGPT35Turbo: "gpt-3.5-turbo",
@@ -67,6 +89,7 @@ export default {
       apiAddressPlaceholder: "https://api.openai.com/v1",
       apiKey: "API キー",
       apiKeyPlaceholder: "sk-proj-************************",
+      testConnection: "テスト",
       defaultPrompt: "デフォルトプロンプト",
       defaultPromptPlaceholder: "AIの基本システム指示を入力...",
       advancedParameters: "詳細パラメーター",
@@ -76,7 +99,8 @@ export default {
       temperaturePrecise: "0.0 (正確)",
       temperatureCreative: "1.0 (創造的)",
       discard: "破棄",
-      saveConfig: "設定を保存"
+      saveConfig: "設定を保存",
+      useProvider: "使用"
     },
     history: {
       screenshotHistory: "スクリーンショット履歴",

@@ -48,7 +48,28 @@ export default {
       autoTranslateDesc: "OCR 处理后自动翻译检测到的文本",
       triggerOcrDesc: "使用快捷键快速触发文字捕获",
       discard: "放弃",
-      saveChanges: "保存更改"
+      saveChanges: "保存更改",
+      languages: {
+        english: "英语",
+        chineseSimplified: "中文简体",
+        chineseTraditional: "中文繁体",
+        japanese: "日语",
+        korean: "韩语",
+        spanish: "西班牙语",
+        french: "法语",
+        german: "德语",
+        italian: "意大利语",
+        portuguese: "葡萄牙语",
+        russian: "俄语",
+        arabic: "阿拉伯语",
+        thai: "泰语",
+        vietnamese: "越南语",
+        dutch: "荷兰语",
+        polish: "波兰语",
+        turkish: "土耳其语",
+        indonesian: "印尼语",
+        hindi: "印地语"
+      }
     },
     ai: {
       providerSelection: "提供商选择",
@@ -60,6 +81,7 @@ export default {
       providerLMStudio: "LM Studio",
       apiConfig: "API 配置",
       modelSelection: "模型选择",
+      modelNamePlaceholder: "输入模型名称，如 gpt-4o-mini",
       modelGPT4Turbo: "gpt-4-turbo-preview",
       modelGPT4o: "gpt-4o",
       modelGPT35Turbo: "gpt-3.5-turbo",
@@ -67,6 +89,7 @@ export default {
       apiAddressPlaceholder: "https://api.openai.com/v1",
       apiKey: "API 密钥",
       apiKeyPlaceholder: "sk-proj-************************",
+      testConnection: "测试连接",
       defaultPrompt: "默认提示词",
       defaultPromptPlaceholder: "输入 AI 的基础系统指令...",
       advancedParameters: "高级参数",
@@ -76,7 +99,8 @@ export default {
       temperaturePrecise: "0.0 (精确)",
       temperatureCreative: "1.0 (创意)",
       discard: "放弃",
-      saveConfig: "保存配置"
+      saveConfig: "保存配置",
+      useProvider: "使用"
     },
     history: {
       screenshotHistory: "截图历史",

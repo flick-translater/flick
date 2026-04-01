@@ -48,7 +48,28 @@ export default {
       autoTranslateDesc: "Automatically translate detected text after OCR processing",
       triggerOcrDesc: "Quickly trigger text capture using",
       discard: "Discard",
-      saveChanges: "Save Changes"
+      saveChanges: "Save Changes",
+      languages: {
+        english: "English",
+        chineseSimplified: "Chinese (Simplified)",
+        chineseTraditional: "Chinese (Traditional)",
+        japanese: "Japanese",
+        korean: "Korean",
+        spanish: "Spanish",
+        french: "French",
+        german: "German",
+        italian: "Italian",
+        portuguese: "Portuguese",
+        russian: "Russian",
+        arabic: "Arabic",
+        thai: "Thai",
+        vietnamese: "Vietnamese",
+        dutch: "Dutch",
+        polish: "Polish",
+        turkish: "Turkish",
+        indonesian: "Indonesian",
+        hindi: "Hindi"
+      }
     },
     ai: {
       providerSelection: "Provider Selection",
@@ -60,6 +81,7 @@ export default {
       providerLMStudio: "LM Studio",
       apiConfig: "API Config",
       modelSelection: "Model Selection",
+      modelNamePlaceholder: "Enter model name, e.g. gpt-4o-mini",
       modelGPT4Turbo: "gpt-4-turbo-preview",
       modelGPT4o: "gpt-4o",
       modelGPT35Turbo: "gpt-3.5-turbo",
@@ -67,6 +89,7 @@ export default {
       apiAddressPlaceholder: "https://api.openai.com/v1",
       apiKey: "API Key",
       apiKeyPlaceholder: "sk-proj-************************",
+      testConnection: "Test",
       defaultPrompt: "Default Prompt",
       defaultPromptPlaceholder: "Enter the base system instruction for the AI...",
       advancedParameters: "Advanced Parameters",
@@ -76,7 +99,8 @@ export default {
       temperaturePrecise: "0.0 (PRECISE)",
       temperatureCreative: "1.0 (CREATIVE)",
       discard: "Discard",
-      saveConfig: "Save Configuration"
+      saveConfig: "Save Configuration",
+      useProvider: "Use"
     },
     history: {
       screenshotHistory: "Screenshot History",
