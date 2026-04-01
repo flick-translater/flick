@@ -136,6 +136,7 @@ export default function HistoryView() {
   const pagedItems = history.items.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
   const pageStart = history.items.length === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
   const pageEnd = Math.min(currentPage * ITEMS_PER_PAGE, history.items.length);
+  const paginationItems = getPaginationItems(currentPage, totalPages);
 
   return (
     <>
@@ -165,7 +166,7 @@ export default function HistoryView() {
 
         {activeTab === 'screenshots' ? (
           <>
-            <section className="mb-6 rounded-3xl border border-outline-variant/20 bg-gradient-to-br from-white via-surface-container-lowest to-surface-container p-5 shadow-sm sm:mb-8 sm:p-6">
+            <section className="mb-6 rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm sm:mb-8 sm:p-6 lg:p-8">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div className="space-y-2">
                   <p className="text-xs font-bold uppercase tracking-[0.24em] text-primary/70">{t('history.storageDirectory')}</p>
@@ -229,6 +230,7 @@ export default function HistoryView() {
                     previewLabel={t('history.preview')}
                     deleteLabel={t('history.delete')}
                     copyPathLabel={t('history.copyPath')}
+                    copyImageLabel={t('history.copyImage')}
                     copiedLabel={t('history.copied')}
                     onPreview={() => setPreviewingShot(shot)}
                     onDelete={() => setPendingDelete({ kind: 'single', shot })}
@@ -249,24 +251,29 @@ export default function HistoryView() {
                       >
                         &lt;
                       </button>
-                      {Array.from({ length: totalPages }, (_, index) => {
-                        const page = index + 1;
-                        const isActive = page === currentPage;
-                        return (
+                      {paginationItems.map((item, index) =>
+                        item === 'ellipsis' ? (
+                          <span
+                            key={`ellipsis-${index}`}
+                            className="flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold text-on-surface-variant"
+                          >
+                            ...
+                          </span>
+                        ) : (
                           <button
-                            key={page}
+                            key={item}
                             type="button"
-                            onClick={() => setCurrentPage(page)}
+                            onClick={() => setCurrentPage(item)}
                             className={`flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold transition-colors ${
-                              isActive
+                              item === currentPage
                                 ? 'bg-primary text-white'
                                 : 'bg-surface-container-lowest text-on-surface ring-1 ring-outline-variant/30 hover:bg-surface-container'
                             }`}
                           >
-                            {page}
+                            {item}
                           </button>
-                        );
-                      })}
+                        ),
+                      )}
                       <button
                         type="button"
                         disabled={currentPage === totalPages}
@@ -388,6 +395,7 @@ function ScreenshotCard({
   previewLabel,
   deleteLabel,
   copyPathLabel,
+  copyImageLabel,
   copiedLabel,
   onPreview,
   onDelete,
@@ -398,11 +406,13 @@ function ScreenshotCard({
   previewLabel: string;
   deleteLabel: string;
   copyPathLabel: string;
+  copyImageLabel: string;
   copiedLabel: string;
   onPreview: () => void;
   onDelete: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [pathCopied, setPathCopied] = useState(false);
+  const [imageCopied, setImageCopied] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
   const imageUrl = useImageDataUrl(shot.path);
   const fileName = shot.path.split(/[\\/]/).pop() ?? shot.path;
@@ -433,17 +443,33 @@ function ScreenshotCard({
       <div className="space-y-3 p-4">
         <div>
           <p className="truncate text-[13px] font-bold text-on-surface">{fileName}</p>
-          <p className="mt-1 flex items-center gap-1.5 text-xs text-on-surface-variant">
-            <Clock3 size={13} />
-            {formatter.format(new Date(shot.created_at))}
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-on-surface-variant">
+            <span className="rounded-full bg-surface-container px-2.5 py-1">{shot.width} x {shot.height}</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1">
+              <Clock3 size={13} />
+              {formatter.format(new Date(shot.created_at))}
+            </span>
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-on-surface-variant">
-          <span className="rounded-full bg-surface-container px-2.5 py-1">{shot.width} x {shot.height}</span>
-          <span className="max-w-full truncate rounded-full bg-surface-container px-2.5 py-1" title={shot.path}>
+        <div className="flex items-center gap-2 text-[11px] font-semibold text-on-surface-variant">
+          <span className="min-w-0 flex-1 truncate rounded-full bg-surface-container px-2.5 py-1" title={shot.path}>
             {shot.path}
           </span>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard.writeText(shot.path);
+              setPathCopied(true);
+              window.setTimeout(() => setPathCopied(false), 1500);
+            }}
+            className={`inline-flex h-8 shrink-0 items-center justify-center rounded-lg px-2 text-on-surface-variant transition-colors ${
+              pathCopied ? 'bg-primary text-white hover:bg-primary-container hover:text-white' : 'bg-surface-container hover:text-on-surface'
+            }`}
+            title={copyPathLabel}
+          >
+            {pathCopied ? <span className="text-[11px] font-bold">{copiedLabel}</span> : <Copy size={16} />}
+          </button>
         </div>
 
         <div className="flex gap-2 border-t border-outline-variant/20 pt-3">
@@ -472,16 +498,22 @@ function ScreenshotCard({
           <button
             type="button"
             onClick={() => {
-              void navigator.clipboard.writeText(shot.path);
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1500);
+              setOpenError(null);
+              void invoke('copy_capture_image', { path: shot.path })
+                .then(() => {
+                  setImageCopied(true);
+                  window.setTimeout(() => setImageCopied(false), 1500);
+                })
+                .catch((error) => {
+                  setOpenError(error instanceof Error ? error.message : String(error));
+                });
             }}
             className={`inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-on-surface-variant transition-colors ${
-              copied ? 'bg-primary text-white hover:bg-primary-container hover:text-white' : 'hover:bg-surface-container hover:text-on-surface'
+              imageCopied ? 'bg-primary text-white hover:bg-primary-container hover:text-white' : 'hover:bg-surface-container hover:text-on-surface'
             }`}
-            title={copyPathLabel}
+            title={copyImageLabel}
           >
-            {copied ? <span className="text-[11px] font-bold">{copiedLabel}</span> : <Copy size={16} />}
+            {imageCopied ? <span className="text-[11px] font-bold">{copiedLabel}</span> : <Copy size={16} />}
           </button>
         </div>
         {openError && <p className="text-xs text-error">{openError}</p>}
@@ -587,6 +619,22 @@ function useImageDataUrl(path: string) {
   }, [path]);
 
   return imageUrl;
+}
+
+function getPaginationItems(currentPage: number, totalPages: number): Array<number | 'ellipsis'> {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, 'ellipsis', totalPages];
+  }
+
+  if (currentPage >= totalPages - 3) {
+    return [1, 'ellipsis', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  }
+
+  return [1, 'ellipsis', currentPage - 1, currentPage, currentPage + 1, 'ellipsis', totalPages];
 }
 
 function useHoverEnabledAfterFocus() {

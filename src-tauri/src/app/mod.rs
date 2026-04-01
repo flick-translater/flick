@@ -89,6 +89,7 @@ pub fn run() {
             commands::capture::read_image_as_data_url,
             commands::capture::delete_capture,
             commands::capture::clear_all_captures,
+            commands::capture::copy_capture_image,
             commands::settings::get_app_settings,
             commands::settings::get_autostart_status,
             commands::settings::set_autostart_enabled,

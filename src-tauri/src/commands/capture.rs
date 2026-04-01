@@ -44,6 +44,11 @@ pub fn clear_all_captures(state: State<'_, AppState>) -> Result<(), FlickError> 
     capture::clear_all_captures(&state)
 }
 
+#[tauri::command]
+pub fn copy_capture_image(path: String) -> Result<(), FlickError> {
+    capture::copy_capture_image(&path)
+}
+
 pub fn begin_capture_session(
     app: &AppHandle,
     state: &State<'_, AppState>,

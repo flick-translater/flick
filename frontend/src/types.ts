@@ -7,6 +7,7 @@ export type AppSettings = {
   interface_language: string;
   interface_language_set: boolean;
   screenshot_directory: string;
+  ocr_provider: string;
 };
 
 export type OcrPayload = {

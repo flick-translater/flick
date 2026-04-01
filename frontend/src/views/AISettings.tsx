@@ -1,21 +1,29 @@
 import { useState } from 'react';
 import { Network, Key, Terminal, SlidersHorizontal, Eye, EyeOff, ChevronDown } from 'lucide-react';
-
-const providers = ['OpenAI', 'Anthropic', 'OpenAI Compatible', 'Anthropic Compatible', 'Ollama', 'LM Studio'];
+import { useTranslation } from 'react-i18next';
 
 export default function AISettings() {
+  const { t } = useTranslation();
   const [activeProvider, setActiveProvider] = useState('OpenAI');
   const [showKey, setShowKey] = useState(false);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(4096);
 
+  const providers = [
+    t('ai.providerOpenAI'),
+    t('ai.providerAnthropic'),
+    t('ai.providerOpenAICompatible'),
+    t('ai.providerAnthropicCompatible'),
+    t('ai.providerOllama'),
+    t('ai.providerLMStudio'),
+  ];
+
   return (
     <div className="mx-auto max-w-5xl animate-in fade-in duration-500">
-      {/* Provider Selection */}
       <section className="mb-8 lg:mb-12">
         <div className="flex items-center gap-2 mb-4">
           <Network className="text-primary" size={20} />
-          <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">Provider Selection</h3>
+          <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">{t('ai.providerSelection')}</h3>
         </div>
         <div className="flex flex-wrap gap-1 rounded-xl bg-surface-container-low p-1.5">
           {providers.map(p => (
@@ -35,38 +43,37 @@ export default function AISettings() {
       </section>
 
       <div className="mb-8 grid grid-cols-1 gap-6 lg:mb-12 lg:grid-cols-2 lg:gap-8">
-        {/* API Config */}
         <section className="space-y-6">
           <div className="flex items-center gap-2 mb-2">
             <Key className="text-primary" size={20} />
-            <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">API Config</h3>
+            <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">{t('ai.apiConfig')}</h3>
           </div>
           <div className="space-y-4">
             <div className="group">
-              <label className="block text-xs font-bold text-on-surface-variant mb-1.5 ml-1">Model Selection</label>
+              <label className="block text-xs font-bold text-on-surface-variant mb-1.5 ml-1">{t('ai.modelSelection')}</label>
               <div className="relative">
                 <select className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all appearance-none cursor-pointer">
-                  <option>gpt-4-turbo-preview</option>
-                  <option>gpt-4o</option>
-                  <option>gpt-3.5-turbo</option>
+                  <option>{t('ai.modelGPT4Turbo')}</option>
+                  <option>{t('ai.modelGPT4o')}</option>
+                  <option>{t('ai.modelGPT35Turbo')}</option>
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" size={18} />
               </div>
             </div>
             <div className="group">
-              <label className="block text-xs font-bold text-on-surface-variant mb-1.5 ml-1">API Address</label>
+              <label className="block text-xs font-bold text-on-surface-variant mb-1.5 ml-1">{t('ai.apiAddress')}</label>
               <input
                 type="text"
-                placeholder="https://api.openai.com/v1"
+                placeholder={t('ai.apiAddressPlaceholder')}
                 className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all"
               />
             </div>
             <div className="group">
-              <label className="block text-xs font-bold text-on-surface-variant mb-1.5 ml-1">API Key</label>
+              <label className="block text-xs font-bold text-on-surface-variant mb-1.5 ml-1">{t('ai.apiKey')}</label>
               <div className="relative">
                 <input
                   type={showKey ? "text" : "password"}
-                  defaultValue="sk-proj-************************"
+                  placeholder={t('ai.apiKeyPlaceholder')}
                   className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all pr-10"
                 />
                 <button
@@ -80,31 +87,29 @@ export default function AISettings() {
           </div>
         </section>
 
-        {/* Default Prompt */}
         <section className="flex flex-col h-full">
           <div className="flex items-center gap-2 mb-4">
             <Terminal className="text-primary" size={20} />
-            <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">Default Prompt</h3>
+            <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">{t('ai.defaultPrompt')}</h3>
           </div>
           <div className="flex-1 min-h-[180px] sm:min-h-[220px]">
             <textarea
               className="w-full h-full p-4 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm resize-none leading-relaxed"
-              placeholder="Enter the base system instruction for the AI..."
+              placeholder={t('ai.defaultPromptPlaceholder')}
             ></textarea>
           </div>
         </section>
       </div>
 
-      {/* Advanced Parameters */}
       <section className="rounded-2xl border border-outline-variant/20 bg-surface-container-low/50 p-5 shadow-sm sm:p-6 lg:p-8">
         <div className="mb-6 flex items-center gap-2 sm:mb-8">
           <SlidersHorizontal className="text-primary" size={20} />
-          <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">Advanced Parameters</h3>
+          <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">{t('ai.advancedParameters')}</h3>
         </div>
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:gap-12">
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-2">
-              <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Max Tokens</label>
+              <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">{t('ai.maxTokens')}</label>
               <span className="px-3 py-1 bg-primary/10 text-primary text-xs font-black rounded-full">{maxTokens}</span>
             </div>
             <input
@@ -113,11 +118,11 @@ export default function AISettings() {
               onChange={(e) => setMaxTokens(Number(e.target.value))}
               className="w-full px-4 py-3 bg-surface-container-lowest border border-outline-variant/20 rounded-xl text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all"
             />
-            <p className="text-[10px] text-on-surface-variant font-medium">Controls the maximum length of the generated response.</p>
+            <p className="text-[10px] text-on-surface-variant font-medium">{t('ai.maxTokensDesc')}</p>
           </div>
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-2">
-              <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Temperature</label>
+              <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">{t('ai.temperature')}</label>
               <span className="px-3 py-1 bg-primary/10 text-primary text-xs font-black rounded-full">{temperature.toFixed(1)}</span>
             </div>
             <div className="relative py-4">
@@ -131,23 +136,13 @@ export default function AISettings() {
                 className="w-full h-2 bg-surface-container-highest rounded-full appearance-none cursor-pointer accent-primary"
               />
               <div className="mt-3 flex justify-between gap-3 px-1">
-                <span className="text-[10px] font-bold text-on-surface-variant">0.0 (PRECISE)</span>
-                <span className="text-right text-[10px] font-bold text-on-surface-variant">1.0 (CREATIVE)</span>
+                <span className="text-[10px] font-bold text-on-surface-variant">{t('ai.temperaturePrecise')}</span>
+                <span className="text-right text-[10px] font-bold text-on-surface-variant">{t('ai.temperatureCreative')}</span>
               </div>
             </div>
           </div>
         </div>
       </section>
-
-      {/* Action Bar */}
-      <div className="mt-8 border-t border-outline-variant/20 pt-8 lg:mt-12">
-        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <button className="w-full px-6 py-3 text-sm font-bold text-on-surface-variant transition-colors hover:text-on-surface sm:w-auto">Discard</button>
-          <button className="w-full rounded-xl bg-primary px-8 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:opacity-90 active:scale-[0.98] sm:w-auto">
-            Save Configuration
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

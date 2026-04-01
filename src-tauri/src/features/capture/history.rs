@@ -1,11 +1,13 @@
 //! Capture history and screenshot storage management.
 
 use std::{
+    borrow::Cow,
     fs,
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
+use arboard::{Clipboard, ImageData};
 use chrono::{DateTime, Utc};
 use tauri::State;
 use uuid::Uuid;
@@ -78,6 +80,29 @@ pub fn clear_all_captures(state: &State<'_, AppState>) -> Result<(), FlickError>
     if let Ok(mut history) = state.history.lock() {
         history.clear();
     }
+
+    Ok(())
+}
+
+pub fn copy_capture_image(path: &str) -> Result<(), FlickError> {
+    let image = image::open(path)
+        .map_err(|error| FlickError::Message(format!("failed to read screenshot: {error}")))?
+        .into_rgba8();
+    let width = usize::try_from(image.width())
+        .map_err(|_| FlickError::Message("invalid image width".into()))?;
+    let height = usize::try_from(image.height())
+        .map_err(|_| FlickError::Message("invalid image height".into()))?;
+    let bytes = image.into_raw();
+
+    let mut clipboard = Clipboard::new()
+        .map_err(|error| FlickError::Message(format!("failed to access clipboard: {error}")))?;
+    clipboard
+        .set_image(ImageData {
+            width,
+            height,
+            bytes: Cow::Owned(bytes),
+        })
+        .map_err(|error| FlickError::Message(format!("failed to copy screenshot image: {error}")))?;
 
     Ok(())
 }
