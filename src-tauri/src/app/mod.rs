@@ -45,6 +45,7 @@ pub struct AppState {
     pub capture_intent: Mutex<CaptureIntent>,
     pub ocr_service: Mutex<Arc<dyn OcrService>>,
     pub suppress_next_reopen: Mutex<bool>,
+    pub previous_frontmost_app_pid: Mutex<Option<i32>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -180,6 +181,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         capture_intent: Mutex::new(CaptureIntent::Capture),
         ocr_service: Mutex::new(create_ocr_service(&settings.ocr_provider)),
         suppress_next_reopen: Mutex::new(false),
+        previous_frontmost_app_pid: Mutex::new(None),
     })
 }
 

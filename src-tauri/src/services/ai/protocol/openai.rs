@@ -8,7 +8,6 @@ use reqwest::{
     header::{AUTHORIZATION, CONTENT_TYPE},
 };
 use serde::{Deserialize, Serialize};
-use std::error::Error as _;
 use std::time::Instant;
 
 use super::ChatProtocol;
@@ -58,7 +57,6 @@ struct ChatChunkDelta {
 
 pub struct OpenAiChatProtocol {
     client: reqwest::Client,
-    provider_key: String,
     api_key: String,
     api_base_url: String,
     model: String,
@@ -69,7 +67,6 @@ pub struct OpenAiChatProtocol {
 
 impl OpenAiChatProtocol {
     pub fn new(
-        provider_key: String,
         api_key: String,
         api_base_url: String,
         model: String,
@@ -82,7 +79,6 @@ impl OpenAiChatProtocol {
                 .user_agent("Flick/0.1")
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
-            provider_key,
             api_key,
             api_base_url,
             model,
@@ -128,29 +124,7 @@ impl OpenAiChatProtocol {
             builder = builder.header(AUTHORIZATION, format!("Bearer {}", self.api_key));
         }
 
-        println!(
-            "[translation-http] provider={} url={} stream={} api_key_present={}",
-            self.provider_key,
-            url,
-            request.stream,
-            !self.api_key.trim().is_empty()
-        );
-
-        let response = match builder.json(&request).send().await {
-            Ok(response) => response,
-            Err(error) => {
-                eprintln!("[translation-http] request error: {error}");
-                eprintln!("[translation-http] request error debug: {error:?}");
-                let mut index = 0;
-                let mut source = error.source();
-                while let Some(cause) = source {
-                    eprintln!("[translation-http] cause[{index}]: {cause}");
-                    source = cause.source();
-                    index += 1;
-                }
-                return Err(error.into());
-            }
-        };
+        let response = builder.json(&request).send().await?;
 
         if !response.status().is_success() {
             let status = response.status();

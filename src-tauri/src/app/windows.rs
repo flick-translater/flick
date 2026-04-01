@@ -6,6 +6,8 @@ use tauri::{
 };
 
 use super::AppState;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const WIDGET_WINDOW_LABEL: &str = "widget";
@@ -75,6 +77,9 @@ pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 }
 
 pub fn show_widget_window(app: &AppHandle) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    remember_previous_frontmost_app(app);
+
     let window = ensure_widget_window(app)?;
     let _ = window.center();
     let _ = window.set_visible_on_all_workspaces(true);
@@ -98,6 +103,8 @@ pub fn hide_widget_window(app: &AppHandle) -> tauri::Result<()> {
 
     #[cfg(target_os = "macos")]
     {
+        restore_previous_frontmost_app(app);
+
         if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
             let is_visible = main_window.is_visible().unwrap_or(false);
             if !is_visible {
@@ -111,6 +118,44 @@ pub fn hide_widget_window(app: &AppHandle) -> tauri::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn remember_previous_frontmost_app(app: &AppHandle) {
+    let workspace = NSWorkspace::sharedWorkspace();
+    let current_app = NSRunningApplication::currentApplication();
+    let current_pid = current_app.processIdentifier();
+    let previous_pid = workspace
+        .frontmostApplication()
+        .map(|frontmost| frontmost.processIdentifier())
+        .filter(|pid| *pid > 0 && *pid != current_pid);
+
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut stored_pid) = state.previous_frontmost_app_pid.lock() {
+            *stored_pid = previous_pid;
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn restore_previous_frontmost_app(app: &AppHandle) {
+    let previous_pid = app
+        .try_state::<AppState>()
+        .and_then(|state| {
+            state
+                .previous_frontmost_app_pid
+                .lock()
+                .ok()
+                .and_then(|mut stored_pid| stored_pid.take())
+        });
+
+    let Some(previous_pid) = previous_pid else {
+        return;
+    };
+
+    if let Some(previous_app) = NSRunningApplication::runningApplicationWithProcessIdentifier(previous_pid) {
+        let _ = previous_app.activateWithOptions(NSApplicationActivationOptions(0));
+    }
 }
 
 pub fn emit_capture_status(app: &AppHandle, event: &str, payload: impl serde::Serialize + Clone) {
