@@ -81,7 +81,9 @@ pub fn show_widget_window(app: &AppHandle) -> tauri::Result<()> {
     remember_previous_frontmost_app(app);
 
     let window = ensure_widget_window(app)?;
-    let _ = window.center();
+    if !window.is_always_on_top().unwrap_or(false) {
+        let _ = window.center();
+    }
     let _ = window.set_visible_on_all_workspaces(true);
     window.show()?;
     window.unminimize()?;
@@ -98,6 +100,7 @@ pub fn hide_widget_window(app: &AppHandle) -> tauri::Result<()> {
     }
 
     if let Some(window) = app.get_webview_window(WIDGET_WINDOW_LABEL) {
+        let _ = window.set_always_on_top(false);
         window.hide()?;
     }
 
