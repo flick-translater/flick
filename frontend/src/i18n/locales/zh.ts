@@ -40,15 +40,17 @@ export default {
       enableShortcut: "启用 OCR 快捷键",
       autoTranslate: "自动翻译",
       ocrEngine: "OCR 引擎",
-      ocrEngineStandard: "标准模式 (快速，针对数字文本优化)",
-      ocrEngineDeepLearning: "深度学习 (高级神经网络)",
-      ocrEngineHint: "根据您的文档类型选择处理引擎。",
+      ocrEngineHint: "仅显示当前平台实际可用的 OCR 引擎。",
+      noEngineAvailable: "当前平台暂无可用 OCR 引擎",
       targetLanguage: "目标语言",
       targetLanguageHint: "用于「自动翻译」功能和 OCR 词典的语言。",
       autoTranslateDesc: "OCR 处理后自动翻译检测到的文本",
       triggerOcrDesc: "使用快捷键快速触发文字捕获",
       discard: "放弃",
       saveChanges: "保存更改",
+      engines: {
+        macosVision: "macOS Vision（系统内置）"
+      },
       languages: {
         english: "英语",
         chineseSimplified: "中文简体",
@@ -134,6 +136,9 @@ export default {
     widget: {
       sourceText: "源文本",
       translation: "翻译结果",
+      recognizing: "识别中...",
+      translating: "翻译中...",
+      waitForOcr: "等待识别完成",
       translate: "翻译",
       english: "英语",
       chinese: "中文",

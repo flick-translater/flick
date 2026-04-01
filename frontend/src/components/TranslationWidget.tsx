@@ -1,6 +1,6 @@
 import { useEffect, useState, type MouseEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, Share2, ScanText, Loader2 } from 'lucide-react';
+import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, ScanText, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TranslationPayload } from '../types';
@@ -11,6 +11,7 @@ interface TranslationWidgetProps {
   isLoading?: boolean;
   isTranslating?: boolean;
   onClose: () => void;
+  onTranslate?: () => void;
   standalone?: boolean;
 }
 
@@ -53,11 +54,13 @@ function languageLabel(code: string | null | undefined, t: (key: string) => stri
   }
 }
 
-export default function TranslationWidget({ payload, isLoading = false, isTranslating = false, onClose, standalone = false }: TranslationWidgetProps) {
+export default function TranslationWidget({ payload, isLoading = false, isTranslating = false, onClose, onTranslate, standalone = false }: TranslationWidgetProps) {
   const { t } = useTranslation();
   const [isPinned, setIsPinned] = useState(false);
   const [sourceCopied, setSourceCopied] = useState(false);
+  const [translationCopied, setTranslationCopied] = useState(false);
   const windowHandle = standalone ? getCurrentWindow() : null;
+  const isTranslateDisabled = isLoading || isTranslating || !payload.sourceText.trim();
   const resolvedSourceLanguage = payload.detectedSourceLanguage?.toLowerCase() === 'auto'
     ? (payload.ocrDetectedSourceLanguage ?? 'auto')
     : (payload.detectedSourceLanguage ?? payload.ocrDetectedSourceLanguage);
@@ -155,6 +158,22 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
     }
   };
 
+  const handleCopyTranslation = async () => {
+    if (!payload.translatedText) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(payload.translatedText);
+      setTranslationCopied(true);
+      window.setTimeout(() => {
+        setTranslationCopied(false);
+      }, 1200);
+    } catch (error) {
+      console.error('Failed to copy translated text', error);
+    }
+  };
+
   return (
     <div className={standalone
       ? 'flex h-screen flex-col overflow-hidden rounded-[18px] border border-outline-variant/30 bg-surface shadow-2xl'
@@ -211,13 +230,13 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
       <main className="flex flex-1 flex-col gap-4 overflow-hidden bg-surface/50 p-4 sm:p-5">
         {/* Source Text */}
         <section className="flex-1 flex flex-col min-h-0 bg-white border border-outline-variant/30 rounded-xl p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3 border-b border-outline-variant/20 pb-2">
-            <span className="text-[10px] uppercase font-bold tracking-[0.1em] text-outline">{t('widget.sourceText')}</span>
+          <div className="flex items-center gap-2 mb-3 border-b border-outline-variant/20 pb-2">
+            <span className="min-w-0 flex-1 text-[10px] uppercase font-bold tracking-[0.1em] text-outline">{t('widget.sourceText')}</span>
             <button
               onClick={() => {
                 void handleCopySource();
               }}
-              className={`min-w-[52px] text-on-surface-variant hover:text-primary transition-colors ${sourceCopied ? 'text-primary' : ''}`}
+              className={`ml-auto flex shrink-0 items-center justify-end text-on-surface-variant hover:text-primary transition-colors ${sourceCopied ? 'text-primary' : ''}`}
             >
               {sourceCopied ? (
                 <span className="text-[11px] font-bold">{t('history.copied')}</span>
@@ -230,7 +249,7 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
             {isLoading && !payload.sourceText ? (
               <div className="flex items-center gap-2 text-on-surface-variant">
                 <Loader2 size={16} className="animate-spin" />
-                <span className="text-sm">{t('widget.recognizing') || '识别中...'}</span>
+                <span className="text-sm">{t('widget.recognizing', { defaultValue: '识别中...' })}</span>
               </div>
             ) : (
               <p className="font-body text-sm leading-relaxed text-on-surface">
@@ -278,8 +297,19 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
               <button className="text-primary hover:text-primary-container transition-colors">
                 <Volume2 size={16} />
               </button>
-              <button className="text-primary hover:text-primary-container transition-colors">
-                <Share2 size={16} />
+              <button
+                type="button"
+                disabled={!payload.translatedText}
+                onClick={() => {
+                  void handleCopyTranslation();
+                }}
+                className={`transition-colors ${payload.translatedText ? 'text-primary hover:text-primary-container' : 'cursor-not-allowed text-primary/40'} ${translationCopied ? 'text-primary-container' : ''}`}
+              >
+                {translationCopied ? (
+                  <span className="text-[11px] font-bold">{t('history.copied')}</span>
+                ) : (
+                  <Copy size={16} />
+                )}
               </button>
             </div>
           </div>
@@ -287,7 +317,7 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
             {isTranslating && !payload.translatedText ? (
               <div className="flex items-center gap-2 text-primary">
                 <Loader2 size={16} className="animate-spin" />
-                <span className="text-sm">{t('widget.translating') || '翻译中...'}</span>
+                <span className="text-sm">{t('widget.translating', { defaultValue: '翻译中...' })}</span>
               </div>
             ) : (
               <p className="font-body text-sm leading-relaxed text-primary-container font-medium">
@@ -301,9 +331,24 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
 
       {/* Footer */}
       <footer className="px-5 py-4 bg-white/90 border-t border-outline-variant/20 flex justify-end items-center shrink-0">
-        <button className="bg-primary text-white px-6 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 shadow-md hover:bg-primary-container transition-all active:scale-95">
+        <button
+          type="button"
+          disabled={isTranslateDisabled}
+          onClick={() => {
+            onTranslate?.();
+          }}
+          className={`px-6 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-all ${
+            isTranslateDisabled
+              ? 'cursor-not-allowed bg-surface-container-high text-on-surface-variant shadow-none'
+              : 'bg-primary text-white shadow-md hover:bg-primary-container active:scale-95'
+          }`}
+        >
           <ScanText size={16} />
-          <span>{t('widget.translate')}</span>
+          <span>
+            {isLoading
+              ? t('widget.waitForOcr', { defaultValue: '等待识别完成' })
+              : t('widget.translate', { defaultValue: 'Translate' })}
+          </span>
         </button>
       </footer>
     </div>

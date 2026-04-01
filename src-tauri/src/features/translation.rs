@@ -51,11 +51,15 @@ pub fn emit_ocr_ready(
     image_path: &str,
     source_text: &str,
     ocr_detected_source_language: Option<&str>,
+    auto_translate_enabled: bool,
+    target_language: &str,
 ) -> Result<(), FlickError> {
     let payload = serde_json::json!({
         "imagePath": image_path,
         "sourceText": source_text,
         "ocrDetectedSourceLanguage": ocr_detected_source_language,
+        "autoTranslateEnabled": auto_translate_enabled,
+        "targetLanguage": target_language,
     });
 
     if let Some(window) = app.get_webview_window("widget") {
@@ -71,6 +75,7 @@ pub fn emit_translation_ready(
     app: &AppHandle,
     image_path: &str,
     source_text: &str,
+    target_language: &str,
     translation: TranslateResponse,
 ) -> Result<(), FlickError> {
     let payload = serde_json::json!({
@@ -79,7 +84,7 @@ pub fn emit_translation_ready(
         "translatedText": translation.translated_text,
         "provider": translation.provider,
         "detectedSourceLanguage": translation.detected_source_language,
-        "targetLanguage": "zh",
+        "targetLanguage": target_language,
     });
 
     if let Some(window) = app.get_webview_window("widget") {

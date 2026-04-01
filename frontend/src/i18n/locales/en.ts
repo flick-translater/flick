@@ -40,15 +40,17 @@ export default {
       enableShortcut: "Enable OCR Shortcut",
       autoTranslate: "Auto-Translate",
       ocrEngine: "OCR Engine",
-      ocrEngineStandard: "Standard (Fast, optimized for digital text)",
-      ocrEngineDeepLearning: "Deep Learning (Advanced neural networks)",
-      ocrEngineHint: "Select the processing engine based on your document type.",
+      ocrEngineHint: "Only OCR engines actually available on the current platform are shown here.",
+      noEngineAvailable: "No OCR engine is currently available on this platform",
       targetLanguage: "Target Language",
       targetLanguageHint: "Language used for the 'Auto-Translate' feature and OCR dictionary.",
       autoTranslateDesc: "Automatically translate detected text after OCR processing",
       triggerOcrDesc: "Quickly trigger text capture using",
       discard: "Discard",
       saveChanges: "Save Changes",
+      engines: {
+        macosVision: "macOS Vision (Built-in)"
+      },
       languages: {
         english: "English",
         chineseSimplified: "Chinese (Simplified)",
@@ -134,6 +136,9 @@ export default {
     widget: {
       sourceText: "Source Text",
       translation: "Translation",
+      recognizing: "Recognizing...",
+      translating: "Translating...",
+      waitForOcr: "Wait for OCR",
       translate: "Translate",
       english: "English",
       chinese: "Chinese",

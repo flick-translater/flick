@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
@@ -18,12 +17,7 @@ export default function App() {
       <Sidebar currentView={currentView} setCurrentView={setCurrentView} />
       
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <TopBar 
-          title={getViewTitle(currentView, t)} 
-          onToggleWidget={() => {
-            void invoke('show_translation_widget');
-          }}
-        />
+        <TopBar title={getViewTitle(currentView, t)} />
         
         <main className="relative flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8 xl:px-10 xl:py-10">
           {currentView === 'general' && <GeneralSettings />}

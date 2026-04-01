@@ -253,12 +253,17 @@ pub fn complete_capture(
         .lock()
         .map_err(|_| FlickError::Message("ocr service mutex poisoned".into()))?
         .clone();
-    let ai_settings = state
-        .settings
-        .lock()
-        .map_err(|_| FlickError::LockError("settings".into()))?
-        .ai
-        .clone();
+    let (ai_settings, ocr_auto_translate, ocr_target_language) = {
+        let settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::LockError("settings".into()))?;
+        (
+            settings.ai.clone(),
+            settings.ocr_auto_translate,
+            settings.ocr_target_language.clone(),
+        )
+    };
     let cached_screens = platform::complete_ui_before_capture_processing(app, state)?;
 
     let app_handle = app.clone();
@@ -352,7 +357,13 @@ pub fn complete_capture(
                             &record.path,
                             &ocr.text,
                             detected_source_language.as_deref(),
+                            ocr_auto_translate,
+                            &ocr_target_language,
                         )?;
+
+                        if !ocr_auto_translate {
+                            return Ok(());
+                        }
 
                         let rt = Runtime::new().map_err(|e| {
                             FlickError::Message(format!("failed to create tokio runtime: {}", e))
@@ -362,7 +373,7 @@ pub fn complete_capture(
                             TranslateRequest {
                                 text: ocr.text.clone(),
                                 source_language: detected_source_language.clone(),
-                                target_language: "zh".into(),
+                                target_language: ocr_target_language.clone(),
                             },
                         ));
 
@@ -372,6 +383,7 @@ pub fn complete_capture(
                                     &app_handle,
                                     &record.path,
                                     &ocr.text,
+                                    &ocr_target_language,
                                     translation,
                                 )?;
                             }

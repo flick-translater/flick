@@ -52,6 +52,11 @@ pub struct OcrTextBlock {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcrEngineInfo {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranslateRequest {
     pub text: String,
     pub source_language: Option<String>,
@@ -104,7 +109,7 @@ fn default_temperature() -> f32 {
 }
 
 fn default_max_tokens() -> u32 {
-    4096
+    0
 }
 
 fn default_prompt() -> String {
@@ -142,6 +147,9 @@ pub struct AppSettings {
     pub interface_language: String,
     pub interface_language_set: bool,
     pub screenshot_directory: String,
+    pub ocr_shortcut_enabled: bool,
+    pub ocr_auto_translate: bool,
+    pub ocr_target_language: String,
     pub ocr_provider: String,
     pub ai: AISettings,
 }
@@ -155,6 +163,9 @@ impl Default for AppSettings {
             interface_language: "en".into(),
             interface_language_set: false,
             screenshot_directory: String::new(),
+            ocr_shortcut_enabled: true,
+            ocr_auto_translate: true,
+            ocr_target_language: "zh".into(),
             ocr_provider: "vision".into(),
             ai: AISettings::default(),
         }

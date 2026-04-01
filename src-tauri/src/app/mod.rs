@@ -22,7 +22,10 @@ use tauri_plugin_global_shortcut::ShortcutState;
 use crate::{
     commands,
     models::{AppSettings, CaptureRecord},
-    services::{CachedScreenCapture, MockOcrService, OcrService, SettingsStore, VisionOcrService},
+    services::{
+        CachedScreenCapture, OcrService, SettingsStore, available_ocr_engines,
+        create_ocr_service, default_ocr_provider,
+    },
 };
 
 #[cfg(target_os = "macos")]
@@ -41,6 +44,7 @@ pub struct AppState {
     pub settings: Mutex<AppSettings>,
     pub capture_intent: Mutex<CaptureIntent>,
     pub ocr_service: Mutex<Arc<dyn OcrService>>,
+    pub suppress_next_reopen: Mutex<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +99,10 @@ pub fn run() {
             commands::settings::update_max_screenshots,
             commands::settings::update_screenshot_directory,
             commands::settings::update_translate_shortcut,
+            commands::settings::update_ocr_shortcut_enabled,
+            commands::settings::update_ocr_auto_translate,
+            commands::settings::update_ocr_target_language,
+            commands::settings::get_available_ocr_engines,
             commands::settings::update_ocr_provider,
             commands::settings::update_ai_settings,
             commands::widget::show_translation_widget,
@@ -112,6 +120,13 @@ pub fn run() {
 
     app.run(|app, event| match event {
         RunEvent::Reopen { .. } => {
+            let state = app.state::<AppState>();
+            if let Ok(mut suppress) = state.suppress_next_reopen.lock() {
+                if *suppress {
+                    *suppress = false;
+                    return;
+                }
+            }
             let _ = windows::show_main_window(app);
         }
         _ => {}
@@ -132,6 +147,14 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
 
     let settings_store = SettingsStore::new(data_dir.join("settings.json"));
     let mut settings = settings_store.load_settings()?;
+    let available_engines = available_ocr_engines();
+    if !available_engines
+        .iter()
+        .any(|engine| engine.id == settings.ocr_provider)
+    {
+        settings.ocr_provider = default_ocr_provider();
+    }
+    settings_store.save_settings(&settings)?;
     // When the user has not picked a UI language yet, initialize it from the system locale.
     if !settings.interface_language_set {
         settings.interface_language = detect_system_language();
@@ -156,14 +179,8 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         settings: Mutex::new(settings.clone()),
         capture_intent: Mutex::new(CaptureIntent::Capture),
         ocr_service: Mutex::new(create_ocr_service(&settings.ocr_provider)),
+        suppress_next_reopen: Mutex::new(false),
     })
-}
-
-pub fn create_ocr_service(provider: &str) -> Arc<dyn OcrService> {
-    match provider {
-        "mock" => Arc::new(MockOcrService),
-        _ => Arc::new(VisionOcrService),
-    }
 }
 
 fn detect_system_language() -> String {
@@ -262,7 +279,7 @@ fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
 
 pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
     // Two global actions are exposed today, so we fail fast on conflicting bindings.
-    if settings.capture_shortcut == settings.translate_shortcut {
+    if settings.ocr_shortcut_enabled && settings.capture_shortcut == settings.translate_shortcut {
         anyhow::bail!("截图和截图翻译快捷键不能相同");
     }
 
@@ -271,7 +288,9 @@ pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyho
         let _ = app;
         macos_hotkeys::apply_shortcuts(
             settings.capture_shortcut.as_str(),
-            settings.translate_shortcut.as_str(),
+            settings
+                .ocr_shortcut_enabled
+                .then_some(settings.translate_shortcut.as_str()),
         )?;
         return Ok(());
     }
@@ -291,11 +310,13 @@ pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyho
             settings.capture_shortcut.as_str(),
             CaptureIntent::Capture,
         )?;
-        register_shortcut_handler(
-            app,
-            settings.translate_shortcut.as_str(),
-            CaptureIntent::Translate,
-        )?;
+        if settings.ocr_shortcut_enabled {
+            register_shortcut_handler(
+                app,
+                settings.translate_shortcut.as_str(),
+                CaptureIntent::Translate,
+            )?;
+        }
 
         Ok(())
     }

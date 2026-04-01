@@ -26,8 +26,15 @@ export type AppSettings = {
   interface_language: string;
   interface_language_set: boolean;
   screenshot_directory: string;
+  ocr_shortcut_enabled: boolean;
+  ocr_auto_translate: boolean;
+  ocr_target_language: string;
   ocr_provider: string;
   ai: AISettings;
+};
+
+export type OcrEngineInfo = {
+  id: string;
 };
 
 export type AiTestResult = {
@@ -43,6 +50,8 @@ export type OcrPayload = {
   imagePath: string;
   sourceText: string;
   ocrDetectedSourceLanguage?: string | null;
+  autoTranslateEnabled?: boolean;
+  targetLanguage?: string;
 };
 
 export type TranslationPayload = {
@@ -53,6 +62,12 @@ export type TranslationPayload = {
   detectedSourceLanguage?: string | null;
   ocrDetectedSourceLanguage?: string | null;
   targetLanguage: string;
+};
+
+export type TranslateResponse = {
+  provider: string;
+  translated_text: string;
+  detected_source_language?: string | null;
 };
 
 export type CaptureRecord = {

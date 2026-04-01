@@ -1,13 +1,11 @@
 import type { MouseEvent } from 'react';
-import { Zap } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 interface TopBarProps {
   title: string;
-  onToggleWidget: () => void;
 }
 
-export default function TopBar({ title, onToggleWidget }: TopBarProps) {
+export default function TopBar({ title }: TopBarProps) {
   const handleMouseDown = async (event: MouseEvent<HTMLElement>) => {
     if (event.button !== 0) {
       return;
@@ -39,15 +37,6 @@ export default function TopBar({ title, onToggleWidget }: TopBarProps) {
           {title}
         </h2>
       </div>
-      
-      <button 
-        onClick={onToggleWidget}
-        className="flex shrink-0 items-center gap-2 rounded-lg p-2 text-primary transition-colors hover:bg-primary/10"
-        title="Toggle Translation Widget"
-      >
-        <Zap size={20} className="fill-current" />
-        <span className="hidden text-xs font-bold uppercase tracking-wider sm:inline-block">Widget</span>
-      </button>
     </header>
   );
 }

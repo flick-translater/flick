@@ -8,10 +8,11 @@ use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
 
 use crate::{
-    app::{AppState, apply_shortcut_bindings, create_ocr_service},
+    app::{AppState, apply_shortcut_bindings},
     error::FlickError,
     features::capture,
-    models::{AISettings, AppSettings, AutostartStatus},
+    models::{AISettings, AppSettings, AutostartStatus, OcrEngineInfo},
+    services::{available_ocr_engines, create_ocr_service},
 };
 
 #[tauri::command]
@@ -199,9 +200,10 @@ pub fn update_ocr_provider(
     provider: String,
 ) -> Result<AppSettings, FlickError> {
     let normalized = provider.trim().to_lowercase();
-    if !matches!(normalized.as_str(), "vision" | "mock") {
+    let available = available_ocr_engines();
+    if !available.iter().any(|engine| engine.id == normalized) {
         return Err(FlickError::Message(
-            "invalid OCR provider, must be 'vision' or 'mock'".into(),
+            "invalid OCR provider for current platform".into(),
         ));
     }
 
@@ -220,6 +222,93 @@ pub fn update_ocr_provider(
             .map_err(|_| FlickError::Message("ocr service mutex poisoned".into()))?;
         *ocr_service = new_service;
 
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn get_available_ocr_engines() -> Result<Vec<OcrEngineInfo>, FlickError> {
+    Ok(available_ocr_engines())
+}
+
+#[tauri::command]
+pub fn update_ocr_shortcut_enabled(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<AppSettings, FlickError> {
+    let current_settings = {
+        let settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.clone()
+    };
+
+    if current_settings.ocr_shortcut_enabled == enabled {
+        return get_app_settings(state);
+    }
+
+    let mut next_settings = current_settings.clone();
+    next_settings.ocr_shortcut_enabled = enabled;
+
+    if let Err(error) = apply_shortcut_bindings(&app, &next_settings) {
+        let _ = apply_shortcut_bindings(&app, &current_settings);
+        return Err(FlickError::Message(format!(
+            "OCR 快捷键状态更新失败: {error}"
+        )));
+    }
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        *settings = next_settings.clone();
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn update_ocr_auto_translate(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<AppSettings, FlickError> {
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.ocr_auto_translate = enabled;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn update_ocr_target_language(
+    state: State<'_, AppState>,
+    language: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = language.trim().to_lowercase();
+    if normalized.is_empty() {
+        return Err(FlickError::Message("OCR 目标语言不能为空".into()));
+    }
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.ocr_target_language = normalized;
         settings.clone()
     };
 

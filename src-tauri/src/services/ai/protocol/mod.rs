@@ -31,6 +31,7 @@ pub fn create_chat_protocol(
 ) -> Result<Box<dyn ChatProtocol>> {
     match protocol {
         ProtocolKind::OpenAi => Ok(Box::new(OpenAiChatProtocol::new(
+            _provider_key.to_string(),
             settings.api_key.clone(),
             settings.api_base_url.clone(),
             settings.model.clone(),

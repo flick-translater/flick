@@ -6,7 +6,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import TranslationWidget from './components/TranslationWidget';
 import './index.css';
 import { normalizeLanguage, setupI18n } from './i18n/config';
-import { TranslationPayload, OcrPayload, AppSettings } from './types';
+import { TranslationPayload, OcrPayload, AppSettings, TranslateResponse } from './types';
 
 window.addEventListener('contextmenu', (event) => {
   event.preventDefault();
@@ -26,6 +26,39 @@ function WidgetApp() {
   const [payload, setPayload] = useState<TranslationPayload>(placeholderPayload);
   const [isLoading, setIsLoading] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
+
+  const handleTranslate = async () => {
+    if (!payload.sourceText.trim()) {
+      return;
+    }
+
+    setIsTranslating(true);
+    setPayload((prev) => ({
+      ...prev,
+      translatedText: '',
+    }));
+
+    try {
+      const response = await invoke<TranslateResponse>('translate', {
+        request: {
+          text: payload.sourceText,
+          source_language: payload.ocrDetectedSourceLanguage ?? null,
+          target_language: payload.targetLanguage,
+        },
+      });
+
+      setPayload((prev) => ({
+        ...prev,
+        translatedText: response.translated_text,
+        provider: response.provider,
+        detectedSourceLanguage: response.detected_source_language ?? prev.detectedSourceLanguage,
+      }));
+    } catch (error) {
+      console.error('[WIDGET] manual translate failed', error);
+    } finally {
+      setIsTranslating(false);
+    }
+  };
 
   useEffect(() => {
     console.log('[WIDGET] WidgetApp mounted, setting up event listeners');
@@ -57,9 +90,10 @@ function WidgetApp() {
         sourceText: event.payload.sourceText,
         translatedText: '',
         ocrDetectedSourceLanguage: event.payload.ocrDetectedSourceLanguage ?? null,
+        targetLanguage: event.payload.targetLanguage ?? prev.targetLanguage,
       }));
       setIsLoading(false);
-      setIsTranslating(true);
+      setIsTranslating(event.payload.autoTranslateEnabled ?? true);
     }).then((dispose) => {
       unlistenOcr = dispose;
     });
@@ -92,6 +126,9 @@ function WidgetApp() {
       payload={payload}
       isLoading={isLoading}
       isTranslating={isTranslating}
+      onTranslate={() => {
+        void handleTranslate();
+      }}
       onClose={() => {
         void getCurrentWindow().close();
       }}

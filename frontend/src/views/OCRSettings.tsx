@@ -1,6 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import Toggle from '../components/Toggle';
+import type { AppSettings, OcrEngineInfo } from '../types';
 
 const languageMap: Record<string, string> = {
   en: 'en', 'en-US': 'en', 'en-GB': 'en', 'en-AU': 'en', 'en-CA': 'en',
@@ -31,8 +33,11 @@ function getDefaultLanguage(): string {
 export default function OCRSettings() {
   const { t } = useTranslation();
   const [enableShortcut, setEnableShortcut] = useState(true);
-  const [autoTranslate, setAutoTranslate] = useState(false);
+  const [autoTranslate, setAutoTranslate] = useState(true);
   const [targetLanguage, setTargetLanguage] = useState(getDefaultLanguage);
+  const [ocrProvider, setOcrProvider] = useState('vision');
+  const [availableEngines, setAvailableEngines] = useState<OcrEngineInfo[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const targetLanguages = useMemo(() => [
     { value: 'en', label: t('ocr.languages.english') },
@@ -56,6 +61,87 @@ export default function OCRSettings() {
     { value: 'hi', label: t('ocr.languages.hindi') },
   ], [t]);
 
+  const ocrEngineLabel = (engineId: string) => {
+    switch (engineId) {
+      case 'vision':
+        return t('ocr.engines.macosVision');
+      default:
+        return engineId;
+    }
+  };
+
+  useEffect(() => {
+    void Promise.all([
+      invoke<AppSettings>('get_app_settings'),
+      invoke<OcrEngineInfo[]>('get_available_ocr_engines'),
+    ])
+      .then(([settings, engines]) => {
+        setAvailableEngines(engines);
+        setEnableShortcut(settings.ocr_shortcut_enabled);
+        setAutoTranslate(settings.ocr_auto_translate);
+        setTargetLanguage(settings.ocr_target_language || getDefaultLanguage());
+        setOcrProvider(settings.ocr_provider);
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
+  }, []);
+
+  const handleShortcutToggle = (checked: boolean) => {
+    setEnableShortcut(checked);
+    void invoke<AppSettings>('update_ocr_shortcut_enabled', { enabled: checked })
+      .then((settings) => {
+        setEnableShortcut(settings.ocr_shortcut_enabled);
+      })
+      .catch(() => {
+        setEnableShortcut(!checked);
+      });
+  };
+
+  const handleAutoTranslateToggle = (checked: boolean) => {
+    setAutoTranslate(checked);
+    void invoke<AppSettings>('update_ocr_auto_translate', { enabled: checked })
+      .then((settings) => {
+        setAutoTranslate(settings.ocr_auto_translate);
+      })
+      .catch(() => {
+        setAutoTranslate(!checked);
+      });
+  };
+
+  const handleTargetLanguageChange = (language: string) => {
+    setTargetLanguage(language);
+    void invoke<AppSettings>('update_ocr_target_language', { language })
+      .then((settings) => {
+        setTargetLanguage(settings.ocr_target_language);
+      })
+      .catch(() => {
+        setTargetLanguage(getDefaultLanguage());
+      });
+  };
+
+  const handleOcrProviderChange = (provider: string) => {
+    const previousProvider = ocrProvider;
+    setOcrProvider(provider);
+    void invoke<AppSettings>('update_ocr_provider', { provider })
+      .then((settings) => {
+        setOcrProvider(settings.ocr_provider);
+      })
+      .catch(() => {
+        setOcrProvider(previousProvider);
+      });
+  };
+
+  if (isLoading) {
+    return (
+      <div className="mx-auto max-w-4xl animate-in fade-in duration-500">
+        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 text-sm text-on-surface-variant shadow-sm sm:p-6">
+          Loading...
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-4xl animate-in fade-in duration-500">
       <section className="space-y-8">
@@ -68,7 +154,7 @@ export default function OCRSettings() {
                   {t('ocr.triggerOcrDesc')}
                 </p>
               </div>
-              <Toggle checked={enableShortcut} onChange={setEnableShortcut} />
+              <Toggle checked={enableShortcut} onChange={handleShortcutToggle} />
             </div>
           </div>
 
@@ -80,7 +166,7 @@ export default function OCRSettings() {
                   {t('ocr.autoTranslateDesc')}
                 </p>
               </div>
-              <Toggle checked={autoTranslate} onChange={setAutoTranslate} />
+              <Toggle checked={autoTranslate} onChange={handleAutoTranslateToggle} />
             </div>
           </div>
         </div>
@@ -89,9 +175,17 @@ export default function OCRSettings() {
           <div className="max-w-md">
             <label className="text-sm font-bold text-on-surface block mb-2">{t('ocr.ocrEngine')}</label>
             <div className="relative group">
-              <select className="w-full appearance-none bg-surface-container-lowest border border-outline-variant/30 px-4 py-3.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none cursor-pointer shadow-sm transition-all text-on-surface">
-                <option value="standard">{t('ocr.ocrEngineStandard')}</option>
-                <option value="deep_learning">{t('ocr.ocrEngineDeepLearning')}</option>
+              <select
+                value={ocrProvider}
+                disabled={availableEngines.length === 0}
+                onChange={(e) => handleOcrProviderChange(e.target.value)}
+                className="w-full appearance-none bg-surface-container-lowest border border-outline-variant/30 px-4 py-3.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none cursor-pointer shadow-sm transition-all text-on-surface disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {availableEngines.length > 0 ? availableEngines.map((engine) => (
+                  <option key={engine.id} value={engine.id}>{ocrEngineLabel(engine.id)}</option>
+                )) : (
+                  <option value="">{t('ocr.noEngineAvailable')}</option>
+                )}
               </select>
               <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-on-surface-variant">
                 <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -105,7 +199,7 @@ export default function OCRSettings() {
           <div className="max-w-md">
             <label className="text-sm font-bold text-on-surface block mb-2">{t('ocr.targetLanguage')}</label>
             <div className="relative group">
-              <select value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)} className="w-full appearance-none bg-surface-container-lowest border border-outline-variant/30 px-4 py-3.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none cursor-pointer shadow-sm transition-all text-on-surface">
+              <select value={targetLanguage} onChange={(e) => handleTargetLanguageChange(e.target.value)} className="w-full appearance-none bg-surface-container-lowest border border-outline-variant/30 px-4 py-3.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none cursor-pointer shadow-sm transition-all text-on-surface">
                 {targetLanguages.map(lang => (
                   <option key={lang.value} value={lang.value}>{lang.label}</option>
                 ))}

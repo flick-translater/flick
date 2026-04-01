@@ -28,6 +28,15 @@ impl TranslationGateway {
                 .unwrap_or("auto-detected"),
             request.target_language
         );
+        println!(
+            "[translation] provider={} protocol={} model={} base_url={}",
+            provider.key,
+            protocol.protocol_name(),
+            provider.settings.model,
+            provider.settings.api_base_url
+        );
+        println!("[translation] system_prompt:\n{}", system_prompt);
+        println!("[translation] user_text:\n{}", request.text);
 
         let translated_text = protocol
             .chat_with_system(&system_prompt, &request.text)

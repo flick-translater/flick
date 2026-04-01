@@ -40,15 +40,17 @@ export default {
       enableShortcut: "OCRショートカットを有効にする",
       autoTranslate: "自動翻訳",
       ocrEngine: "OCR エンジン",
-      ocrEngineStandard: "標準 (高速、デジタルテキスト向け)",
-      ocrEngineDeepLearning: "ディープラーニング (高度なニューラルネットワーク)",
-      ocrEngineHint: "ドキュメントタイプに基づいて処理エンジンを選択してください。",
+      ocrEngineHint: "ここには現在のプラットフォームで実際に利用できる OCR エンジンのみを表示します。",
+      noEngineAvailable: "このプラットフォームでは利用可能な OCR エンジンがありません",
       targetLanguage: "ターゲット言語",
       targetLanguageHint: "「自動翻訳」機能とOCR辞書に使用される言語。",
       autoTranslateDesc: "OCR処理後に検出されたテキストを自動的に翻訳します",
       triggerOcrDesc: "ショートカットキーを使用してテキストキャプチャを素早くトリガー",
       discard: "破棄",
       saveChanges: "変更を保存",
+      engines: {
+        macosVision: "macOS Vision（システム内蔵）"
+      },
       languages: {
         english: "英語",
         chineseSimplified: "簡体字中国語",
@@ -134,6 +136,9 @@ export default {
     widget: {
       sourceText: "原文",
       translation: "翻訳",
+      recognizing: "認識中...",
+      translating: "翻訳中...",
+      waitForOcr: "OCR完了待ち",
       translate: "翻訳",
       english: "英語",
       chinese: "中国語",

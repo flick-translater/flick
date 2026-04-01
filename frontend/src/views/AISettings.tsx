@@ -9,7 +9,7 @@ const defaultProviderSettings: ProviderSettings = {
   api_base_url: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
   temperature: 0.7,
-  max_tokens: 4096,
+  max_tokens: 0,
   default_prompt: 'You are a professional translator. Translate the following text accurately while preserving the original meaning and tone. Only output the translated text, nothing else.',
 };
 

@@ -5,6 +5,8 @@ use tauri::{
     WebviewWindow, WebviewWindowBuilder,
 };
 
+use super::AppState;
+
 const MAIN_WINDOW_LABEL: &str = "main";
 const WIDGET_WINDOW_LABEL: &str = "widget";
 
@@ -84,6 +86,12 @@ pub fn show_widget_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn hide_widget_window(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut suppress) = state.suppress_next_reopen.lock() {
+            *suppress = true;
+        }
+    }
+
     if let Some(window) = app.get_webview_window(WIDGET_WINDOW_LABEL) {
         window.hide()?;
     }

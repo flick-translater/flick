@@ -60,27 +60,34 @@ pub fn install_hotkey_tap(app: &AppHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn apply_shortcuts(capture_shortcut: &str, translate_shortcut: &str) -> anyhow::Result<()> {
+pub fn apply_shortcuts(
+    capture_shortcut: &str,
+    translate_shortcut: Option<&str>,
+) -> anyhow::Result<()> {
     let capture = capture_shortcut
         .parse::<Shortcut>()
         .map_err(|error| anyhow!("截图快捷键无效: {error}"))?;
     let translate = translate_shortcut
-        .parse::<Shortcut>()
-        .map_err(|error| anyhow!("截图翻译快捷键无效: {error}"))?;
+        .map(|shortcut| {
+            shortcut
+                .parse::<Shortcut>()
+                .map_err(|error| anyhow!("截图翻译快捷键无效: {error}"))
+        })
+        .transpose()?;
 
     let mut runtime = hotkey_runtime()
         .lock()
         .map_err(|_| anyhow!("macOS hotkey runtime mutex poisoned"))?;
-    runtime.shortcuts = vec![
-        RegisteredHotkey {
-            shortcut: capture,
-            intent: CaptureIntent::Capture,
-        },
-        RegisteredHotkey {
+    runtime.shortcuts = vec![RegisteredHotkey {
+        shortcut: capture,
+        intent: CaptureIntent::Capture,
+    }];
+    if let Some(translate) = translate {
+        runtime.shortcuts.push(RegisteredHotkey {
             shortcut: translate,
             intent: CaptureIntent::Translate,
-        },
-    ];
+        });
+    }
     Ok(())
 }
 
