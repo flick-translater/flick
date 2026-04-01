@@ -89,7 +89,21 @@ export default {
       translation: "翻訳",
       translate: "翻訳",
       english: "英語",
-      chinese: "中国語"
+      chinese: "中国語",
+      japanese: "日本語",
+      korean: "韓国語",
+      arabic: "アラビア語",
+      german: "ドイツ語",
+      french: "フランス語",
+      italian: "イタリア語",
+      dutch: "オランダ語",
+      russian: "ロシア語",
+      thai: "タイ語",
+      hebrew: "ヘブライ語",
+      greek: "ギリシャ語",
+      hindi: "ヒンディー語",
+      auto: "自動検出",
+      unknownLanguage: "不明"
     }
   }
 };

@@ -1,11 +1,12 @@
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import TranslationWidget from './components/TranslationWidget';
 import './index.css';
-import './i18n/config';
-import { TranslationPayload, OcrPayload } from './types';
+import { normalizeLanguage, setupI18n } from './i18n/config';
+import { TranslationPayload, OcrPayload, AppSettings } from './types';
 
 window.addEventListener('contextmenu', (event) => {
   event.preventDefault();
@@ -17,6 +18,7 @@ const placeholderPayload: TranslationPayload = {
   translatedText: '',
   provider: '',
   detectedSourceLanguage: null,
+  ocrDetectedSourceLanguage: null,
   targetLanguage: 'zh',
 };
 
@@ -38,6 +40,8 @@ function WidgetApp() {
         imagePath: event.payload.imagePath,
         sourceText: '',
         translatedText: '',
+        detectedSourceLanguage: null,
+        ocrDetectedSourceLanguage: null,
       }));
       setIsLoading(true);
       setIsTranslating(false);
@@ -52,6 +56,7 @@ function WidgetApp() {
         imagePath: event.payload.imagePath,
         sourceText: event.payload.sourceText,
         translatedText: '',
+        ocrDetectedSourceLanguage: event.payload.ocrDetectedSourceLanguage ?? null,
       }));
       setIsLoading(false);
       setIsTranslating(true);
@@ -61,7 +66,10 @@ function WidgetApp() {
 
     void listen<TranslationPayload>('translation-ready', (event) => {
       console.log('[WIDGET] translation-ready event received');
-      setPayload(event.payload);
+      setPayload((prev) => ({
+        ...event.payload,
+        ocrDetectedSourceLanguage: prev.ocrDetectedSourceLanguage ?? null,
+      }));
       setIsLoading(false);
       setIsTranslating(false);
     }).then((dispose) => {
@@ -91,8 +99,23 @@ function WidgetApp() {
   );
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <WidgetApp />
-  </StrictMode>,
-);
+async function bootstrap() {
+  let initialLanguage = normalizeLanguage(navigator.language);
+
+  try {
+    const settings = await invoke<AppSettings>('get_app_settings');
+    initialLanguage = normalizeLanguage(settings.interface_language);
+  } catch {
+    initialLanguage = normalizeLanguage(navigator.language);
+  }
+
+  await setupI18n(initialLanguage);
+
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <WidgetApp />
+    </StrictMode>,
+  );
+}
+
+void bootstrap();

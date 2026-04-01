@@ -14,10 +14,55 @@ interface TranslationWidgetProps {
   standalone?: boolean;
 }
 
+function languageLabel(code: string | null | undefined, t: (key: string) => string) {
+  switch (code?.toLowerCase()) {
+    case 'zh':
+    case 'zh-hans':
+    case 'zh-hant':
+      return t('widget.chinese');
+    case 'ja':
+      return t('widget.japanese');
+    case 'ko':
+      return t('widget.korean');
+    case 'ar':
+      return t('widget.arabic');
+    case 'de':
+      return t('widget.german');
+    case 'fr':
+      return t('widget.french');
+    case 'it':
+      return t('widget.italian');
+    case 'nl':
+      return t('widget.dutch');
+    case 'ru':
+      return t('widget.russian');
+    case 'th':
+      return t('widget.thai');
+    case 'he':
+      return t('widget.hebrew');
+    case 'el':
+      return t('widget.greek');
+    case 'hi':
+      return t('widget.hindi');
+    case 'en':
+      return t('widget.english');
+    case 'auto':
+      return t('widget.auto');
+    default:
+      return t('widget.unknownLanguage');
+  }
+}
+
 export default function TranslationWidget({ payload, isLoading = false, isTranslating = false, onClose, standalone = false }: TranslationWidgetProps) {
   const { t } = useTranslation();
   const [isPinned, setIsPinned] = useState(false);
+  const [sourceCopied, setSourceCopied] = useState(false);
   const windowHandle = standalone ? getCurrentWindow() : null;
+  const resolvedSourceLanguage = payload.detectedSourceLanguage?.toLowerCase() === 'auto'
+    ? (payload.ocrDetectedSourceLanguage ?? 'auto')
+    : (payload.detectedSourceLanguage ?? payload.ocrDetectedSourceLanguage);
+  const sourceLanguageText = languageLabel(resolvedSourceLanguage, t);
+  const targetLanguageText = languageLabel(payload.targetLanguage, t);
 
   const { displayedText: displayedSource, isTyping: isTypingSource } = useTypewriter(
     payload.sourceText,
@@ -94,6 +139,22 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
     }
   };
 
+  const handleCopySource = async () => {
+    if (!payload.sourceText) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(payload.sourceText);
+      setSourceCopied(true);
+      window.setTimeout(() => {
+        setSourceCopied(false);
+      }, 1200);
+    } catch (error) {
+      console.error('Failed to copy source text', error);
+    }
+  };
+
   return (
     <div className={standalone
       ? 'flex h-screen flex-col overflow-hidden rounded-[18px] border border-outline-variant/30 bg-surface shadow-2xl'
@@ -152,8 +213,17 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
         <section className="flex-1 flex flex-col min-h-0 bg-white border border-outline-variant/30 rounded-xl p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3 border-b border-outline-variant/20 pb-2">
             <span className="text-[10px] uppercase font-bold tracking-[0.1em] text-outline">{t('widget.sourceText')}</span>
-            <button className="text-on-surface-variant hover:text-primary transition-colors">
-              <Copy size={16} />
+            <button
+              onClick={() => {
+                void handleCopySource();
+              }}
+              className={`min-w-[52px] text-on-surface-variant hover:text-primary transition-colors ${sourceCopied ? 'text-primary' : ''}`}
+            >
+              {sourceCopied ? (
+                <span className="text-[11px] font-bold">{t('history.copied')}</span>
+              ) : (
+                <Copy size={16} />
+              )}
             </button>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
@@ -175,7 +245,7 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
         <div className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2">
           <div className="relative min-w-0">
             <select className="w-full appearance-none py-2.5 px-3 rounded-lg border border-outline-variant/30 bg-white text-on-surface font-medium text-xs hover:border-primary/50 transition-all outline-none cursor-pointer shadow-sm">
-              <option>{t('widget.english')}</option>
+              <option>{sourceLanguageText}</option>
             </select>
             <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-on-surface-variant">
               <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -190,7 +260,7 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
           
           <div className="relative min-w-0">
             <select className="w-full appearance-none py-2.5 px-3 rounded-lg border border-outline-variant/30 bg-white text-on-surface font-medium text-xs hover:border-primary/50 transition-all outline-none cursor-pointer shadow-sm">
-              <option>{t('widget.chinese')}</option>
+              <option>{targetLanguageText}</option>
             </select>
             <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-on-surface-variant">
               <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -38,10 +38,12 @@ pub fn emit_ocr_ready(
     app: &AppHandle,
     image_path: &str,
     source_text: &str,
+    ocr_detected_source_language: Option<&str>,
 ) -> Result<(), FlickError> {
     let payload = serde_json::json!({
         "imagePath": image_path,
         "sourceText": source_text,
+        "ocrDetectedSourceLanguage": ocr_detected_source_language,
     });
 
     if let Some(window) = app.get_webview_window("widget") {

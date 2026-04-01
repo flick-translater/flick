@@ -89,7 +89,21 @@ export default {
       translation: "Translation",
       translate: "Translate",
       english: "English",
-      chinese: "Chinese"
+      chinese: "Chinese",
+      japanese: "Japanese",
+      korean: "Korean",
+      arabic: "Arabic",
+      german: "German",
+      french: "French",
+      italian: "Italian",
+      dutch: "Dutch",
+      russian: "Russian",
+      thai: "Thai",
+      hebrew: "Hebrew",
+      greek: "Greek",
+      hindi: "Hindi",
+      auto: "Auto",
+      unknownLanguage: "Unknown"
     }
   }
 };

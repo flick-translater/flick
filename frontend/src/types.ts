@@ -12,6 +12,7 @@ export type AppSettings = {
 export type OcrPayload = {
   imagePath: string;
   sourceText: string;
+  ocrDetectedSourceLanguage?: string | null;
 };
 
 export type TranslationPayload = {
@@ -20,6 +21,7 @@ export type TranslationPayload = {
   translatedText: string;
   provider: string;
   detectedSourceLanguage?: string | null;
+  ocrDetectedSourceLanguage?: string | null;
   targetLanguage: string;
 };
 

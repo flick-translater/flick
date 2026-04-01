@@ -193,6 +193,9 @@ mod vision_ffi {
             NSArray::from_retained_slice(&[lang_zh_hans, lang_zh_hant, lang_en, lang_ja]);
         let () = msg_send![request, setRecognitionLanguages: AsRef::<NSArray<NSString>>::as_ref(&languages)];
 
+        let automatically_detects_language: bool = true;
+        let () = msg_send![request, setAutomaticallyDetectsLanguage: automatically_detects_language];
+
         let correction: bool = true;
         let () = msg_send![request, setUsesLanguageCorrection: correction];
 

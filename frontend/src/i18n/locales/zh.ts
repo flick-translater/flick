@@ -89,7 +89,21 @@ export default {
       translation: "翻译结果",
       translate: "翻译",
       english: "英语",
-      chinese: "中文"
+      chinese: "中文",
+      japanese: "日语",
+      korean: "韩语",
+      arabic: "阿拉伯语",
+      german: "德语",
+      french: "法语",
+      italian: "意大利语",
+      dutch: "荷兰语",
+      russian: "俄语",
+      thai: "泰语",
+      hebrew: "希伯来语",
+      greek: "希腊语",
+      hindi: "印地语",
+      auto: "自动检测",
+      unknownLanguage: "未知语言"
     }
   }
 };
