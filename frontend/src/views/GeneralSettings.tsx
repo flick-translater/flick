@@ -106,20 +106,20 @@ export default function GeneralSettings() {
 
   return (
     <div className="mx-auto max-w-5xl animate-in fade-in duration-500">
-      <div className="grid grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-2 lg:gap-6">
-        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2 sm:p-6 lg:p-8">
-          <div className="mb-6 flex items-start justify-between gap-4 sm:mb-8">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:gap-4">
+        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2">
+          <div className="mb-3 flex items-start justify-between gap-4">
             <div>
-              <h2 className="mb-1 font-headline text-lg font-bold text-primary">{t('general.systemLanguage')}</h2>
-              <p className="text-sm text-on-surface-variant">{t('general.systemLanguageDesc')}</p>
+              <h2 className="mb-0.5 font-headline text-base font-bold text-primary">{t('general.systemLanguage')}</h2>
+              <p className="text-xs text-on-surface-variant">{t('general.systemLanguageDesc')}</p>
             </div>
-            <div className="rounded-lg bg-primary/5 p-3 text-primary">
-              <Globe size={24} />
+            <div className="rounded-lg bg-primary/5 p-2 text-primary">
+              <Globe size={20} />
             </div>
           </div>
-          <div className="flex flex-col gap-4 sm:flex-row">
+          <div className="flex flex-col gap-3 sm:flex-row">
             <div className="relative flex-1 group">
-              <label className="ml-1 mb-2 block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant">{t('general.interfaceLanguage')}</label>
+              <label className="ml-1 mb-1.5 block text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">{t('general.interfaceLanguage')}</label>
               <div className="relative">
                 <select
                   value={settings?.interface_language ?? i18n.language}
@@ -135,13 +135,13 @@ export default function GeneralSettings() {
                         setGeneralError(String(error));
                       });
                   }}
-                  className="w-full cursor-pointer appearance-none rounded-xl border border-outline-variant/30 bg-surface-container px-4 py-3.5 text-sm font-medium text-on-surface outline-none transition-all focus:ring-2 focus:ring-primary"
+                  className="w-full cursor-pointer appearance-none rounded-lg border border-outline-variant/30 bg-surface-container px-3 py-2.5 text-sm font-medium text-on-surface outline-none transition-all focus:ring-2 focus:ring-primary"
                 >
                   <option value="en">English</option>
                   <option value="zh">简体中文</option>
                   <option value="ja">日本語</option>
                 </select>
-                <div className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-on-surface-variant">
+                <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-on-surface-variant">
                   <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M1.41 0.589966L6 5.16997L10.59 0.589966L12 1.99997L6 7.99997L0 1.99997L1.41 0.589966Z" fill="currentColor" />
                   </svg>
@@ -151,20 +151,20 @@ export default function GeneralSettings() {
           </div>
         </section>
 
-        <section className="flex flex-col justify-between rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-shadow duration-300 hover:shadow-md sm:p-6 lg:p-8">
+        <section className="flex flex-col justify-between rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md">
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="mb-1 font-headline text-lg font-bold text-primary">{t('general.appStartup')}</h2>
-              <p className="text-sm leading-relaxed text-on-surface-variant">{t('general.appStartupDesc')}</p>
+              <h2 className="mb-0.5 font-headline text-base font-bold text-primary">{t('general.appStartup')}</h2>
+              <p className="text-xs leading-relaxed text-on-surface-variant">{t('general.appStartupDesc')}</p>
             </div>
-            <div className="rounded-lg bg-primary/5 p-3 text-primary">
-              <Power size={24} />
+            <div className="rounded-lg bg-primary/5 p-2 text-primary">
+              <Power size={20} />
             </div>
           </div>
-          <div className="mt-8 flex items-center justify-between gap-4">
+          <div className="mt-4 flex items-center justify-between gap-4">
             <span className="text-sm font-semibold text-on-surface">{t('general.launchAtStartup')}</span>
-            <div className="flex items-center gap-3">
-              {isUpdatingAutostart && <LoaderCircle size={16} className="animate-spin text-primary" />}
+            <div className="flex items-center gap-2">
+              {isUpdatingAutostart && <LoaderCircle size={14} className="animate-spin text-primary" />}
               <Toggle
                 checked={startup}
                 onChange={(checked) => {
@@ -184,20 +184,20 @@ export default function GeneralSettings() {
           </div>
         </section>
 
-        <section className="flex flex-col justify-between rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-shadow duration-300 hover:shadow-md sm:p-6 lg:p-8">
+        <section className="flex flex-col justify-between rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md">
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="mb-1 font-headline text-lg font-bold text-primary">{t('general.dataRetention')}</h2>
-              <p className="text-sm leading-relaxed text-on-surface-variant">{t('general.dataRetentionDesc')}</p>
+              <h2 className="mb-0.5 font-headline text-base font-bold text-primary">{t('general.dataRetention')}</h2>
+              <p className="text-xs leading-relaxed text-on-surface-variant">{t('general.dataRetentionDesc')}</p>
             </div>
-            <div className="rounded-lg bg-primary/5 p-3 text-primary">
-              <Database size={24} />
+            <div className="rounded-lg bg-primary/5 p-2 text-primary">
+              <Database size={20} />
             </div>
           </div>
-          <div className="mt-8 space-y-4">
+          <div className="mt-4 space-y-2">
             <div className="flex items-end justify-between gap-4">
               <label htmlFor="retention" className="text-sm font-semibold text-on-surface">{t('general.maxScreenshots')}</label>
-              <span className="font-headline text-xl font-black text-primary">
+              <span className="font-headline text-lg font-black text-primary">
                 {maxScreenshots} <span className="text-xs font-normal text-on-surface-variant">{t('general.items')}</span>
               </span>
             </div>
@@ -222,7 +222,7 @@ export default function GeneralSettings() {
               }}
               className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-surface-container-highest accent-primary-container"
             />
-            <div className="flex items-center justify-between text-xs text-on-surface-variant">
+            <div className="flex items-center justify-between text-[10px] text-on-surface-variant">
               <span>10</span>
               <span>{t('general.retentionHint')}</span>
               <span>1000</span>
@@ -230,17 +230,17 @@ export default function GeneralSettings() {
           </div>
         </section>
 
-        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2 sm:p-6 lg:p-8">
-          <div className="mb-6 flex items-start justify-between gap-4 sm:mb-8">
+        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2">
+          <div className="mb-3 flex items-start justify-between gap-4">
             <div>
-              <h2 className="mb-1 font-headline text-lg font-bold text-primary">{t('general.storagePath')}</h2>
-              <p className="text-sm text-on-surface-variant">{t('general.storagePathDesc')}</p>
+              <h2 className="mb-0.5 font-headline text-base font-bold text-primary">{t('general.storagePath')}</h2>
+              <p className="text-xs text-on-surface-variant">{t('general.storagePathDesc')}</p>
             </div>
-            <div className="rounded-lg bg-primary/5 p-3 text-primary">
-              <FolderOpen size={24} />
+            <div className="rounded-lg bg-primary/5 p-2 text-primary">
+              <FolderOpen size={20} />
             </div>
           </div>
-          <div className="flex flex-col gap-4 sm:flex-row">
+          <div className="flex flex-col gap-3 sm:flex-row">
             <div className="flex-1">
               <StoragePathCard label={t('general.screenshotDirectory')} path={storageInfo.screenshot_dir} />
             </div>
@@ -270,7 +270,7 @@ export default function GeneralSettings() {
                       setIsPickingDirectory(false);
                     });
                 }}
-                className="h-[52px] rounded-xl bg-surface-container-highest px-6 text-sm font-bold text-primary transition-all duration-200 hover:bg-primary hover:text-white disabled:opacity-50"
+                className="h-[42px] rounded-lg bg-surface-container-highest px-4 text-sm font-bold text-primary transition-all duration-200 hover:bg-primary hover:text-white disabled:opacity-50"
               >
                 {t('general.changePath')}
               </button>
@@ -278,17 +278,17 @@ export default function GeneralSettings() {
           </div>
         </section>
 
-        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2 sm:p-6 lg:p-8">
-          <div className="mb-6 flex items-start justify-between gap-4 sm:mb-8">
+        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2">
+          <div className="mb-3 flex items-start justify-between gap-4">
             <div>
-              <h2 className="mb-1 font-headline text-lg font-bold text-primary">{t('general.globalHotkeys')}</h2>
-              <p className="text-sm text-on-surface-variant">{t('general.globalHotkeysDesc')}</p>
+              <h2 className="mb-0.5 font-headline text-base font-bold text-primary">{t('general.globalHotkeys')}</h2>
+              <p className="text-xs text-on-surface-variant">{t('general.globalHotkeysDesc')}</p>
             </div>
-            <div className="rounded-lg bg-primary/5 p-3 text-primary">
-              <Keyboard size={24} />
+            <div className="rounded-lg bg-primary/5 p-2 text-primary">
+              <Keyboard size={20} />
             </div>
           </div>
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             <ShortcutCard
               label={t('general.action')}
               actionLabel={t('general.captureScreenshot')}
@@ -316,7 +316,7 @@ export default function GeneralSettings() {
               recordingText={t('general.recordingShortcut')}
             />
           </div>
-          <div className="mt-4 min-h-5 text-sm">
+          <div className="mt-3 min-h-4 text-xs">
             {recordingField && <p className="text-primary">{t('general.pressShortcut')}</p>}
             {shortcutError && <p className="text-error">{shortcutError}</p>}
             {!shortcutError && generalError && <p className="text-error">{generalError}</p>}
@@ -330,9 +330,9 @@ export default function GeneralSettings() {
 function StoragePathCard({ label, path }: { label: string; path: string }) {
   return (
     <div className="group relative">
-      <label className="ml-1 mb-2 block text-[11px] font-bold uppercase tracking-widest text-on-surface-variant">{label}</label>
-      <div className="flex min-w-0 items-center rounded-xl bg-surface-container px-4 py-3.5">
-        <FolderOpen className="mr-3 shrink-0 text-on-surface-variant" size={18} />
+      <label className="ml-1 mb-1.5 block text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">{label}</label>
+      <div className="flex min-w-0 items-center rounded-lg bg-surface-container px-3 py-2.5">
+        <FolderOpen className="mr-2 shrink-0 text-on-surface-variant" size={16} />
         <span className="truncate text-sm font-medium text-on-surface opacity-80" title={path}>
           {path || '...'}
         </span>
@@ -365,20 +365,20 @@ function ShortcutCard({
   const tokens = formatShortcut(shortcut);
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl bg-surface-container-low p-5 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-2 rounded-lg bg-surface-container-low p-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex flex-col">
-        <span className="mb-1 text-xs font-bold uppercase tracking-widest text-on-surface-variant opacity-70">{label}</span>
+        <span className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant opacity-70">{label}</span>
         <span className="text-sm font-bold text-on-surface">{actionLabel}</span>
       </div>
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex min-h-9 flex-wrap items-center gap-1">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-h-8 flex-wrap items-center gap-1">
           {isRecording ? (
-            <span className="text-sm font-semibold text-primary">{recordingText}</span>
+            <span className="text-xs font-semibold text-primary">{recordingText}</span>
           ) : (
             tokens.map((token, index) => (
               <div key={`${token}-${index}`} className="flex items-center gap-1">
                 {index > 0 && <span className="text-xs font-bold text-on-surface-variant">+</span>}
-                <kbd className="rounded-lg border border-outline-variant/30 bg-white px-2.5 py-1.5 text-xs font-bold text-primary shadow-sm">
+                <kbd className="rounded border border-outline-variant/30 bg-white px-2 py-1 text-xs font-bold text-primary shadow-sm">
                   {token}
                 </kbd>
               </div>
@@ -388,9 +388,9 @@ function ShortcutCard({
         <button
           onClick={onEdit}
           disabled={isSaving}
-          className="rounded-lg p-2 text-primary shadow-sm transition-colors hover:bg-white disabled:opacity-50"
+          className="rounded-lg p-1.5 text-primary shadow-sm transition-colors hover:bg-white disabled:opacity-50"
         >
-          {isSaving ? <LoaderCircle size={16} className="animate-spin" /> : <Edit2 size={16} />}
+          {isSaving ? <LoaderCircle size={14} className="animate-spin" /> : <Edit2 size={14} />}
         </button>
       </div>
     </div>
