@@ -105,7 +105,6 @@ pub fn run() {
             commands::widget::minimize_translation_widget,
             commands::widget::close_translation_widget,
             commands::widget::begin_translation_widget_drag,
-            commands::ocr::mock_ocr,
             commands::translation::mock_translate,
         ])
         .on_menu_event(handle_menu_event)

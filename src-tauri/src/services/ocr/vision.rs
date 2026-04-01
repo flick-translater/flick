@@ -1,13 +1,12 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::anyhow;
 use once_cell::sync::Lazy;
 
 use super::OcrService;
-use crate::models::{OcrRequest, OcrResponse, OcrTextBlock};
+use crate::models::{OcrResponse, OcrTextBlock};
 
 const CACHE_TTL_SECS: u64 = 300;
 const MAX_CACHE_SIZE: usize = 100;
@@ -23,13 +22,8 @@ static OCR_CACHE: Lazy<Arc<Mutex<HashMap<String, CacheEntry>>>> =
 pub struct VisionOcrService;
 
 impl OcrService for VisionOcrService {
-    fn run(&self, request: OcrRequest) -> anyhow::Result<OcrResponse> {
-        let path = Path::new(&request.image_path);
-        if !path.exists() {
-            return Err(anyhow!("image file not found: {}", request.image_path));
-        }
-
-        let cache_key = generate_cache_key(&request.image_path)?;
+    fn run_with_data(&self, image_data: &[u8]) -> anyhow::Result<OcrResponse> {
+        let cache_key = generate_cache_key_from_data(image_data);
 
         if let Some(cached) = check_cache(&cache_key) {
             return Ok(OcrResponse {
@@ -42,26 +36,8 @@ impl OcrService for VisionOcrService {
             });
         }
 
-        let text = recognize_text(&request.image_path)?;
-
-        println!("[OCR] Recognized text:\n{}", text);
-
-        update_cache(cache_key, text.clone());
-
-        Ok(OcrResponse {
-            provider: "vision".into(),
-            text: text.clone(),
-            blocks: vec![OcrTextBlock {
-                text,
-                confidence: 1.0,
-            }],
-        })
-    }
-
-    fn run_with_data(&self, image_data: &[u8]) -> anyhow::Result<OcrResponse> {
         let text = recognize_text_from_data(image_data)?;
-
-        println!("[OCR] Recognized text:\n{}", text);
+        update_cache(cache_key, text.clone());
 
         Ok(OcrResponse {
             provider: "vision".into(),
@@ -74,16 +50,10 @@ impl OcrService for VisionOcrService {
     }
 }
 
-fn generate_cache_key(image_path: &str) -> anyhow::Result<String> {
-    let metadata = std::fs::metadata(image_path)?;
-    let modified = metadata.modified()?;
-    let size = metadata.len();
-    Ok(format!(
-        "{}:{}:{}",
-        image_path,
-        modified.duration_since(std::time::UNIX_EPOCH)?.as_secs(),
-        size
-    ))
+fn generate_cache_key_from_data(image_data: &[u8]) -> String {
+    let mut hasher = DefaultHasher::new();
+    image_data.hash(&mut hasher);
+    format!("data:{}:{}", image_data.len(), hasher.finish())
 }
 
 fn check_cache(cache_key: &str) -> Option<String> {
@@ -159,25 +129,13 @@ mod vision_ffi {
         ) -> *mut std::ffi::c_void;
     }
 
-    pub fn recognize_text(image_path: &str) -> anyhow::Result<String> {
-        let image_path = image_path.to_string();
-        catch(|| unsafe { recognize_text_impl(&image_path, None) })
-            .map_err(|e| anyhow!("Vision OCR failed with exception: {:?}", e))?
-    }
-
     pub fn recognize_text_from_data(data: &[u8]) -> anyhow::Result<String> {
-        catch(|| unsafe { recognize_text_impl("", Some(data)) })
+        catch(|| unsafe { recognize_text_impl(data) })
             .map_err(|e| anyhow!("Vision OCR failed with exception: {:?}", e))?
     }
 
-    unsafe fn recognize_text_impl(
-        image_path: &str,
-        data_opt: Option<&[u8]>,
-    ) -> anyhow::Result<String> {
-        let data = match data_opt {
-            Some(d) => d.to_vec(),
-            None => std::fs::read(image_path)?,
-        };
+    unsafe fn recognize_text_impl(data: &[u8]) -> anyhow::Result<String> {
+        let data = data.to_vec();
 
         let cf_data = unsafe { CFDataCreate(std::ptr::null_mut(), data.as_ptr(), data.len()) };
         if cf_data.is_null() {
@@ -298,18 +256,8 @@ mod vision_ffi {
 }
 
 #[cfg(target_os = "macos")]
-fn recognize_text(image_path: &str) -> anyhow::Result<String> {
-    vision_ffi::recognize_text(image_path)
-}
-
-#[cfg(target_os = "macos")]
 fn recognize_text_from_data(data: &[u8]) -> anyhow::Result<String> {
     vision_ffi::recognize_text_from_data(data)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn recognize_text(_image_path: &str) -> anyhow::Result<String> {
-    Err(anyhow!("Vision OCR is only available on macOS"))
 }
 
 #[cfg(not(target_os = "macos"))]

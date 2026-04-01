@@ -39,12 +39,6 @@ pub struct AutostartStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OcrRequest {
-    pub image_path: String,
-    pub language_hint: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrResponse {
     pub provider: String,
     pub text: String,
