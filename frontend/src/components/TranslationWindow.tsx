@@ -15,6 +15,10 @@ interface TranslationWindowProps {
   standalone?: boolean;
 }
 
+function normalizeDisplayText(text: string) {
+  return text.replace(/\n{2,}/g, '\n');
+}
+
 function languageLabel(code: string | null | undefined, t: (key: string) => string) {
   switch (code?.toLowerCase()) {
     case 'zh':
@@ -67,14 +71,16 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
     : (payload.detectedSourceLanguage ?? payload.ocrDetectedSourceLanguage);
   const sourceLanguageText = languageLabel(resolvedSourceLanguage, t);
   const targetLanguageText = languageLabel(payload.targetLanguage, t);
+  const normalizedSourceText = normalizeDisplayText(payload.sourceText);
+  const normalizedTranslatedText = normalizeDisplayText(payload.translatedText);
 
   const { displayedText: displayedSource, isTyping: isTypingSource } = useTypewriter(
-    payload.sourceText,
+    normalizedSourceText,
     { enabled: standalone }
   );
 
   const { displayedText: displayedTranslation, isTyping: isTypingTranslation } = useTypewriter(
-    payload.translatedText,
+    normalizedTranslatedText,
     { enabled: standalone }
   );
 
@@ -283,8 +289,8 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
                 <span className="text-sm">{t('widget.recognizing', { defaultValue: '识别中...' })}</span>
               </div>
             ) : (
-              <p className="font-body text-sm leading-relaxed text-on-surface">
-                {standalone ? displayedSource : payload.sourceText}
+              <p className="whitespace-pre-wrap break-words font-body text-sm leading-relaxed text-on-surface">
+                {standalone ? displayedSource : normalizedSourceText}
                 {isTypingSource && <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse" />}
               </p>
             )}
@@ -351,8 +357,8 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
                 <span className="text-sm">{t('widget.translating', { defaultValue: '翻译中...' })}</span>
               </div>
             ) : (
-              <p className="font-body text-sm leading-relaxed text-primary-container font-medium">
-                {standalone ? displayedTranslation : payload.translatedText}
+              <p className="whitespace-pre-wrap break-words font-body text-sm leading-relaxed text-primary-container font-medium">
+                {standalone ? displayedTranslation : normalizedTranslatedText}
                 {isTypingTranslation && <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse" />}
               </p>
             )}
