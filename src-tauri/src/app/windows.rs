@@ -99,6 +99,9 @@ pub fn hide_translate_window(app: &AppHandle) -> tauri::Result<()> {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    restore_previous_frontmost_app(app);
+
     if let Some(window) = app.get_webview_window(TRANSLATE_WINDOW_LABEL) {
         let _ = window.set_always_on_top(false);
         window.hide()?;
@@ -106,8 +109,6 @@ pub fn hide_translate_window(app: &AppHandle) -> tauri::Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        restore_previous_frontmost_app(app);
-
         if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
             let is_visible = main_window.is_visible().unwrap_or(false);
             if !is_visible {

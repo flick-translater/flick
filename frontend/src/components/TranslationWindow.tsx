@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, ScanText, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -59,6 +59,7 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
   const [isPinned, setIsPinned] = useState(false);
   const [sourceCopied, setSourceCopied] = useState(false);
   const [translationCopied, setTranslationCopied] = useState(false);
+  const isClosingRef = useRef(false);
   const windowHandle = standalone ? getCurrentWindow() : null;
   const isTranslateDisabled = isLoading || isTranslating || !payload.sourceText.trim();
   const resolvedSourceLanguage = payload.detectedSourceLanguage?.toLowerCase() === 'auto'
@@ -131,6 +132,12 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
   };
 
   const handleClose = async () => {
+    if (isClosingRef.current) {
+      return;
+    }
+
+    isClosingRef.current = true;
+
     try {
       if (standalone) {
         await invoke('close_translate_window');
@@ -139,8 +146,32 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
       onClose();
     } catch (error) {
       console.error('Failed to close translation window', error);
+    } finally {
+      window.setTimeout(() => {
+        isClosingRef.current = false;
+      }, 0);
     }
   };
+
+  useEffect(() => {
+    if (!standalone) {
+      return;
+    }
+
+    const handleWindowBlur = () => {
+      if (document.hasFocus()) {
+        return;
+      }
+
+      void handleClose();
+    };
+
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [standalone]);
 
   const handleCopySource = async () => {
     if (!payload.sourceText) {
