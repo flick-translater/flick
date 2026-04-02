@@ -27,12 +27,7 @@ pub fn get_autostart_status(app: AppHandle) -> Result<AutostartStatus, FlickErro
 
 #[tauri::command]
 pub fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Result<(), FlickError> {
-    if enabled {
-        app.autolaunch().enable()?;
-    } else {
-        app.autolaunch().disable()?;
-    }
-
+    crate::app::set_autostart_enabled(&app, enabled)?;
     Ok(())
 }
 

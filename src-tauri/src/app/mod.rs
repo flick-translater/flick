@@ -71,6 +71,9 @@ pub fn run() {
             windows::ensure_translate_window(app.handle())?;
             let state = build_state(app.handle())?;
             app.manage(state);
+            if let Err(error) = initialize_autostart(app.handle()) {
+                eprintln!("failed to initialize autostart: {error}");
+            }
 
             setup_tray(app.handle())?;
             register_shortcuts(app.handle())?;
@@ -207,6 +210,66 @@ fn detect_system_language() -> String {
         "ja" => "ja".into(),
         _ => "en".into(),
     }
+}
+
+pub fn initialize_autostart(app: &AppHandle) -> anyhow::Result<()> {
+    let current_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+    let state = app.state::<AppState>();
+    let (configured, desired_enabled) = {
+        let settings = state
+            .settings
+            .lock()
+            .map_err(|_| anyhow::anyhow!("settings mutex poisoned"))?;
+        (settings.autostart_configured, settings.autostart_enabled)
+    };
+
+    if !configured {
+        persist_autostart_preference(app, current_enabled, true)?;
+        return Ok(());
+    }
+
+    if desired_enabled != current_enabled {
+        if desired_enabled {
+            app.autolaunch().enable()?;
+        } else {
+            app.autolaunch().disable()?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> anyhow::Result<()> {
+    let current_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+    if enabled != current_enabled {
+        if enabled {
+            app.autolaunch().enable()?;
+        } else {
+            app.autolaunch().disable()?;
+        }
+    }
+
+    persist_autostart_preference(app, enabled, true)
+}
+
+fn persist_autostart_preference(
+    app: &AppHandle,
+    enabled: bool,
+    configured: bool,
+) -> anyhow::Result<()> {
+    let state = app.state::<AppState>();
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| anyhow::anyhow!("settings mutex poisoned"))?;
+        settings.autostart_enabled = enabled;
+        settings.autostart_configured = configured;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(())
 }
 
 fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
@@ -370,11 +433,7 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
         }
         "autostart" => {
             let enabled = app.autolaunch().is_enabled().unwrap_or(false);
-            if enabled {
-                let _ = app.autolaunch().disable();
-            } else {
-                let _ = app.autolaunch().enable();
-            }
+            let _ = set_autostart_enabled(app, !enabled);
         }
         "quit" => app.exit(0),
         _ => {}

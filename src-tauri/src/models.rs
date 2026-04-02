@@ -174,6 +174,8 @@ fn default_provider() -> String {
 pub struct AppSettings {
     pub capture_shortcut: String,
     pub translate_shortcut: String,
+    pub autostart_enabled: bool,
+    pub autostart_configured: bool,
     pub max_screenshots: u32,
     pub interface_language: String,
     pub interface_language_set: bool,
@@ -190,6 +192,8 @@ impl Default for AppSettings {
         Self {
             capture_shortcut: "CommandOrControl+Alt+A".into(),
             translate_shortcut: "CommandOrControl+Alt+T".into(),
+            autostart_enabled: false,
+            autostart_configured: false,
             max_screenshots: 500,
             interface_language: "en".into(),
             interface_language_set: false,

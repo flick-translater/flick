@@ -125,7 +125,8 @@ pub fn emit_ocr_ready(
             snapshot.translated_text.clear();
             snapshot.provider.clear();
             snapshot.detected_source_language = None;
-            snapshot.ocr_detected_source_language = ocr_detected_source_language.map(str::to_string);
+            snapshot.ocr_detected_source_language =
+                ocr_detected_source_language.map(str::to_string);
             snapshot.target_language = target_language.to_string();
             snapshot.is_loading = false;
             snapshot.is_translating = auto_translate_enabled;
