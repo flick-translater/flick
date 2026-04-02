@@ -62,7 +62,6 @@ pub struct OpenAiChatProtocol {
     model: String,
     temperature: f32,
     max_tokens: u32,
-    default_prompt: String,
 }
 
 impl OpenAiChatProtocol {
@@ -72,7 +71,6 @@ impl OpenAiChatProtocol {
         model: String,
         temperature: f32,
         max_tokens: u32,
-        default_prompt: String,
     ) -> Self {
         Self {
             client: reqwest::Client::builder()
@@ -84,22 +82,16 @@ impl OpenAiChatProtocol {
             model,
             temperature,
             max_tokens,
-            default_prompt,
         }
     }
 
-    async fn send_chat_request(
-        &self,
-        system_prompt: Option<&str>,
-        user_message: &str,
-    ) -> Result<String> {
-        let system = system_prompt.unwrap_or(&self.default_prompt).to_string();
+    async fn send_chat_request(&self, system_prompt: &str, user_message: &str) -> Result<String> {
         let request = ChatCompletionRequest {
             model: self.model.clone(),
             messages: vec![
                 ChatMessage {
                     role: "system".into(),
-                    content: system,
+                    content: system_prompt.into(),
                 },
                 ChatMessage {
                     role: "user".into(),
@@ -209,14 +201,12 @@ impl OpenAiChatProtocol {
 #[async_trait]
 impl ChatProtocol for OpenAiChatProtocol {
     async fn chat_with_system(&self, system_prompt: &str, user_message: &str) -> Result<String> {
-        self.send_chat_request(Some(system_prompt), user_message)
-            .await
+        self.send_chat_request(system_prompt, user_message).await
     }
 
     async fn test_connection(&self, provider: &str) -> Result<AiTestResult> {
         let started = Instant::now();
-        self.send_chat_request(Some("Reply with OK only."), "OK")
-            .await?;
+        self.send_chat_request("Reply with OK only.", "OK").await?;
         Ok(AiTestResult {
             ok: true,
             provider: provider.to_string(),

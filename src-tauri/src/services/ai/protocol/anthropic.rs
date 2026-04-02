@@ -46,7 +46,6 @@ pub struct AnthropicChatProtocol {
     model: String,
     temperature: f32,
     max_tokens: u32,
-    default_prompt: String,
 }
 
 impl AnthropicChatProtocol {
@@ -56,7 +55,6 @@ impl AnthropicChatProtocol {
         model: String,
         temperature: f32,
         max_tokens: u32,
-        default_prompt: String,
     ) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -65,22 +63,17 @@ impl AnthropicChatProtocol {
             model,
             temperature,
             max_tokens,
-            default_prompt,
         }
     }
 
-    async fn send_message(
-        &self,
-        system_prompt: Option<&str>,
-        user_message: &str,
-    ) -> Result<String> {
+    async fn send_message(&self, system_prompt: &str, user_message: &str) -> Result<String> {
         let request = MessageRequest {
             model: self.model.clone(),
             messages: vec![Message {
                 role: "user".into(),
                 content: user_message.into(),
             }],
-            system: system_prompt.unwrap_or(&self.default_prompt).to_string(),
+            system: system_prompt.to_string(),
             max_tokens: self.max_tokens.max(1),
             temperature: Some(self.temperature),
         };
@@ -142,12 +135,12 @@ impl AnthropicChatProtocol {
 #[async_trait]
 impl ChatProtocol for AnthropicChatProtocol {
     async fn chat_with_system(&self, system_prompt: &str, user_message: &str) -> Result<String> {
-        self.send_message(Some(system_prompt), user_message).await
+        self.send_message(system_prompt, user_message).await
     }
 
     async fn test_connection(&self, provider: &str) -> Result<AiTestResult> {
         let started = Instant::now();
-        self.send_message(Some("Reply with OK only."), "OK").await?;
+        self.send_message("Reply with OK only.", "OK").await?;
         Ok(AiTestResult {
             ok: true,
             provider: provider.to_string(),

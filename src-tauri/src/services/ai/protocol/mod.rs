@@ -36,7 +36,6 @@ pub fn create_chat_protocol(
             settings.model.clone(),
             settings.temperature,
             settings.max_tokens,
-            settings.default_prompt.clone(),
         ))),
         ProtocolKind::Anthropic => Ok(Box::new(AnthropicChatProtocol::new(
             settings.api_key.clone(),
@@ -44,7 +43,6 @@ pub fn create_chat_protocol(
             settings.model.clone(),
             settings.temperature,
             settings.max_tokens,
-            settings.default_prompt.clone(),
         ))),
     }
 }

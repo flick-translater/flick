@@ -3,6 +3,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_TRANSLATION_PROMPT: &str = "Translate the following text from ${source.lang} to ${target.lang}. Return only the translation, arranged into clear, readable paragraphs when appropriate.\n\n${source}";
+pub const DEFAULT_USER_PROMPT_TEMPLATE: &str = "";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelectionRect {
     pub x: i32,
@@ -144,7 +147,7 @@ fn default_max_tokens() -> u32 {
 }
 
 fn default_prompt() -> String {
-    "You are a professional translator. Translate the following text accurately while preserving the original meaning and tone. Only output the translated text, nothing else.".into()
+    DEFAULT_USER_PROMPT_TEMPLATE.into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
