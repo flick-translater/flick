@@ -21,6 +21,7 @@ use tauri_plugin_global_shortcut::ShortcutState;
 
 use crate::{
     commands,
+    features::translation,
     models::{AppSettings, CaptureRecord, TranslateWindowState},
     services::{
         CachedScreenCapture, OcrService, SettingsStore, TranslationHistoryStore,
@@ -56,6 +57,13 @@ pub enum CaptureIntent {
     Capture,
     /// Screenshot followed by OCR + translation flow.
     Translate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShortcutAction {
+    Capture,
+    TranslateCapture,
+    TranslateSelectedText,
 }
 
 /// Build and run the Tauri desktop application.
@@ -105,6 +113,7 @@ pub fn run() {
             commands::settings::update_max_screenshots,
             commands::settings::update_screenshot_directory,
             commands::settings::update_translate_shortcut,
+            commands::settings::update_selected_translate_shortcut,
             commands::settings::update_ocr_shortcut_enabled,
             commands::settings::update_ocr_auto_translate,
             commands::settings::update_ocr_target_language,
@@ -117,6 +126,7 @@ pub fn run() {
             commands::translate_window::set_translate_window_pinned,
             commands::translate_window::minimize_translate_window,
             commands::translate_window::close_translate_window,
+            commands::translate_window::translate_selected_text,
             commands::translate_window::begin_translate_window_drag,
             commands::translation::translate,
             commands::translation::list_translation_history,
@@ -362,19 +372,15 @@ fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
 }
 
 pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
-    // Two global actions are exposed today, so we fail fast on conflicting bindings.
-    if settings.ocr_shortcut_enabled && settings.capture_shortcut == settings.translate_shortcut {
-        anyhow::bail!("截图和截图翻译快捷键不能相同");
-    }
+    validate_shortcut_conflicts(settings)?;
 
     #[cfg(target_os = "macos")]
     {
         let _ = app;
         macos_hotkeys::apply_shortcuts(
             settings.capture_shortcut.as_str(),
-            settings
-                .ocr_shortcut_enabled
-                .then_some(settings.translate_shortcut.as_str()),
+            settings.translate_shortcut.as_str(),
+            settings.selected_translate_shortcut.as_str(),
         )?;
         return Ok(());
     }
@@ -383,7 +389,11 @@ pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyho
     {
         let global_shortcut = app.global_shortcut();
 
-        for shortcut in [&settings.capture_shortcut, &settings.translate_shortcut] {
+        for shortcut in [
+            &settings.capture_shortcut,
+            &settings.translate_shortcut,
+            &settings.selected_translate_shortcut,
+        ] {
             if global_shortcut.is_registered(shortcut.as_str()) {
                 global_shortcut.unregister(shortcut.as_str())?;
             }
@@ -392,35 +402,77 @@ pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyho
         register_shortcut_handler(
             app,
             settings.capture_shortcut.as_str(),
-            CaptureIntent::Capture,
+            ShortcutAction::Capture,
         )?;
-        if settings.ocr_shortcut_enabled {
-            register_shortcut_handler(
-                app,
-                settings.translate_shortcut.as_str(),
-                CaptureIntent::Translate,
-            )?;
-        }
+        register_shortcut_handler(
+            app,
+            settings.translate_shortcut.as_str(),
+            ShortcutAction::TranslateCapture,
+        )?;
+        register_shortcut_handler(
+            app,
+            settings.selected_translate_shortcut.as_str(),
+            ShortcutAction::TranslateSelectedText,
+        )?;
 
         Ok(())
     }
+}
+
+fn validate_shortcut_conflicts(settings: &AppSettings) -> anyhow::Result<()> {
+    let shortcuts = [
+        ("截图", settings.capture_shortcut.as_str()),
+        ("截图翻译", settings.translate_shortcut.as_str()),
+        ("选中翻译", settings.selected_translate_shortcut.as_str()),
+    ];
+
+    for (index, (left_label, left_shortcut)) in shortcuts.iter().enumerate() {
+        for (right_label, right_shortcut) in shortcuts.iter().skip(index + 1) {
+            if left_shortcut == right_shortcut {
+                anyhow::bail!("{left_label}和{right_label}快捷键不能相同");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
 fn register_shortcut_handler(
     app: &AppHandle,
     shortcut: &str,
-    intent: CaptureIntent,
+    action: ShortcutAction,
 ) -> anyhow::Result<()> {
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, _, event| {
             if event.state == ShortcutState::Pressed {
-                let state = app.state::<AppState>();
-                let _ = commands::capture::begin_capture_session_with_intent(app, &state, intent);
+                trigger_shortcut_action(app, action);
             }
         })?;
 
     Ok(())
+}
+
+pub fn trigger_shortcut_action(app: &AppHandle, action: ShortcutAction) {
+    match action {
+        ShortcutAction::Capture => {
+            let state = app.state::<AppState>();
+            let _ = commands::capture::begin_capture_session(app, &state);
+        }
+        ShortcutAction::TranslateCapture => {
+            let state = app.state::<AppState>();
+            let _ = commands::capture::begin_capture_session_with_intent(
+                app,
+                &state,
+                CaptureIntent::Translate,
+            );
+        }
+        ShortcutAction::TranslateSelectedText => {
+            if let Err(error) = translation::translate_selected_text_to_window(app) {
+                eprintln!("selected text shortcut failed: {error}");
+            }
+        }
+    }
 }
 
 fn handle_menu_event(app: &AppHandle, event: MenuEvent) {

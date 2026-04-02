@@ -22,6 +22,7 @@ export type AISettings = {
 export type AppSettings = {
   capture_shortcut: string;
   translate_shortcut: string;
+  selected_translate_shortcut: string;
   autostart_enabled: boolean;
   autostart_configured: boolean;
   max_screenshots: number;

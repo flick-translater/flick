@@ -55,7 +55,11 @@ pub fn set_shortcut_recording(
             .clone();
         let global_shortcut = app.global_shortcut();
 
-        for shortcut in [&settings.capture_shortcut, &settings.translate_shortcut] {
+        for shortcut in [
+            &settings.capture_shortcut,
+            &settings.translate_shortcut,
+            &settings.selected_translate_shortcut,
+        ] {
             if recording {
                 if global_shortcut.is_registered(shortcut.as_str()) {
                     global_shortcut.unregister(shortcut.as_str())?;
@@ -98,6 +102,15 @@ pub fn update_translate_shortcut(
     shortcut: String,
 ) -> Result<AppSettings, FlickError> {
     update_shortcut(app, state, shortcut, ShortcutKind::Translate)
+}
+
+#[tauri::command]
+pub fn update_selected_translate_shortcut(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    shortcut: String,
+) -> Result<AppSettings, FlickError> {
+    update_shortcut(app, state, shortcut, ShortcutKind::SelectedTranslate)
 }
 
 #[tauri::command]
@@ -315,6 +328,7 @@ pub fn update_ocr_target_language(
 enum ShortcutKind {
     Capture,
     Translate,
+    SelectedTranslate,
 }
 
 fn update_shortcut(
@@ -338,6 +352,7 @@ fn update_shortcut(
     let current = match kind {
         ShortcutKind::Capture => current_settings.capture_shortcut.clone(),
         ShortcutKind::Translate => current_settings.translate_shortcut.clone(),
+        ShortcutKind::SelectedTranslate => current_settings.selected_translate_shortcut.clone(),
     };
     if current == normalized {
         return get_app_settings(state);
@@ -347,6 +362,9 @@ fn update_shortcut(
     match kind {
         ShortcutKind::Capture => next_settings.capture_shortcut = normalized.clone(),
         ShortcutKind::Translate => next_settings.translate_shortcut = normalized.clone(),
+        ShortcutKind::SelectedTranslate => {
+            next_settings.selected_translate_shortcut = normalized.clone()
+        }
     }
 
     if let Err(error) = apply_shortcut_bindings(&app, &next_settings) {

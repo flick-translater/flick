@@ -16,8 +16,9 @@ pub async fn translate(
     state: State<'_, AppState>,
     request: TranslateRequest,
 ) -> Result<TranslateResponse, FlickError> {
-    let response = translation::run(&state, request.clone()).await?;
-    translation::save_history(&state, &request, &response, None)?;
+    let pipeline = translation::TranslationPipeline::new(request).prepare();
+    let response = translation::run(&state, pipeline.request.clone()).await?;
+    translation::save_pipeline_history(&state, &pipeline, &response)?;
     let _ = app.emit("translation-history-updated", ());
     Ok(response)
 }

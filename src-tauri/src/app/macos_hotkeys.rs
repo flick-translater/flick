@@ -10,18 +10,15 @@ use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventType, CallbackResult, EventField,
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 
-use crate::{
-    app::{AppState, CaptureIntent},
-    commands,
-};
+use crate::app::{ShortcutAction, trigger_shortcut_action};
 
 #[derive(Clone, Copy)]
 struct RegisteredHotkey {
     shortcut: Shortcut,
-    intent: CaptureIntent,
+    action: ShortcutAction,
 }
 
 #[derive(Default)]
@@ -62,32 +59,36 @@ pub fn install_hotkey_tap(app: &AppHandle) -> anyhow::Result<()> {
 
 pub fn apply_shortcuts(
     capture_shortcut: &str,
-    translate_shortcut: Option<&str>,
+    translate_shortcut: &str,
+    selected_translate_shortcut: &str,
 ) -> anyhow::Result<()> {
     let capture = capture_shortcut
         .parse::<Shortcut>()
         .map_err(|error| anyhow!("截图快捷键无效: {error}"))?;
     let translate = translate_shortcut
-        .map(|shortcut| {
-            shortcut
-                .parse::<Shortcut>()
-                .map_err(|error| anyhow!("截图翻译快捷键无效: {error}"))
-        })
-        .transpose()?;
+        .parse::<Shortcut>()
+        .map_err(|error| anyhow!("截图翻译快捷键无效: {error}"))?;
+    let selected_translate = selected_translate_shortcut
+        .parse::<Shortcut>()
+        .map_err(|error| anyhow!("选中翻译快捷键无效: {error}"))?;
 
     let mut runtime = hotkey_runtime()
         .lock()
         .map_err(|_| anyhow!("macOS hotkey runtime mutex poisoned"))?;
-    runtime.shortcuts = vec![RegisteredHotkey {
-        shortcut: capture,
-        intent: CaptureIntent::Capture,
-    }];
-    if let Some(translate) = translate {
-        runtime.shortcuts.push(RegisteredHotkey {
+    runtime.shortcuts = vec![
+        RegisteredHotkey {
+            shortcut: capture,
+            action: ShortcutAction::Capture,
+        },
+        RegisteredHotkey {
             shortcut: translate,
-            intent: CaptureIntent::Translate,
-        });
-    }
+            action: ShortcutAction::TranslateCapture,
+        },
+        RegisteredHotkey {
+            shortcut: selected_translate,
+            action: ShortcutAction::TranslateSelectedText,
+        },
+    ];
     Ok(())
 }
 
@@ -169,18 +170,17 @@ fn handle_hotkey_event(
     let modifiers = modifiers_from_event_flags(event.get_flags());
     let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u32;
 
-    let Some(intent) = shortcuts
+    let Some(action) = shortcuts
         .into_iter()
         .find(|registered| shortcut_matches_event(&registered.shortcut, modifiers, keycode))
-        .map(|registered| registered.intent)
+        .map(|registered| registered.action)
     else {
         return CallbackResult::Keep;
     };
 
     let app_handle = app.clone();
     thread::spawn(move || {
-        let state = app_handle.state::<AppState>();
-        let _ = commands::capture::begin_capture_session_with_intent(&app_handle, &state, intent);
+        trigger_shortcut_action(&app_handle, action);
     });
 
     CallbackResult::Drop
