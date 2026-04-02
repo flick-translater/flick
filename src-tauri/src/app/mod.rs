@@ -337,7 +337,16 @@ fn decode_tray_icon(bytes: &[u8]) -> Option<tauri::image::Image<'static>> {
 fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
     app.plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
     #[cfg(target_os = "macos")]
-    macos_hotkeys::install_hotkey_tap(app)?;
+    {
+        let permissions = macos_permissions::current_permission_status();
+        if permissions.hotkeys_ready() {
+            macos_hotkeys::install_hotkey_tap(app)?;
+        } else {
+            eprintln!(
+                "skipping macOS hotkey event tap during startup because accessibility/input monitoring permissions are not ready"
+            );
+        }
+    }
 
     let settings = {
         let state = app.state::<AppState>();

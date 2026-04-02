@@ -13,6 +13,10 @@ unsafe extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
 }
 
+pub fn current_permission_status() -> PermissionStatus {
+    PermissionStatus::detect()
+}
+
 pub fn launch_startup_permission_check(_app: &AppHandle) {
     thread::spawn(move || {
         // Let the main window finish presenting before showing a native warning dialog.
@@ -57,10 +61,10 @@ pub fn launch_startup_permission_check(_app: &AppHandle) {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct PermissionStatus {
-    screen_recording: bool,
-    accessibility: bool,
-    input_monitoring: bool,
+pub struct PermissionStatus {
+    pub screen_recording: bool,
+    pub accessibility: bool,
+    pub input_monitoring: bool,
 }
 
 impl PermissionStatus {
@@ -78,6 +82,10 @@ impl PermissionStatus {
 
     fn is_ready(self) -> bool {
         self.screen_recording && self.accessibility && self.input_monitoring
+    }
+
+    pub fn hotkeys_ready(self) -> bool {
+        self.accessibility && self.input_monitoring
     }
 }
 
