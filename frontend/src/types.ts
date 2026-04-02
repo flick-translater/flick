@@ -70,6 +70,18 @@ export type TranslateResponse = {
   detected_source_language?: string | null;
 };
 
+export type TranslateWindowState = {
+  image_path: string;
+  source_text: string;
+  translated_text: string;
+  provider: string;
+  detected_source_language?: string | null;
+  ocr_detected_source_language?: string | null;
+  target_language: string;
+  is_loading: boolean;
+  is_translating: boolean;
+};
+
 export type CaptureRecord = {
   id: string;
   created_at: string;

@@ -21,7 +21,7 @@ use tauri_plugin_global_shortcut::ShortcutState;
 
 use crate::{
     commands,
-    models::{AppSettings, CaptureRecord},
+    models::{AppSettings, CaptureRecord, TranslateWindowState},
     services::{
         CachedScreenCapture, OcrService, SettingsStore, TranslationHistoryStore,
         available_ocr_engines, create_ocr_service, default_ocr_provider,
@@ -45,6 +45,7 @@ pub struct AppState {
     pub settings: Mutex<AppSettings>,
     pub capture_intent: Mutex<CaptureIntent>,
     pub ocr_service: Mutex<Arc<dyn OcrService>>,
+    pub translate_window_state: Mutex<TranslateWindowState>,
     pub suppress_next_reopen: Mutex<bool>,
     pub previous_frontmost_app_pid: Mutex<Option<i32>>,
 }
@@ -67,7 +68,7 @@ pub fn run() {
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
             windows::ensure_main_window(app.handle())?;
-            windows::ensure_widget_window(app.handle())?;
+            windows::ensure_translate_window(app.handle())?;
             let state = build_state(app.handle())?;
             app.manage(state);
 
@@ -107,12 +108,13 @@ pub fn run() {
             commands::settings::get_available_ocr_engines,
             commands::settings::update_ocr_provider,
             commands::settings::update_ai_settings,
-            commands::widget::show_translation_widget,
-            commands::widget::get_translation_widget_pinned,
-            commands::widget::set_translation_widget_pinned,
-            commands::widget::minimize_translation_widget,
-            commands::widget::close_translation_widget,
-            commands::widget::begin_translation_widget_drag,
+            commands::translate_window::show_translate_window,
+            commands::translate_window::get_translate_window_pinned,
+            commands::translate_window::get_translate_window_state,
+            commands::translate_window::set_translate_window_pinned,
+            commands::translate_window::minimize_translate_window,
+            commands::translate_window::close_translate_window,
+            commands::translate_window::begin_translate_window_drag,
             commands::translation::translate,
             commands::translation::list_translation_history,
             commands::translation::clear_translation_history,
@@ -187,6 +189,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         settings: Mutex::new(settings.clone()),
         capture_intent: Mutex::new(CaptureIntent::Capture),
         ocr_service: Mutex::new(create_ocr_service(&settings.ocr_provider)),
+        translate_window_state: Mutex::new(TranslateWindowState::default()),
         suppress_next_reopen: Mutex::new(false),
         previous_frontmost_app_pid: Mutex::new(None),
     })

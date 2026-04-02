@@ -6,7 +6,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TranslationPayload } from '../types';
 import { useTypewriter } from '../hooks/useTypewriter';
 
-interface TranslationWidgetProps {
+interface TranslationWindowProps {
   payload: TranslationPayload;
   isLoading?: boolean;
   isTranslating?: boolean;
@@ -54,7 +54,7 @@ function languageLabel(code: string | null | undefined, t: (key: string) => stri
   }
 }
 
-export default function TranslationWidget({ payload, isLoading = false, isTranslating = false, onClose, onTranslate, standalone = false }: TranslationWidgetProps) {
+export default function TranslationWindow({ payload, isLoading = false, isTranslating = false, onClose, onTranslate, standalone = false }: TranslationWindowProps) {
   const { t } = useTranslation();
   const [isPinned, setIsPinned] = useState(false);
   const [sourceCopied, setSourceCopied] = useState(false);
@@ -82,7 +82,7 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
       return;
     }
 
-    void invoke<boolean>('get_translation_widget_pinned').then(setIsPinned).catch((error) => {
+    void invoke<boolean>('get_translate_window_pinned').then(setIsPinned).catch((error) => {
       console.error('Failed to read always-on-top state', error);
     });
   }, [windowHandle]);
@@ -100,13 +100,13 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
     event.preventDefault();
 
     try {
-      await invoke('begin_translation_widget_drag');
+      await invoke('begin_translate_window_drag');
     } catch (error) {
       try {
         await windowHandle?.setFocus();
         await windowHandle?.startDragging();
       } catch (fallbackError) {
-        console.error('Failed to start dragging widget window', fallbackError ?? error);
+        console.error('Failed to start dragging translation window', fallbackError ?? error);
       }
     }
   };
@@ -115,7 +115,7 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
     const next = !isPinned;
 
     try {
-      await invoke('set_translation_widget_pinned', { pinned: next });
+      await invoke('set_translate_window_pinned', { pinned: next });
       setIsPinned(next);
     } catch (error) {
       console.error('Failed to toggle always-on-top', error);
@@ -124,21 +124,21 @@ export default function TranslationWidget({ payload, isLoading = false, isTransl
 
   const handleMinimize = async () => {
     try {
-      await invoke('minimize_translation_widget');
+      await invoke('minimize_translate_window');
     } catch (error) {
-      console.error('Failed to minimize widget window', error);
+      console.error('Failed to minimize translation window', error);
     }
   };
 
   const handleClose = async () => {
     try {
       if (standalone) {
-        await invoke('close_translation_widget');
+        await invoke('close_translate_window');
         return;
       }
       onClose();
     } catch (error) {
-      console.error('Failed to close widget window', error);
+      console.error('Failed to close translation window', error);
     }
   };
 

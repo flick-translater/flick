@@ -3,7 +3,9 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::{
     app::{AppState, windows},
     error::FlickError,
-    models::{AISettings, TranslateRequest, TranslateResponse, TranslationHistory},
+    models::{
+        AISettings, TranslateRequest, TranslateResponse, TranslateWindowState, TranslationHistory,
+    },
     services::{NewTranslationRecord, TranslationGateway},
 };
 
@@ -75,17 +77,35 @@ pub fn delete_history_record(state: &AppState, id: i64) -> Result<(), FlickError
 }
 
 pub fn show_window_immediately(app: &AppHandle, image_path: &str) -> Result<(), FlickError> {
-    windows::ensure_widget_window(app)?;
-    windows::show_widget_window(app)?;
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut snapshot) = state.translate_window_state.lock() {
+            *snapshot = TranslateWindowState {
+                image_path: image_path.to_string(),
+                source_text: String::new(),
+                translated_text: String::new(),
+                provider: String::new(),
+                detected_source_language: None,
+                ocr_detected_source_language: None,
+                target_language: "zh".into(),
+                is_loading: true,
+                is_translating: false,
+            };
+        }
+    }
+
+    windows::ensure_translate_window(app)?;
+    windows::show_translate_window(app)?;
 
     let payload = serde_json::json!({
         "imagePath": image_path,
         "loading": true,
     });
 
-    if let Some(window) = app.get_webview_window("widget") {
+    if let Some(window) = app.get_webview_window("translate") {
         let _ = window.emit("ocr-loading", payload.clone());
     }
+
+    let _ = app.emit("ocr-loading", payload);
 
     Ok(())
 }
@@ -98,6 +118,20 @@ pub fn emit_ocr_ready(
     auto_translate_enabled: bool,
     target_language: &str,
 ) -> Result<(), FlickError> {
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut snapshot) = state.translate_window_state.lock() {
+            snapshot.image_path = image_path.to_string();
+            snapshot.source_text = source_text.to_string();
+            snapshot.translated_text.clear();
+            snapshot.provider.clear();
+            snapshot.detected_source_language = None;
+            snapshot.ocr_detected_source_language = ocr_detected_source_language.map(str::to_string);
+            snapshot.target_language = target_language.to_string();
+            snapshot.is_loading = false;
+            snapshot.is_translating = auto_translate_enabled;
+        }
+    }
+
     let payload = serde_json::json!({
         "imagePath": image_path,
         "sourceText": source_text,
@@ -106,7 +140,7 @@ pub fn emit_ocr_ready(
         "targetLanguage": target_language,
     });
 
-    if let Some(window) = app.get_webview_window("widget") {
+    if let Some(window) = app.get_webview_window("translate") {
         let _ = window.emit("ocr-ready", payload.clone());
     }
 
@@ -122,6 +156,19 @@ pub fn emit_translation_ready(
     target_language: &str,
     translation: TranslateResponse,
 ) -> Result<(), FlickError> {
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut snapshot) = state.translate_window_state.lock() {
+            snapshot.image_path = image_path.to_string();
+            snapshot.source_text = source_text.to_string();
+            snapshot.translated_text = translation.translated_text.clone();
+            snapshot.provider = translation.provider.clone();
+            snapshot.detected_source_language = translation.detected_source_language.clone();
+            snapshot.target_language = target_language.to_string();
+            snapshot.is_loading = false;
+            snapshot.is_translating = false;
+        }
+    }
+
     let payload = serde_json::json!({
         "imagePath": image_path,
         "sourceText": source_text,
@@ -131,7 +178,7 @@ pub fn emit_translation_ready(
         "targetLanguage": target_language,
     });
 
-    if let Some(window) = app.get_webview_window("widget") {
+    if let Some(window) = app.get_webview_window("translate") {
         let _ = window.emit("translation-ready", payload.clone());
     }
 

@@ -88,6 +88,19 @@ pub struct TranslateResponse {
     pub detected_source_language: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TranslateWindowState {
+    pub image_path: String,
+    pub source_text: String,
+    pub translated_text: String,
+    pub provider: String,
+    pub detected_source_language: Option<String>,
+    pub ocr_detected_source_language: Option<String>,
+    pub target_language: String,
+    pub is_loading: bool,
+    pub is_translating: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiTestResult {
     pub ok: bool,

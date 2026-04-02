@@ -10,7 +10,7 @@ use super::AppState;
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
 
 const MAIN_WINDOW_LABEL: &str = "main";
-const WIDGET_WINDOW_LABEL: &str = "widget";
+const TRANSLATE_WINDOW_LABEL: &str = "translate";
 
 pub fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
@@ -51,17 +51,17 @@ pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
-pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    if let Some(window) = app.get_webview_window(WIDGET_WINDOW_LABEL) {
+pub fn ensure_translate_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(window) = app.get_webview_window(TRANSLATE_WINDOW_LABEL) {
         return Ok(window);
     }
 
     WebviewWindowBuilder::new(
         app,
-        WIDGET_WINDOW_LABEL,
+        TRANSLATE_WINDOW_LABEL,
         WebviewUrl::App("translation-window.html".into()),
     )
-    .title("Flick Widget")
+    .title("Flick Translate")
     .devtools(false)
     .inner_size(480.0, 640.0)
     .min_inner_size(360.0, 480.0)
@@ -76,11 +76,11 @@ pub fn ensure_widget_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     .build()
 }
 
-pub fn show_widget_window(app: &AppHandle) -> tauri::Result<()> {
+pub fn show_translate_window(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     remember_previous_frontmost_app(app);
 
-    let window = ensure_widget_window(app)?;
+    let window = ensure_translate_window(app)?;
     if !window.is_always_on_top().unwrap_or(false) {
         let _ = window.center();
     }
@@ -92,14 +92,14 @@ pub fn show_widget_window(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-pub fn hide_widget_window(app: &AppHandle) -> tauri::Result<()> {
+pub fn hide_translate_window(app: &AppHandle) -> tauri::Result<()> {
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(mut suppress) = state.suppress_next_reopen.lock() {
             *suppress = true;
         }
     }
 
-    if let Some(window) = app.get_webview_window(WIDGET_WINDOW_LABEL) {
+    if let Some(window) = app.get_webview_window(TRANSLATE_WINDOW_LABEL) {
         let _ = window.set_always_on_top(false);
         window.hide()?;
     }

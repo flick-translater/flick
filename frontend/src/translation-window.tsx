@@ -1,12 +1,11 @@
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import TranslationWidget from './components/TranslationWidget';
+import TranslationWindow from './components/TranslationWindow';
 import './index.css';
 import { normalizeLanguage, setupI18n } from './i18n/config';
-import { TranslationPayload, OcrPayload, AppSettings, TranslateResponse } from './types';
+import { TranslationPayload, AppSettings, TranslateResponse, TranslateWindowState } from './types';
 
 window.addEventListener('contextmenu', (event) => {
   event.preventDefault();
@@ -22,10 +21,41 @@ const placeholderPayload: TranslationPayload = {
   targetLanguage: 'zh',
 };
 
-function WidgetApp() {
+function buildPayloadFromSnapshot(snapshot: TranslateWindowState): TranslationPayload {
+  return {
+    imagePath: snapshot.image_path,
+    sourceText: snapshot.source_text,
+    translatedText: snapshot.translated_text,
+    provider: snapshot.provider,
+    detectedSourceLanguage: snapshot.detected_source_language ?? null,
+    ocrDetectedSourceLanguage: snapshot.ocr_detected_source_language ?? null,
+    targetLanguage: snapshot.target_language || placeholderPayload.targetLanguage,
+  };
+}
+
+function TranslateWindowApp() {
   const [payload, setPayload] = useState<TranslationPayload>(placeholderPayload);
   const [isLoading, setIsLoading] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
+  const lastSnapshotRef = useRef('');
+
+  const syncFromSnapshot = async () => {
+    try {
+      const snapshot = await invoke<TranslateWindowState>('get_translate_window_state');
+      const nextKey = JSON.stringify(snapshot);
+
+      if (nextKey === lastSnapshotRef.current) {
+        return;
+      }
+
+      lastSnapshotRef.current = nextKey;
+      setPayload(buildPayloadFromSnapshot(snapshot));
+      setIsLoading(snapshot.is_loading);
+      setIsTranslating(snapshot.is_translating);
+    } catch (error) {
+      console.error('Failed to read translate window state', error);
+    }
+  };
 
   const handleTranslate = async () => {
     if (!payload.sourceText.trim()) {
@@ -54,74 +84,25 @@ function WidgetApp() {
         detectedSourceLanguage: response.detected_source_language ?? prev.detectedSourceLanguage,
       }));
     } catch (error) {
-      console.error('[WIDGET] manual translate failed', error);
+      console.error('[TRANSLATE] manual translate failed', error);
     } finally {
       setIsTranslating(false);
     }
   };
 
   useEffect(() => {
-    console.log('[WIDGET] WidgetApp mounted, setting up event listeners');
-    let unlistenOcrLoading: (() => void) | undefined;
-    let unlistenOcr: (() => void) | undefined;
-    let unlistenTranslation: (() => void) | undefined;
-
-    void listen<{ imagePath: string; loading: boolean }>('ocr-loading', (event) => {
-      console.log('[WIDGET] ocr-loading event received');
-      setPayload((prev) => ({
-        ...prev,
-        imagePath: event.payload.imagePath,
-        sourceText: '',
-        translatedText: '',
-        detectedSourceLanguage: null,
-        ocrDetectedSourceLanguage: null,
-      }));
-      setIsLoading(true);
-      setIsTranslating(false);
-    }).then((dispose) => {
-      unlistenOcrLoading = dispose;
-    });
-
-    void listen<OcrPayload>('ocr-ready', (event) => {
-      console.log('[WIDGET] ocr-ready event received');
-      setPayload((prev) => ({
-        ...prev,
-        imagePath: event.payload.imagePath,
-        sourceText: event.payload.sourceText,
-        translatedText: '',
-        ocrDetectedSourceLanguage: event.payload.ocrDetectedSourceLanguage ?? null,
-        targetLanguage: event.payload.targetLanguage ?? prev.targetLanguage,
-      }));
-      setIsLoading(false);
-      setIsTranslating(event.payload.autoTranslateEnabled ?? true);
-    }).then((dispose) => {
-      unlistenOcr = dispose;
-    });
-
-    void listen<TranslationPayload>('translation-ready', (event) => {
-      console.log('[WIDGET] translation-ready event received');
-      setPayload((prev) => ({
-        ...event.payload,
-        ocrDetectedSourceLanguage: prev.ocrDetectedSourceLanguage ?? null,
-      }));
-      setIsLoading(false);
-      setIsTranslating(false);
-    }).then((dispose) => {
-      unlistenTranslation = dispose;
-    });
+    void syncFromSnapshot();
+    const intervalId = window.setInterval(() => {
+      void syncFromSnapshot();
+    }, 250);
 
     return () => {
-      console.log('[WIDGET] cleaning up event listeners');
-      unlistenOcrLoading?.();
-      unlistenOcr?.();
-      unlistenTranslation?.();
+      window.clearInterval(intervalId);
     };
   }, []);
 
-  console.log('[WIDGET] current payload state:', payload);
-
   return (
-    <TranslationWidget
+    <TranslationWindow
       standalone
       payload={payload}
       isLoading={isLoading}
@@ -150,7 +131,7 @@ async function bootstrap() {
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <WidgetApp />
+      <TranslateWindowApp />
     </StrictMode>,
   );
 }
