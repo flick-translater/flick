@@ -20,9 +20,9 @@ struct CacheEntry {
 static OCR_CACHE: Lazy<Arc<Mutex<HashMap<String, CacheEntry>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
-pub struct VisionOcrService;
+pub struct MacosVisionOcrService;
 
-impl OcrService for VisionOcrService {
+impl OcrService for MacosVisionOcrService {
     fn run_with_data(&self, image_data: &[u8]) -> anyhow::Result<OcrResponse> {
         let cache_key = generate_cache_key_from_data(image_data);
 
@@ -95,7 +95,6 @@ fn update_cache(cache_key: String, text: String) {
     }
 }
 
-#[cfg(target_os = "macos")]
 mod vision_ffi {
     use std::ptr::null_mut;
 
@@ -228,6 +227,7 @@ mod vision_ffi {
 
         unsafe { extract_text(observations) }
     }
+
     unsafe fn extract_text(observations: *mut AnyObject) -> anyhow::Result<String> {
         let count: usize = msg_send![observations, count];
         if count == 0 {
@@ -260,17 +260,6 @@ mod vision_ffi {
     }
 }
 
-#[cfg(target_os = "macos")]
 fn recognize_text_from_data(data: &[u8]) -> anyhow::Result<String> {
     vision_ffi::recognize_text_from_data(data)
-}
-
-#[cfg(target_os = "linux")]
-fn recognize_text_from_data(_data: &[u8]) -> anyhow::Result<String> {
-    Err(anyhow!("Vision OCR is only available on macOS"))
-}
-
-#[cfg(target_os = "windows")]
-fn recognize_text_from_data(_data: &[u8]) -> anyhow::Result<String> {
-    Err(anyhow!("Vision OCR is only available on macOS"))
 }

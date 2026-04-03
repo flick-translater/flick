@@ -1,8 +1,8 @@
 //! macOS-specific capture-session behavior.
 
-#[path = "macos_frozen_overlay.rs"]
+#[path = "macos_frozen_overlay_platform.rs"]
 mod frozen_overlay;
-#[path = "macos_overlay.rs"]
+#[path = "macos_overlay_platform.rs"]
 mod overlay;
 
 use std::{
@@ -21,7 +21,7 @@ use objc2_app_kit::NSEvent;
 use objc2_foundation::NSInteger;
 use tauri::{AppHandle, Manager, State};
 
-use crate::services::screen_capture::macos_frozen;
+use crate::services::screen_capture::macos_frozen_platform;
 use crate::{
     app::{AppState, windows::emit_capture_status},
     error::FlickError,
@@ -394,7 +394,7 @@ fn cache_frozen_desktop_snapshot(
         .enumerate()
         .map(|(index, bounds)| {
             thread::spawn(move || {
-                let result = macos_frozen::capture_desktop_snapshot(&bounds);
+                let result = macos_frozen_platform::capture_desktop_snapshot(&bounds);
                 (index, result)
             })
         })

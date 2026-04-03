@@ -8,13 +8,14 @@ use tauri::{AppHandle, State};
 use crate::app::AppState;
 
 #[cfg(target_os = "linux")]
-#[path = "platform/non_macos.rs"]
-mod linux;
+#[path = "platform/linux_platform.rs"]
+mod linux_platform;
 #[cfg(target_os = "macos")]
-mod macos;
+#[path = "platform/macos_platform.rs"]
+mod macos_platform;
 #[cfg(target_os = "windows")]
-#[path = "platform/non_macos.rs"]
-mod windows;
+#[path = "platform/windows_platform.rs"]
+mod windows_platform;
 
 use image::{ImageBuffer, Rgba};
 
@@ -30,35 +31,35 @@ pub fn start_interactive_capture(
 ) -> Result<(), FlickError> {
     #[cfg(target_os = "macos")]
     {
-        return macos::begin_interactive_capture_session(app, state);
+        return macos_platform::begin_interactive_capture_session(app, state);
     }
 
     #[cfg(target_os = "linux")]
     {
-        linux::begin_interactive_capture_session(app, state)
+        linux_platform::begin_interactive_capture_session(app, state)
     }
 
     #[cfg(target_os = "windows")]
     {
-        windows::begin_interactive_capture_session(app, state)
+        windows_platform::begin_interactive_capture_session(app, state)
     }
 }
 
 pub fn cancel_interactive_capture(app: &AppHandle, state: &State<'_, AppState>) {
     #[cfg(target_os = "macos")]
     {
-        macos::cancel_interactive_capture_session(app, state);
+        macos_platform::cancel_interactive_capture_session(app, state);
         return;
     }
 
     #[cfg(target_os = "linux")]
     {
-        linux::cancel_interactive_capture_session(app, state);
+        linux_platform::cancel_interactive_capture_session(app, state);
     }
 
     #[cfg(target_os = "windows")]
     {
-        windows::cancel_interactive_capture_session(app, state);
+        windows_platform::cancel_interactive_capture_session(app, state);
     }
 }
 
@@ -68,17 +69,17 @@ pub fn prepare_for_capture_session(
 ) -> Result<(), FlickError> {
     #[cfg(target_os = "macos")]
     {
-        return macos::prepare_for_capture_session(app, state);
+        return macos_platform::prepare_for_capture_session(app, state);
     }
 
     #[cfg(target_os = "linux")]
     {
-        linux::prepare_for_capture_session(app, state)
+        linux_platform::prepare_for_capture_session(app, state)
     }
 
     #[cfg(target_os = "windows")]
     {
-        windows::prepare_for_capture_session(app, state)
+        windows_platform::prepare_for_capture_session(app, state)
     }
 }
 
@@ -88,17 +89,17 @@ pub fn complete_ui_before_capture_processing(
 ) -> Result<Vec<CachedScreenCapture>, FlickError> {
     #[cfg(target_os = "macos")]
     {
-        return macos::complete_ui_before_capture_processing(app, state);
+        return macos_platform::complete_ui_before_capture_processing(app, state);
     }
 
     #[cfg(target_os = "linux")]
     {
-        linux::complete_ui_before_capture_processing(app, state)
+        linux_platform::complete_ui_before_capture_processing(app, state)
     }
 
     #[cfg(target_os = "windows")]
     {
-        windows::complete_ui_before_capture_processing(app, state)
+        windows_platform::complete_ui_before_capture_processing(app, state)
     }
 }
 
@@ -109,18 +110,18 @@ pub fn finalize_capture_session(
 ) {
     #[cfg(target_os = "macos")]
     {
-        macos::finalize_capture_session(app, state, restore_previous_frontmost);
+        macos_platform::finalize_capture_session(app, state, restore_previous_frontmost);
         return;
     }
 
     #[cfg(target_os = "linux")]
     {
-        linux::finalize_capture_session(app, state, restore_previous_frontmost);
+        linux_platform::finalize_capture_session(app, state, restore_previous_frontmost);
     }
 
     #[cfg(target_os = "windows")]
     {
-        windows::finalize_capture_session(app, state, restore_previous_frontmost);
+        windows_platform::finalize_capture_session(app, state, restore_previous_frontmost);
     }
 }
 
@@ -131,36 +132,36 @@ pub fn restore_after_failed_capture(
 ) {
     #[cfg(target_os = "macos")]
     {
-        macos::restore_after_failed_capture(app, state, restore_previous_frontmost);
+        macos_platform::restore_after_failed_capture(app, state, restore_previous_frontmost);
         return;
     }
 
     #[cfg(target_os = "linux")]
     {
-        linux::restore_after_failed_capture(app, state, restore_previous_frontmost);
+        linux_platform::restore_after_failed_capture(app, state, restore_previous_frontmost);
     }
 
     #[cfg(target_os = "windows")]
     {
-        windows::restore_after_failed_capture(app, state, restore_previous_frontmost);
+        windows_platform::restore_after_failed_capture(app, state, restore_previous_frontmost);
     }
 }
 
 pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
     #[cfg(target_os = "macos")]
     {
-        macos::cleanup_after_cancel(app, state);
+        macos_platform::cleanup_after_cancel(app, state);
         return;
     }
 
     #[cfg(target_os = "linux")]
     {
-        linux::cleanup_after_cancel(app, state);
+        linux_platform::cleanup_after_cancel(app, state);
     }
 
     #[cfg(target_os = "windows")]
     {
-        windows::cleanup_after_cancel(app, state);
+        windows_platform::cleanup_after_cancel(app, state);
     }
 }
 

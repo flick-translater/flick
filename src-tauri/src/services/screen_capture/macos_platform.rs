@@ -23,7 +23,7 @@ impl MacosCaptureBackend for CoreGraphicsCaptureBackend {
         &self,
         bounds: &SelectionRect,
     ) -> anyhow::Result<crate::services::CachedScreenCapture> {
-        super::macos_frozen::capture_desktop_snapshot_with_core_graphics(bounds)
+        super::macos_frozen_platform::capture_desktop_snapshot_with_core_graphics(bounds)
     }
 }
 

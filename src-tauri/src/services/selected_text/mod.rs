@@ -1,21 +1,21 @@
 #[cfg(target_os = "linux")]
-mod platform_linux;
+mod linux_platform;
 #[cfg(target_os = "macos")]
-mod platform_macos;
+mod macos_platform;
 #[cfg(target_os = "windows")]
-mod platform_windows;
+mod windows_platform;
 
 #[cfg(target_os = "linux")]
 pub fn read_selected_text() -> anyhow::Result<String> {
-    platform_linux::read_selected_text()
+    linux_platform::read_selected_text()
 }
 
 #[cfg(target_os = "macos")]
 pub fn read_selected_text() -> anyhow::Result<String> {
-    platform_macos::read_selected_text()
+    macos_platform::read_selected_text()
 }
 
 #[cfg(target_os = "windows")]
 pub fn read_selected_text() -> anyhow::Result<String> {
-    platform_windows::read_selected_text()
+    windows_platform::read_selected_text()
 }

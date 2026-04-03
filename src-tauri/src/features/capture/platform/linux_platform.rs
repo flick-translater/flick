@@ -1,4 +1,4 @@
-//! Non-macOS capture-session behavior.
+//! Linux-specific capture-session behavior.
 
 use tauri::{AppHandle, State};
 
@@ -9,7 +9,7 @@ pub fn begin_interactive_capture_session(
     _state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
     Err(FlickError::Message(
-        "capture interaction is not implemented on this platform".into(),
+        "capture interaction is not implemented on Linux".into(),
     ))
 }
 
@@ -20,7 +20,7 @@ pub fn prepare_for_capture_session(
     _state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
     Err(FlickError::Message(
-        "capture is not implemented on this platform".into(),
+        "capture is not implemented on Linux".into(),
     ))
 }
 
@@ -29,7 +29,7 @@ pub fn complete_ui_before_capture_processing(
     _state: &State<'_, AppState>,
 ) -> Result<Vec<CachedScreenCapture>, FlickError> {
     Err(FlickError::Message(
-        "capture is not implemented on this platform".into(),
+        "capture is not implemented on Linux".into(),
     ))
 }
 

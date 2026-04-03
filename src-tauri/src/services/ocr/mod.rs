@@ -1,10 +1,12 @@
+#[cfg(target_os = "macos")]
+mod macos_vision;
 mod mock;
-mod vision;
 
 use std::sync::Arc;
 
+#[cfg(target_os = "macos")]
+pub use macos_vision::MacosVisionOcrService;
 pub use mock::MockOcrService;
-pub use vision::VisionOcrService;
 
 use crate::models::{OcrEngineInfo, OcrResponse};
 
@@ -13,9 +15,24 @@ pub trait OcrService: Send + Sync {
 }
 
 pub fn create_ocr_service(engine_id: &str) -> Arc<dyn OcrService> {
-    match engine_id {
-        "mock" => Arc::new(MockOcrService),
-        _ => Arc::new(VisionOcrService),
+    #[cfg(target_os = "macos")]
+    {
+        match engine_id {
+            "mock" => Arc::new(MockOcrService),
+            _ => Arc::new(MacosVisionOcrService),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let _ = engine_id;
+        Arc::new(MockOcrService)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = engine_id;
+        Arc::new(MockOcrService)
     }
 }
 

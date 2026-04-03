@@ -1,14 +1,14 @@
 //! Thin platform facade that routes to OS-specific app and window helpers.
 
 #[cfg(target_os = "linux")]
-#[path = "platform_linux.rs"]
-mod platform_linux;
+#[path = "linux_platform.rs"]
+mod linux_platform;
 #[cfg(target_os = "macos")]
-#[path = "platform_macos.rs"]
-mod platform_macos;
+#[path = "macos_platform.rs"]
+mod macos_platform;
 #[cfg(target_os = "windows")]
-#[path = "platform_windows.rs"]
-mod platform_windows;
+#[path = "windows_platform.rs"]
+mod windows_platform;
 
 use tauri::{App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindowBuilder};
 
@@ -20,69 +20,69 @@ use crate::{
 
 pub fn configure_app_setup(app: &mut App) {
     #[cfg(target_os = "macos")]
-    platform_macos::configure_app_setup(app);
+    macos_platform::configure_app_setup(app);
 
     #[cfg(target_os = "windows")]
-    platform_windows::configure_app_setup(app);
+    windows_platform::configure_app_setup(app);
 
     #[cfg(target_os = "linux")]
-    platform_linux::configure_app_setup(app);
+    linux_platform::configure_app_setup(app);
 }
 
 pub fn handle_run_event<R: Runtime>(app: &AppHandle<R>, event: &RunEvent) {
     #[cfg(target_os = "macos")]
-    platform_macos::handle_run_event(app, event);
+    macos_platform::handle_run_event(app, event);
 
     #[cfg(target_os = "windows")]
-    platform_windows::handle_run_event(app, event);
+    windows_platform::handle_run_event(app, event);
 
     #[cfg(target_os = "linux")]
-    platform_linux::handle_run_event(app, event);
+    linux_platform::handle_run_event(app, event);
 }
 
 pub fn register_platform_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        return platform_macos::register_platform_shortcuts(app);
+        return macos_platform::register_platform_shortcuts(app);
     }
 
     #[cfg(target_os = "windows")]
     {
-        return platform_windows::register_platform_shortcuts(app);
+        return windows_platform::register_platform_shortcuts(app);
     }
 
     #[cfg(target_os = "linux")]
     {
-        platform_linux::register_platform_shortcuts(app)
+        linux_platform::register_platform_shortcuts(app)
     }
 }
 
 pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        return platform_macos::apply_shortcut_bindings(app, settings);
+        return macos_platform::apply_shortcut_bindings(app, settings);
     }
 
     #[cfg(target_os = "windows")]
     {
-        return platform_windows::apply_shortcut_bindings(app, settings);
+        return windows_platform::apply_shortcut_bindings(app, settings);
     }
 
     #[cfg(target_os = "linux")]
     {
-        platform_linux::apply_shortcut_bindings(app, settings)
+        linux_platform::apply_shortcut_bindings(app, settings)
     }
 }
 
 pub fn trigger_shortcut_action(app: &AppHandle, action: ShortcutAction) {
     #[cfg(target_os = "macos")]
-    platform_macos::trigger_shortcut_action(app, action);
+    macos_platform::trigger_shortcut_action(app, action);
 
     #[cfg(target_os = "windows")]
-    platform_windows::trigger_shortcut_action(app, action);
+    windows_platform::trigger_shortcut_action(app, action);
 
     #[cfg(target_os = "linux")]
-    platform_linux::trigger_shortcut_action(app, action);
+    linux_platform::trigger_shortcut_action(app, action);
 }
 
 pub fn set_shortcut_recording(
@@ -92,40 +92,40 @@ pub fn set_shortcut_recording(
 ) -> Result<(), FlickError> {
     #[cfg(target_os = "macos")]
     {
-        return platform_macos::set_shortcut_recording(app, state, recording);
+        return macos_platform::set_shortcut_recording(app, state, recording);
     }
 
     #[cfg(target_os = "windows")]
     {
-        return platform_windows::set_shortcut_recording(app, state, recording);
+        return windows_platform::set_shortcut_recording(app, state, recording);
     }
 
     #[cfg(target_os = "linux")]
     {
-        platform_linux::set_shortcut_recording(app, state, recording)
+        linux_platform::set_shortcut_recording(app, state, recording)
     }
 }
 
 pub fn on_main_window_close(app: &AppHandle) {
     #[cfg(target_os = "macos")]
-    platform_macos::on_main_window_close(app);
+    macos_platform::on_main_window_close(app);
 
     #[cfg(target_os = "windows")]
-    platform_windows::on_main_window_close(app);
+    windows_platform::on_main_window_close(app);
 
     #[cfg(target_os = "linux")]
-    platform_linux::on_main_window_close(app);
+    linux_platform::on_main_window_close(app);
 }
 
 pub fn show_main_window_before_focus(app: &AppHandle) {
     #[cfg(target_os = "macos")]
-    platform_macos::show_main_window_before_focus(app);
+    macos_platform::show_main_window_before_focus(app);
 
     #[cfg(target_os = "windows")]
-    platform_windows::show_main_window_before_focus(app);
+    windows_platform::show_main_window_before_focus(app);
 
     #[cfg(target_os = "linux")]
-    platform_linux::show_main_window_before_focus(app);
+    linux_platform::show_main_window_before_focus(app);
 }
 
 pub fn configure_main_window_builder<'a, R: Runtime, M: Manager<R>>(
@@ -133,60 +133,60 @@ pub fn configure_main_window_builder<'a, R: Runtime, M: Manager<R>>(
 ) -> WebviewWindowBuilder<'a, R, M> {
     #[cfg(target_os = "macos")]
     {
-        return platform_macos::configure_main_window_builder(builder);
+        return macos_platform::configure_main_window_builder(builder);
     }
 
     #[cfg(target_os = "windows")]
     {
-        return platform_windows::configure_main_window_builder(builder);
+        return windows_platform::configure_main_window_builder(builder);
     }
 
     #[cfg(target_os = "linux")]
     {
-        platform_linux::configure_main_window_builder(builder)
+        linux_platform::configure_main_window_builder(builder)
     }
 }
 
 pub fn show_translate_window_before_focus(app: &AppHandle) {
     #[cfg(target_os = "macos")]
-    platform_macos::show_translate_window_before_focus(app);
+    macos_platform::show_translate_window_before_focus(app);
 
     #[cfg(target_os = "windows")]
-    platform_windows::show_translate_window_before_focus(app);
+    windows_platform::show_translate_window_before_focus(app);
 
     #[cfg(target_os = "linux")]
-    platform_linux::show_translate_window_before_focus(app);
+    linux_platform::show_translate_window_before_focus(app);
 }
 
 pub fn refresh_previous_frontmost_app(app: &AppHandle) {
     #[cfg(target_os = "macos")]
-    platform_macos::refresh_previous_frontmost_app(app);
+    macos_platform::refresh_previous_frontmost_app(app);
 
     #[cfg(target_os = "windows")]
-    platform_windows::refresh_previous_frontmost_app(app);
+    windows_platform::refresh_previous_frontmost_app(app);
 
     #[cfg(target_os = "linux")]
-    platform_linux::refresh_previous_frontmost_app(app);
+    linux_platform::refresh_previous_frontmost_app(app);
 }
 
 pub fn hide_translate_window_before_hide(app: &AppHandle) {
     #[cfg(target_os = "macos")]
-    platform_macos::hide_translate_window_before_hide(app);
+    macos_platform::hide_translate_window_before_hide(app);
 
     #[cfg(target_os = "windows")]
-    platform_windows::hide_translate_window_before_hide(app);
+    windows_platform::hide_translate_window_before_hide(app);
 
     #[cfg(target_os = "linux")]
-    platform_linux::hide_translate_window_before_hide(app);
+    linux_platform::hide_translate_window_before_hide(app);
 }
 
 pub fn hide_translate_window_after_hide(app: &AppHandle) {
     #[cfg(target_os = "macos")]
-    platform_macos::hide_translate_window_after_hide(app);
+    macos_platform::hide_translate_window_after_hide(app);
 
     #[cfg(target_os = "windows")]
-    platform_windows::hide_translate_window_after_hide(app);
+    windows_platform::hide_translate_window_after_hide(app);
 
     #[cfg(target_os = "linux")]
-    platform_linux::hide_translate_window_after_hide(app);
+    linux_platform::hide_translate_window_after_hide(app);
 }

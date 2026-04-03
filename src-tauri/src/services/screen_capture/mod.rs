@@ -3,12 +3,16 @@
 //! The feature layer talks only to this facade; platform-specific capture code stays behind
 //! conditional modules so the outer workflow does not need OS branching everywhere.
 
+#[cfg(target_os = "linux")]
+mod linux_platform;
 #[cfg(target_os = "macos")]
-mod macos;
+pub(crate) mod macos_frozen_platform;
 #[cfg(target_os = "macos")]
-pub(crate) mod macos_frozen;
+mod macos_platform;
 #[cfg(target_os = "macos")]
-mod macos_screen_capture_kit;
+mod macos_screen_capture_kit_platform;
+#[cfg(target_os = "windows")]
+mod windows_platform;
 
 use std::{borrow::Cow, path::Path, sync::Arc};
 
@@ -82,12 +86,12 @@ trait MacosCaptureBackend: Sync {
 
 #[cfg(target_os = "macos")]
 fn preferred_macos_capture_backend() -> &'static dyn MacosCaptureBackend {
-    &macos_screen_capture_kit::ScreenCaptureKitBackend
+    &macos_screen_capture_kit_platform::ScreenCaptureKitBackend
 }
 
 #[cfg(target_os = "macos")]
 fn fallback_macos_capture_backend() -> &'static dyn MacosCaptureBackend {
-    &macos::CoreGraphicsCaptureBackend
+    &macos_platform::CoreGraphicsCaptureBackend
 }
 
 #[cfg(target_os = "macos")]
@@ -152,18 +156,21 @@ impl ScreenCaptureService {
         #[cfg(target_os = "macos")]
         {
             if !cached_screens.is_empty() {
-                return macos_frozen::capture_from_snapshot(selection, cached_screens);
+                return macos_frozen_platform::capture_from_snapshot(selection, cached_screens);
             }
 
             return capture_selection_via_backend(selection);
         }
 
         #[cfg(target_os = "linux")]
-        let _ = selection;
+        {
+            return linux_platform::capture_selection(selection, cached_screens);
+        }
+
         #[cfg(target_os = "windows")]
-        let _ = selection;
-        let _ = cached_screens;
-        anyhow::bail!("capture is not implemented on this platform")
+        {
+            return windows_platform::capture_selection(selection, cached_screens);
+        }
     }
 
     pub fn copy_to_clipboard(&self, image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> anyhow::Result<()> {
