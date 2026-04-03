@@ -11,6 +11,10 @@ use crate::models::{AiTestResult, ProviderSettings};
 pub use anthropic::AnthropicChatProtocol;
 pub use openai::OpenAiChatProtocol;
 
+pub fn app_user_agent() -> String {
+    format!("Flick {}", env!("CARGO_PKG_VERSION"))
+}
+
 #[derive(Clone, Copy)]
 pub enum ProtocolKind {
     OpenAi,

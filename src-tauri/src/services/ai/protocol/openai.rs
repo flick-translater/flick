@@ -10,7 +10,7 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-use super::ChatProtocol;
+use super::{ChatProtocol, app_user_agent};
 use crate::models::AiTestResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,7 +74,7 @@ impl OpenAiChatProtocol {
     ) -> Self {
         Self {
             client: reqwest::Client::builder()
-                .user_agent("Flick/0.1")
+                .user_agent(app_user_agent())
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
             api_key,

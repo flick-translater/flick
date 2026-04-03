@@ -6,7 +6,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, Header
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-use super::ChatProtocol;
+use super::{ChatProtocol, app_user_agent};
 use crate::models::AiTestResult;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -57,7 +57,10 @@ impl AnthropicChatProtocol {
         max_tokens: u32,
     ) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .user_agent(app_user_agent())
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             api_key,
             api_base_url,
             model,
