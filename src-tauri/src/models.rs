@@ -195,8 +195,8 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             capture_shortcut: "CommandOrControl+Alt+A".into(),
-            translate_shortcut: "CommandOrControl+Alt+T".into(),
-            selected_translate_shortcut: "CommandOrControl+Alt+S".into(),
+            translate_shortcut: "CommandOrControl+Alt+S".into(),
+            selected_translate_shortcut: "CommandOrControl+Alt+D".into(),
             autostart_enabled: false,
             autostart_configured: false,
             max_screenshots: 500,
