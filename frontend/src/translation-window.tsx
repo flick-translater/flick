@@ -7,6 +7,14 @@ import './index.css';
 import { normalizeLanguage, setupI18n } from './i18n/config';
 import { TranslationPayload, AppSettings, TranslateResponse, TranslateWindowState } from './types';
 
+type TtsStatus = 'idle' | 'generating' | 'playing';
+type TtsTarget = 'source' | 'translation';
+type TtsSnapshot = {
+  status: TtsStatus;
+  target: TtsTarget | null;
+  engine: string;
+};
+
 window.addEventListener('contextmenu', (event) => {
   event.preventDefault();
 });
@@ -37,14 +45,19 @@ function TranslateWindowApp() {
   const [payload, setPayload] = useState<TranslationPayload>(placeholderPayload);
   const [isLoading, setIsLoading] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
+  const [ttsSnapshot, setTtsSnapshot] = useState<TtsSnapshot>({ status: 'idle', target: null, engine: 'edge' });
   const lastSnapshotRef = useRef('');
 
   const syncFromSnapshot = async () => {
     try {
-      const snapshot = await invoke<TranslateWindowState>('get_translate_window_state');
+      const [snapshot, nextTtsSnapshot] = await Promise.all([
+        invoke<TranslateWindowState>('get_translate_window_state'),
+        invoke<TtsSnapshot>('get_window_tts_snapshot'),
+      ]);
       const nextKey = JSON.stringify(snapshot);
 
       if (nextKey === lastSnapshotRef.current) {
+        setTtsSnapshot(nextTtsSnapshot);
         return;
       }
 
@@ -52,6 +65,7 @@ function TranslateWindowApp() {
       setPayload(buildPayloadFromSnapshot(snapshot));
       setIsLoading(snapshot.is_loading);
       setIsTranslating(snapshot.is_translating);
+      setTtsSnapshot(nextTtsSnapshot);
     } catch (error) {
       console.error('Failed to read translate window state', error);
     }
@@ -90,6 +104,38 @@ function TranslateWindowApp() {
     }
   };
 
+  const handleSpeakToggle = async (target: TtsTarget) => {
+    const isSource = target === 'source';
+    const text = isSource ? payload.sourceText : payload.translatedText;
+    const language = isSource
+      ? (payload.detectedSourceLanguage || payload.ocrDetectedSourceLanguage || null)
+      : (payload.targetLanguage || payload.detectedSourceLanguage || null);
+
+    if (!text.trim()) {
+      return;
+    }
+
+    try {
+      const isCurrentTarget = ttsSnapshot.target === target;
+      const isBusy = ttsSnapshot.status !== 'idle';
+      if (isCurrentTarget && isBusy) {
+        await invoke('stop_window_tts');
+        setTtsSnapshot((prev) => ({ ...prev, status: 'idle', target: null }));
+        return;
+      }
+
+      setTtsSnapshot((prev) => ({ ...prev, status: 'generating', target }));
+      await invoke('speak_window_text', {
+        text,
+        language,
+        target,
+      });
+    } catch (error) {
+      setTtsSnapshot((prev) => ({ ...prev, status: 'idle', target: null }));
+      console.error('Failed to toggle window tts', error);
+    }
+  };
+
   useEffect(() => {
     void syncFromSnapshot();
     const intervalId = window.setInterval(() => {
@@ -101,14 +147,50 @@ function TranslateWindowApp() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!payload.sourceText && !payload.translatedText) {
+      setTtsSnapshot((prev) => ({ ...prev, status: 'idle', target: null }));
+      return;
+    }
+
+    void invoke('stop_window_tts')
+      .then(() => {
+        setTtsSnapshot((prev) => ({ ...prev, status: 'idle', target: null }));
+      })
+      .catch((error) => {
+        console.error('Failed to stop window tts after text change', error);
+      });
+  }, [payload.sourceText, payload.translatedText]);
+
+  useEffect(() => {
+    return () => {
+      void invoke('stop_window_tts').catch(() => {});
+    };
+  }, []);
+
+  const sourceSpeechLoading = ttsSnapshot.target === 'source' && ttsSnapshot.status === 'generating';
+  const translationSpeechLoading = ttsSnapshot.target === 'translation' && ttsSnapshot.status === 'generating';
+  const sourceSpeaking = ttsSnapshot.target === 'source' && ttsSnapshot.status === 'playing';
+  const translationSpeaking = ttsSnapshot.target === 'translation' && ttsSnapshot.status === 'playing';
+
   return (
     <TranslationWindow
       standalone
       payload={payload}
       isLoading={isLoading}
       isTranslating={isTranslating}
+      isSourceSpeaking={sourceSpeaking}
+      isSourceSpeechLoading={sourceSpeechLoading}
+      isTranslationSpeaking={translationSpeaking}
+      isTranslationSpeechLoading={translationSpeechLoading}
       onTranslate={() => {
         void handleTranslate();
+      }}
+      onSourceSpeakToggle={() => {
+        void handleSpeakToggle('source');
+      }}
+      onTranslationSpeakToggle={() => {
+        void handleSpeakToggle('translation');
       }}
       onClose={() => {
         void getCurrentWindow().close();

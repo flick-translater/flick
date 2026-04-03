@@ -9,6 +9,7 @@ use crate::{
     error::FlickError,
     features::translation,
     models::TranslateWindowState,
+    services::{TtsSnapshot, TtsTarget},
 };
 
 #[tauri::command]
@@ -40,7 +41,11 @@ pub fn set_translate_window_pinned(app: AppHandle, pinned: bool) -> Result<(), F
 }
 
 #[tauri::command]
-pub fn minimize_translate_window(app: AppHandle) -> Result<(), FlickError> {
+pub fn minimize_translate_window(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), FlickError> {
+    state.tts_service.stop()?;
     windows::ensure_translate_window(&app)?.minimize()?;
     Ok(())
 }
@@ -49,6 +54,32 @@ pub fn minimize_translate_window(app: AppHandle) -> Result<(), FlickError> {
 pub fn close_translate_window(app: AppHandle) -> Result<(), FlickError> {
     windows::hide_translate_window(&app)?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn speak_window_text(
+    state: tauri::State<'_, AppState>,
+    text: String,
+    language: Option<String>,
+    target: TtsTarget,
+) -> Result<(), FlickError> {
+    state
+        .tts_service
+        .speak(&text, language.as_deref(), target)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_window_tts(state: tauri::State<'_, AppState>) -> Result<(), FlickError> {
+    state.tts_service.stop()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_window_tts_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> Result<TtsSnapshot, FlickError> {
+    Ok(state.tts_service.snapshot())
 }
 
 #[tauri::command]

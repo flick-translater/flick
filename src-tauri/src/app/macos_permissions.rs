@@ -67,7 +67,8 @@ impl PermissionStatus {
     fn detect() -> Self {
         let screen_recording = unsafe { CGPreflightScreenCaptureAccess() };
         let accessibility = unsafe { AXIsProcessTrusted() != 0 };
-        let input_monitoring = unsafe { CGPreflightListenEventAccess() } || probe_input_monitoring();
+        let input_monitoring =
+            unsafe { CGPreflightListenEventAccess() } || probe_input_monitoring();
         let event_posting = unsafe { CGPreflightPostEventAccess() };
 
         Self {

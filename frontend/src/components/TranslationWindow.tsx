@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, ScanText, Loader2 } from 'lucide-react';
+import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, VolumeX, ScanText, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TranslationPayload } from '../types';
@@ -10,8 +10,14 @@ interface TranslationWindowProps {
   payload: TranslationPayload;
   isLoading?: boolean;
   isTranslating?: boolean;
+  isSourceSpeaking?: boolean;
+  isSourceSpeechLoading?: boolean;
+  isTranslationSpeaking?: boolean;
+  isTranslationSpeechLoading?: boolean;
   onClose: () => void;
   onTranslate?: () => void;
+  onSourceSpeakToggle?: () => void;
+  onTranslationSpeakToggle?: () => void;
   standalone?: boolean;
 }
 
@@ -58,7 +64,20 @@ function languageLabel(code: string | null | undefined, t: (key: string) => stri
   }
 }
 
-export default function TranslationWindow({ payload, isLoading = false, isTranslating = false, onClose, onTranslate, standalone = false }: TranslationWindowProps) {
+export default function TranslationWindow({
+  payload,
+  isLoading = false,
+  isTranslating = false,
+  isSourceSpeaking = false,
+  isSourceSpeechLoading = false,
+  isTranslationSpeaking = false,
+  isTranslationSpeechLoading = false,
+  onClose,
+  onTranslate,
+  onSourceSpeakToggle,
+  onTranslationSpeakToggle,
+  standalone = false,
+}: TranslationWindowProps) {
   const { t } = useTranslation();
   const [isPinned, setIsPinned] = useState(false);
   const [sourceCopied, setSourceCopied] = useState(false);
@@ -66,6 +85,8 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
   const isClosingRef = useRef(false);
   const windowHandle = standalone ? getCurrentWindow() : null;
   const isTranslateDisabled = isLoading || isTranslating || !payload.sourceText.trim();
+  const isSourceSpeakDisabled = !payload.sourceText.trim();
+  const isTranslationSpeakDisabled = !payload.translatedText.trim();
   const resolvedSourceLanguage = payload.detectedSourceLanguage?.toLowerCase() === 'auto'
     ? (payload.ocrDetectedSourceLanguage ?? 'auto')
     : (payload.detectedSourceLanguage ?? payload.ocrDetectedSourceLanguage);
@@ -271,6 +292,20 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
             <span className="min-w-0 flex-1 text-[10px] uppercase font-bold tracking-[0.1em] text-outline">{t('widget.sourceText')}</span>
             <button
               type="button"
+              disabled={isSourceSpeakDisabled}
+              onClick={() => {
+                onSourceSpeakToggle?.();
+              }}
+              aria-label={isSourceSpeaking ? t('widget.stopReading', { defaultValue: '停止朗读' }) : t('widget.readSourceAloud', { defaultValue: '朗读原文' })}
+              title={isSourceSpeaking ? t('widget.stopReading', { defaultValue: '停止朗读' }) : t('widget.readSourceAloud', { defaultValue: '朗读原文' })}
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-all duration-150 ${
+                isSourceSpeakDisabled ? 'cursor-not-allowed text-outline-variant' : 'text-on-surface-variant hover:bg-primary/8 hover:text-primary active:scale-90'
+              } ${(isSourceSpeaking || isSourceSpeechLoading) ? 'bg-primary/12 text-primary' : ''}`}
+            >
+              {isSourceSpeechLoading ? <Loader2 size={16} className="animate-spin" /> : isSourceSpeaking ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            </button>
+            <button
+              type="button"
               disabled={!payload.sourceText}
               onClick={() => {
                 void handleCopySource();
@@ -333,8 +368,19 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
           <div className="flex items-center justify-between mb-3 border-b border-primary/10 pb-2">
             <span className="text-[10px] uppercase font-bold tracking-[0.1em] text-primary">{t('widget.translation')}</span>
             <div className="flex gap-3">
-              <button className="text-primary hover:text-primary-container transition-colors">
-                <Volume2 size={16} />
+              <button
+                type="button"
+                disabled={isTranslationSpeakDisabled}
+                onClick={() => {
+                  onTranslationSpeakToggle?.();
+                }}
+                aria-label={isTranslationSpeaking ? t('widget.stopReading', { defaultValue: '停止朗读' }) : t('widget.readAloud', { defaultValue: '朗读译文' })}
+                title={isTranslationSpeaking ? t('widget.stopReading', { defaultValue: '停止朗读' }) : t('widget.readAloud', { defaultValue: '朗读译文' })}
+                className={`flex h-8 w-8 items-center justify-center rounded-md transition-all duration-150 ${
+                  isTranslationSpeakDisabled ? 'cursor-not-allowed text-primary/40' : 'text-primary hover:bg-primary/10 hover:text-primary-container active:scale-90'
+                } ${(isTranslationSpeaking || isTranslationSpeechLoading) ? 'bg-primary/12 text-primary-container' : ''}`}
+              >
+                {isTranslationSpeechLoading ? <Loader2 size={16} className="animate-spin" /> : isTranslationSpeaking ? <VolumeX size={16} /> : <Volume2 size={16} />}
               </button>
               <button
                 type="button"

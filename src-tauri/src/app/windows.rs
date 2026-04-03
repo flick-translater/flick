@@ -97,6 +97,7 @@ pub fn hide_translate_window(app: &AppHandle) -> tauri::Result<()> {
         if let Ok(mut suppress) = state.suppress_next_reopen.lock() {
             *suppress = true;
         }
+        let _ = state.tts_service.stop();
     }
 
     #[cfg(target_os = "macos")]
