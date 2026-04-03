@@ -79,6 +79,12 @@ pub fn run() {
             windows::ensure_translate_window(app.handle())?;
             let state = build_state(app.handle())?;
             app.manage(state);
+
+            #[cfg(target_os = "macos")]
+            {
+                let _ = macos_permissions::request_startup_permissions();
+            }
+
             if let Err(error) = initialize_autostart(app.handle()) {
                 eprintln!("failed to initialize autostart: {error}");
             }
