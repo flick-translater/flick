@@ -1,20 +1,14 @@
 mod edge;
+mod playback;
 
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-use std::{io::Cursor, thread, time::Duration};
-
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-use anyhow::Context;
 use anyhow::anyhow;
 use async_trait::async_trait;
 pub use edge::EdgeTtsEngine;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-use rodio::{Decoder, DeviceSinkBuilder, Player};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -52,7 +46,7 @@ pub struct TtsService {
     engine: Arc<dyn TextToSpeechEngine>,
 }
 
-struct TtsRuntime {
+pub(super) struct TtsRuntime {
     session_id: u64,
     status: TtsStatus,
     target: Option<TtsTarget>,
@@ -100,7 +94,9 @@ impl TtsService {
             let result = engine
                 .synthesize(&text, language.as_deref())
                 .await
-                .and_then(|audio| play_audio_with_lifecycle(&inner, session_id, target, audio));
+                .and_then(|audio| {
+                    playback::play_audio_with_lifecycle(&inner, session_id, target, audio)
+                });
 
             if let Err(error) = result {
                 eprintln!("tts session failed: {error}");
@@ -144,65 +140,6 @@ pub fn create_tts_engine(engine_id: &str) -> Arc<dyn TextToSpeechEngine> {
         "edge" => Arc::new(EdgeTtsEngine),
         _ => Arc::new(EdgeTtsEngine),
     }
-}
-
-fn play_audio_with_lifecycle(
-    #[cfg(any(target_os = "macos", target_os = "windows"))] inner: &Arc<Mutex<TtsRuntime>>,
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))] _inner: &Arc<Mutex<TtsRuntime>>,
-    #[cfg(any(target_os = "macos", target_os = "windows"))] session_id: u64,
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))] _session_id: u64,
-    #[cfg(any(target_os = "macos", target_os = "windows"))] target: TtsTarget,
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))] _target: TtsTarget,
-    #[cfg(any(target_os = "macos", target_os = "windows"))] audio: Vec<u8>,
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))] _audio: Vec<u8>,
-) -> anyhow::Result<()> {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    {
-        if !is_current_session(inner, session_id)? {
-            return Ok(());
-        }
-
-        {
-            let mut guard = inner
-                .lock()
-                .map_err(|_| anyhow!("tts runtime mutex poisoned"))?;
-            if guard.session_id != session_id {
-                return Ok(());
-            }
-            guard.status = TtsStatus::Playing;
-            guard.target = Some(target);
-        }
-
-        let sink = DeviceSinkBuilder::open_default_sink()
-            .context("failed to open default audio output")?;
-        let player = Player::connect_new(&sink.mixer());
-        let decoder =
-            Decoder::try_from(Cursor::new(audio)).context("failed to decode tts audio")?;
-        player.append(decoder);
-        player.play();
-
-        while !player.empty() {
-            if !is_current_session(inner, session_id)? {
-                player.stop();
-                return Ok(());
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-
-        Ok(())
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        Err(anyhow!("tts playback is not implemented on this platform"))
-    }
-}
-
-fn is_current_session(inner: &Arc<Mutex<TtsRuntime>>, session_id: u64) -> anyhow::Result<bool> {
-    let guard = inner
-        .lock()
-        .map_err(|_| anyhow!("tts runtime mutex poisoned"))?;
-    Ok(guard.status != TtsStatus::Idle && guard.session_id == session_id)
 }
 
 fn mark_inactive(inner: &Arc<Mutex<TtsRuntime>>, session_id: u64) {

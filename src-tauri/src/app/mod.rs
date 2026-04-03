@@ -7,21 +7,15 @@ use std::{
 };
 
 use tauri::{
-    ActivationPolicy, AppHandle, Manager, RunEvent, WebviewWindow,
+    AppHandle, Manager, WebviewWindow,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuId, MenuItemBuilder},
     path::BaseDirectory,
     tray::TrayIconBuilder,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
-#[cfg(not(target_os = "macos"))]
-use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
-
-#[cfg(not(target_os = "macos"))]
-use tauri_plugin_global_shortcut::ShortcutState;
 
 use crate::{
     commands,
-    features::translation,
     models::{AppSettings, CaptureRecord, TranslateWindowState},
     services::{
         CachedScreenCapture, OcrService, SettingsStore, TranslationHistoryStore, TtsService,
@@ -33,6 +27,7 @@ use crate::{
 pub(crate) mod macos_hotkeys;
 #[cfg(target_os = "macos")]
 mod macos_permissions;
+pub(crate) mod platform;
 pub mod windows;
 
 /// Shared application state injected into Tauri commands and feature modules.
@@ -75,16 +70,11 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            app.set_activation_policy(ActivationPolicy::Accessory);
+            platform::configure_app_setup(app);
             windows::ensure_main_window(app.handle())?;
             windows::ensure_translate_window(app.handle())?;
             let state = build_state(app.handle())?;
             app.manage(state);
-
-            #[cfg(target_os = "macos")]
-            {
-                let _ = macos_permissions::request_startup_permissions();
-            }
 
             if let Err(error) = initialize_autostart(app.handle()) {
                 eprintln!("failed to initialize autostart: {error}");
@@ -145,19 +135,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build Flick application");
 
-    app.run(|app, event| match event {
-        RunEvent::Reopen { .. } => {
-            let state = app.state::<AppState>();
-            if let Ok(mut suppress) = state.suppress_next_reopen.lock() {
-                if *suppress {
-                    *suppress = false;
-                    return;
-                }
-            }
-            let _ = windows::show_main_window(app);
-        }
-        _ => {}
-    });
+    app.run(|app, event| platform::handle_run_event(app, &event));
 }
 
 fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
@@ -354,17 +332,7 @@ fn decode_tray_icon(bytes: &[u8]) -> Option<tauri::image::Image<'static>> {
 
 fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
     app.plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
-    #[cfg(target_os = "macos")]
-    {
-        let permissions = macos_permissions::current_permission_status();
-        if permissions.hotkeys_ready() {
-            macos_hotkeys::install_hotkey_tap(app)?;
-        } else {
-            eprintln!(
-                "skipping macOS hotkey event tap during startup because accessibility/input monitoring permissions are not ready"
-            );
-        }
-    }
+    platform::register_platform_shortcuts(app)?;
 
     let settings = {
         let state = app.state::<AppState>();
@@ -381,50 +349,7 @@ fn register_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
 
 pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
     validate_shortcut_conflicts(settings)?;
-
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app;
-        macos_hotkeys::apply_shortcuts(
-            settings.capture_shortcut.as_str(),
-            settings.translate_shortcut.as_str(),
-            settings.selected_translate_shortcut.as_str(),
-        )?;
-        return Ok(());
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let global_shortcut = app.global_shortcut();
-
-        for shortcut in [
-            &settings.capture_shortcut,
-            &settings.translate_shortcut,
-            &settings.selected_translate_shortcut,
-        ] {
-            if global_shortcut.is_registered(shortcut.as_str()) {
-                global_shortcut.unregister(shortcut.as_str())?;
-            }
-        }
-
-        register_shortcut_handler(
-            app,
-            settings.capture_shortcut.as_str(),
-            ShortcutAction::Capture,
-        )?;
-        register_shortcut_handler(
-            app,
-            settings.translate_shortcut.as_str(),
-            ShortcutAction::TranslateCapture,
-        )?;
-        register_shortcut_handler(
-            app,
-            settings.selected_translate_shortcut.as_str(),
-            ShortcutAction::TranslateSelectedText,
-        )?;
-
-        Ok(())
-    }
+    platform::apply_shortcut_bindings(app, settings)
 }
 
 fn validate_shortcut_conflicts(settings: &AppSettings) -> anyhow::Result<()> {
@@ -445,42 +370,8 @@ fn validate_shortcut_conflicts(settings: &AppSettings) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-fn register_shortcut_handler(
-    app: &AppHandle,
-    shortcut: &str,
-    action: ShortcutAction,
-) -> anyhow::Result<()> {
-    app.global_shortcut()
-        .on_shortcut(shortcut, move |app, _, event| {
-            if event.state == ShortcutState::Pressed {
-                trigger_shortcut_action(app, action);
-            }
-        })?;
-
-    Ok(())
-}
-
 pub fn trigger_shortcut_action(app: &AppHandle, action: ShortcutAction) {
-    match action {
-        ShortcutAction::Capture => {
-            let state = app.state::<AppState>();
-            let _ = commands::capture::begin_capture_session(app, &state);
-        }
-        ShortcutAction::TranslateCapture => {
-            let state = app.state::<AppState>();
-            let _ = commands::capture::begin_capture_session_with_intent(
-                app,
-                &state,
-                CaptureIntent::Translate,
-            );
-        }
-        ShortcutAction::TranslateSelectedText => {
-            if let Err(error) = translation::translate_selected_text_to_window(app) {
-                eprintln!("selected text shortcut failed: {error}");
-            }
-        }
-    }
+    platform::trigger_shortcut_action(app, action);
 }
 
 fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
@@ -521,12 +412,7 @@ fn setup_window_close_handler(window: &WebviewWindow) {
                 if let Some(win) = app_handle.get_webview_window(&window_label) {
                     let _ = win.hide();
                 }
-                let _ = app_handle.hide();
-
-                #[cfg(target_os = "macos")]
-                {
-                    let _ = app_handle.set_activation_policy(ActivationPolicy::Accessory);
-                }
+                platform::on_main_window_close(&app_handle);
             }
         }
     });

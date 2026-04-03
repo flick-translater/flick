@@ -4,11 +4,9 @@ use std::{fs, path::PathBuf};
 
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt as _;
-#[cfg(not(target_os = "macos"))]
-use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
 
 use crate::{
-    app::{AppState, apply_shortcut_bindings},
+    app::{AppState, apply_shortcut_bindings, platform},
     error::FlickError,
     features::capture,
     models::{AISettings, AppSettings, AutostartStatus, OcrEngineInfo},
@@ -37,42 +35,7 @@ pub fn set_shortcut_recording(
     state: State<'_, AppState>,
     recording: bool,
 ) -> Result<(), FlickError> {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app;
-        let _ = state;
-        crate::app::macos_hotkeys::set_recording_paused(recording)
-            .map_err(|error| FlickError::Message(format!("切换快捷键录制状态失败: {error}")))?;
-        return Ok(());
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let settings = state
-            .settings
-            .lock()
-            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
-            .clone();
-        let global_shortcut = app.global_shortcut();
-
-        for shortcut in [
-            &settings.capture_shortcut,
-            &settings.translate_shortcut,
-            &settings.selected_translate_shortcut,
-        ] {
-            if recording {
-                if global_shortcut.is_registered(shortcut.as_str()) {
-                    global_shortcut.unregister(shortcut.as_str())?;
-                }
-            } else if !global_shortcut.is_registered(shortcut.as_str()) {
-                apply_shortcut_bindings(&app, &settings)
-                    .map_err(|error| FlickError::Message(format!("恢复快捷键失败: {error}")))?;
-                break;
-            }
-        }
-
-        Ok(())
-    }
+    platform::set_shortcut_recording(&app, &state, recording)
 }
 
 #[tauri::command]

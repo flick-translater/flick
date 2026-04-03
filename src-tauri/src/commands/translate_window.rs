@@ -1,5 +1,6 @@
 //! Thin Tauri command adapters for the floating translation window.
 
+#[cfg(target_os = "macos")]
 use std::sync::mpsc;
 
 use tauri::AppHandle;
