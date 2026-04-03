@@ -28,7 +28,7 @@ export default {
       action: "Action",
       captureScreenshot: "Capture Screenshot",
       screenshotTranslate: "Screenshot & Translate",
-      selectedTextTranslate: "Translate Selected Text",
+      selectedTextTranslate: "Select and Translate",
       recordingShortcut: "Recording...",
       pressShortcut: "Press the new shortcut now. Press Esc to cancel.",
       shortcutModifierHint: "Shortcut must include at least one modifier key.",

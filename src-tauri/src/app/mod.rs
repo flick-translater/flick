@@ -90,9 +90,6 @@ pub fn run() {
                 setup_window_close_handler(&main_window);
             }
 
-            #[cfg(target_os = "macos")]
-            macos_permissions::launch_startup_permission_check(app.handle());
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -28,7 +28,7 @@ export default {
       action: "アクション",
       captureScreenshot: "スクリーンショットをキャプチャ",
       screenshotTranslate: "スクリーンショットと翻訳",
-      selectedTextTranslate: "選択中のテキストを翻訳",
+      selectedTextTranslate: "選択して翻訳",
       recordingShortcut: "録音中...",
       pressShortcut: "新しいショートカットを押してください。Esc でキャンセルします。",
       shortcutModifierHint: "ショートカットには修飾キーを1つ以上含めてください。",
