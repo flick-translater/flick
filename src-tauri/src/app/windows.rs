@@ -155,6 +155,16 @@ fn restore_previous_frontmost_app(app: &AppHandle) {
         return;
     };
 
+    let current_app = NSRunningApplication::currentApplication();
+    let current_pid = current_app.processIdentifier();
+    let frontmost_pid = NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map(|frontmost| frontmost.processIdentifier());
+
+    if frontmost_pid.is_some_and(|pid| pid > 0 && pid != current_pid) {
+        return;
+    }
+
     if let Some(previous_app) =
         NSRunningApplication::runningApplicationWithProcessIdentifier(previous_pid)
     {
