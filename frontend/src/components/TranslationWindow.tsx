@@ -270,16 +270,18 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
           <div className="flex items-center gap-2 mb-3 border-b border-outline-variant/20 pb-2">
             <span className="min-w-0 flex-1 text-[10px] uppercase font-bold tracking-[0.1em] text-outline">{t('widget.sourceText')}</span>
             <button
+              type="button"
+              disabled={!payload.sourceText}
               onClick={() => {
                 void handleCopySource();
               }}
-              className={`ml-auto flex shrink-0 items-center justify-end text-on-surface-variant hover:text-primary transition-colors ${sourceCopied ? 'text-primary' : ''}`}
+              aria-label={t('common.copy', { defaultValue: 'Copy' })}
+              title={t('common.copy', { defaultValue: 'Copy' })}
+              className={`ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-all duration-150 ${
+                payload.sourceText ? 'text-on-surface-variant hover:bg-primary/8 hover:text-primary active:scale-90' : 'cursor-not-allowed text-outline-variant'
+              } ${sourceCopied ? 'scale-110 bg-primary/12 text-primary' : ''}`}
             >
-              {sourceCopied ? (
-                <span className="text-[11px] font-bold">{t('history.copied')}</span>
-              ) : (
-                <Copy size={16} />
-              )}
+              <Copy size={16} />
             </button>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
@@ -340,13 +342,13 @@ export default function TranslationWindow({ payload, isLoading = false, isTransl
                 onClick={() => {
                   void handleCopyTranslation();
                 }}
-                className={`transition-colors ${payload.translatedText ? 'text-primary hover:text-primary-container' : 'cursor-not-allowed text-primary/40'} ${translationCopied ? 'text-primary-container' : ''}`}
+                aria-label={t('common.copy', { defaultValue: 'Copy' })}
+                title={t('common.copy', { defaultValue: 'Copy' })}
+                className={`flex h-8 w-8 items-center justify-center rounded-md transition-all duration-150 ${
+                  payload.translatedText ? 'text-primary hover:bg-primary/10 hover:text-primary-container active:scale-90' : 'cursor-not-allowed text-primary/40'
+                } ${translationCopied ? 'scale-110 bg-primary/12 text-primary-container' : ''}`}
               >
-                {translationCopied ? (
-                  <span className="text-[11px] font-bold">{t('history.copied')}</span>
-                ) : (
-                  <Copy size={16} />
-                )}
+                <Copy size={16} />
               </button>
             </div>
           </div>
