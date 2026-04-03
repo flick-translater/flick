@@ -27,7 +27,12 @@ pub fn available_ocr_engines() -> Vec<OcrEngineInfo> {
         }]
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        vec![]
+    }
+
+    #[cfg(target_os = "windows")]
     {
         vec![]
     }

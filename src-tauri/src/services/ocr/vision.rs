@@ -265,7 +265,12 @@ fn recognize_text_from_data(data: &[u8]) -> anyhow::Result<String> {
     vision_ffi::recognize_text_from_data(data)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn recognize_text_from_data(_data: &[u8]) -> anyhow::Result<String> {
+    Err(anyhow!("Vision OCR is only available on macOS"))
+}
+
+#[cfg(target_os = "windows")]
 fn recognize_text_from_data(_data: &[u8]) -> anyhow::Result<String> {
     Err(anyhow!("Vision OCR is only available on macOS"))
 }

@@ -35,7 +35,9 @@ pub struct CachedScreenCapture {
     pub bounds: SelectionRect,
     #[cfg(target_os = "macos")]
     pub image: Arc<CachedCgImage>,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    pub image: Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>,
+    #[cfg(target_os = "windows")]
     pub image: Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>,
 }
 
@@ -48,7 +50,15 @@ impl CachedScreenCapture {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    pub fn new(bounds: SelectionRect, image: ImageBuffer<Rgba<u8>, Vec<u8>>) -> Self {
+        Self {
+            bounds,
+            image: Arc::new(image),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
     pub fn new(bounds: SelectionRect, image: ImageBuffer<Rgba<u8>, Vec<u8>>) -> Self {
         Self {
             bounds,
@@ -139,17 +149,19 @@ impl ScreenCaptureService {
         selection: &SelectionRect,
         cached_screens: &[CachedScreenCapture],
     ) -> anyhow::Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
-        if cfg!(target_os = "macos") {
-            #[cfg(target_os = "macos")]
-            {
-                if !cached_screens.is_empty() {
-                    return macos_frozen::capture_from_snapshot(selection, cached_screens);
-                }
-
-                return capture_selection_via_backend(selection);
+        #[cfg(target_os = "macos")]
+        {
+            if !cached_screens.is_empty() {
+                return macos_frozen::capture_from_snapshot(selection, cached_screens);
             }
+
+            return capture_selection_via_backend(selection);
         }
 
+        #[cfg(target_os = "linux")]
+        let _ = selection;
+        #[cfg(target_os = "windows")]
+        let _ = selection;
         let _ = cached_screens;
         anyhow::bail!("capture is not implemented on this platform")
     }

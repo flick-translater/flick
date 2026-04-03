@@ -129,7 +129,16 @@ pub fn begin_translate_window_drag(app: AppHandle) -> Result<(), FlickError> {
             .map_err(|error| FlickError::Message(error.to_string()))?;
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        let _ = window;
+        Err(FlickError::Message(
+            "translation window native drag is only implemented on macOS".into(),
+        ))
+    }
+
+    #[cfg(target_os = "windows")]
     {
         let _ = app;
         let _ = window;

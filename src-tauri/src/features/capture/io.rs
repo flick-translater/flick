@@ -32,7 +32,7 @@ pub fn open_file_in_default_app(path: &str) -> Result<(), FlickError> {
         command
     };
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(target_os = "linux")]
     let mut command = {
         let mut command = Command::new("xdg-open");
         command.arg(path);
