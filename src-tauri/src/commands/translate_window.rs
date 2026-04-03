@@ -37,6 +37,9 @@ pub fn get_translate_window_state(
 #[tauri::command]
 pub fn set_translate_window_pinned(app: AppHandle, pinned: bool) -> Result<(), FlickError> {
     windows::ensure_translate_window(&app)?.set_always_on_top(pinned)?;
+    if !pinned {
+        windows::refresh_previous_frontmost_app(&app);
+    }
     Ok(())
 }
 

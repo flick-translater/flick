@@ -83,6 +83,7 @@ export default function TranslationWindow({
   const [sourceCopied, setSourceCopied] = useState(false);
   const [translationCopied, setTranslationCopied] = useState(false);
   const isClosingRef = useRef(false);
+  const pinnedRef = useRef(false);
   const windowHandle = standalone ? getCurrentWindow() : null;
   const isTranslateDisabled = isLoading || isTranslating || !payload.sourceText.trim();
   const isSourceSpeakDisabled = !payload.sourceText.trim();
@@ -110,9 +111,14 @@ export default function TranslationWindow({
       return;
     }
 
-    void invoke<boolean>('get_translate_window_pinned').then(setIsPinned).catch((error) => {
-      console.error('Failed to read always-on-top state', error);
-    });
+    void invoke<boolean>('get_translate_window_pinned')
+      .then((pinned) => {
+        pinnedRef.current = pinned;
+        setIsPinned(pinned);
+      })
+      .catch((error) => {
+        console.error('Failed to read always-on-top state', error);
+      });
   }, [windowHandle]);
 
   const handleHeaderMouseDown = async (event: MouseEvent<HTMLElement>) => {
@@ -141,11 +147,15 @@ export default function TranslationWindow({
 
   const handleTogglePinned = async () => {
     const next = !isPinned;
+    const previous = isPinned;
+    pinnedRef.current = next;
+    setIsPinned(next);
 
     try {
       await invoke('set_translate_window_pinned', { pinned: next });
-      setIsPinned(next);
     } catch (error) {
+      pinnedRef.current = previous;
+      setIsPinned(previous);
       console.error('Failed to toggle always-on-top', error);
     }
   };
@@ -186,7 +196,7 @@ export default function TranslationWindow({
     }
 
     const handleWindowBlur = () => {
-      if (document.hasFocus()) {
+      if (document.hasFocus() || pinnedRef.current) {
         return;
       }
 

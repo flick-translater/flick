@@ -92,6 +92,14 @@ pub fn show_translate_window(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+pub fn refresh_previous_frontmost_app(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    remember_previous_frontmost_app(app);
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
 pub fn hide_translate_window(app: &AppHandle) -> tauri::Result<()> {
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(mut suppress) = state.suppress_next_reopen.lock() {
@@ -104,7 +112,6 @@ pub fn hide_translate_window(app: &AppHandle) -> tauri::Result<()> {
     restore_previous_frontmost_app(app);
 
     if let Some(window) = app.get_webview_window(TRANSLATE_WINDOW_LABEL) {
-        let _ = window.set_always_on_top(false);
         window.hide()?;
     }
 
