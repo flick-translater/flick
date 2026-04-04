@@ -42,5 +42,10 @@ objc2-quartz-core = "0.3.2"
 rodio = { version = "0.22.2", features = ["mp3"] }
 screencapturekit = { version = "1.5.4", features = ["macos_15_2"] }
 
+[target."cfg(target_os = \"linux\")".dependencies]
+ashpd = { version = "0.11.1", default-features = false, features = ["async-std"] }
+async-std = "1.13.2"
+x11rb = { version = "0.13.2", features = ["shape", "randr"] }
+
 [target."cfg(target_os = \"windows\")".dependencies]
 rodio = { version = "0.22.2", features = ["mp3"] }

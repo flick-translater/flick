@@ -49,6 +49,19 @@ pub fn copy_capture_image(path: String) -> Result<(), FlickError> {
     capture::copy_capture_image(&path)
 }
 
+#[tauri::command]
+pub fn start_capture_session(app: AppHandle, state: State<'_, AppState>) -> Result<(), FlickError> {
+    capture::begin_capture_session(&app, &state)
+}
+
+#[tauri::command]
+pub fn start_translate_capture_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), FlickError> {
+    capture::begin_capture_session_with_intent(&app, &state, CaptureIntent::Translate)
+}
+
 pub fn begin_capture_session(
     app: &AppHandle,
     state: &State<'_, AppState>,
