@@ -158,6 +158,17 @@ pub fn show_translate_window_before_focus(app: &AppHandle) {
     linux_platform::show_translate_window_before_focus(app);
 }
 
+pub fn show_translate_window_after_show(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    macos_platform::show_translate_window_after_show(app);
+
+    #[cfg(target_os = "windows")]
+    windows_platform::show_translate_window_after_show(app);
+
+    #[cfg(target_os = "linux")]
+    linux_platform::show_translate_window_after_show(app);
+}
+
 pub fn refresh_previous_frontmost_app(app: &AppHandle) {
     #[cfg(target_os = "macos")]
     macos_platform::refresh_previous_frontmost_app(app);
@@ -189,4 +200,21 @@ pub fn hide_translate_window_after_hide(app: &AppHandle) {
 
     #[cfg(target_os = "linux")]
     linux_platform::hide_translate_window_after_hide(app);
+}
+
+pub fn translate_window_pinning_supported() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        true
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        true
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_platform::translate_window_pinning_supported()
+    }
 }

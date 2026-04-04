@@ -114,6 +114,8 @@ pub fn configure_main_window_builder<'a, R: Runtime, M: Manager<R>>(
 
 pub fn show_translate_window_before_focus(_app: &AppHandle) {}
 
+pub fn show_translate_window_after_show(_app: &AppHandle) {}
+
 pub fn refresh_previous_frontmost_app(_app: &AppHandle) {}
 
 pub fn hide_translate_window_before_hide(_app: &AppHandle) {}
@@ -128,7 +130,7 @@ fn register_shortcut_handler(
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, _, event| {
             if event.state == ShortcutState::Pressed {
-                trigger_shortcut_action(app, action);
+                crate::app::trigger_shortcut_action(app, action);
             }
         })?;
 

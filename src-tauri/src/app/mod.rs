@@ -35,6 +35,7 @@ pub struct AppState {
     pub capture_snapshots: Mutex<Vec<CachedScreenCapture>>,
     pub history: Mutex<VecDeque<CaptureRecord>>,
     pub data_dir: PathBuf,
+    pub ocr_models_dir: PathBuf,
     pub screenshot_dir: Mutex<PathBuf>,
     pub translation_history_store: TranslationHistoryStore,
     pub settings_store: SettingsStore,
@@ -43,7 +44,10 @@ pub struct AppState {
     pub ocr_service: Mutex<Arc<dyn OcrService>>,
     pub tts_service: TtsService,
     pub translate_window_state: Mutex<TranslateWindowState>,
+    pub translate_window_pinned: Mutex<bool>,
+    #[cfg(target_os = "macos")]
     pub suppress_next_reopen: Mutex<bool>,
+    #[cfg(target_os = "macos")]
     pub previous_frontmost_app_pid: Mutex<Option<i32>>,
 }
 
@@ -118,6 +122,7 @@ pub fn run() {
             commands::settings::update_ai_settings,
             commands::translate_window::show_translate_window,
             commands::translate_window::get_translate_window_pinned,
+            commands::translate_window::is_translate_window_pinning_supported,
             commands::translate_window::get_translate_window_state,
             commands::translate_window::set_translate_window_pinned,
             commands::translate_window::minimize_translate_window,
@@ -155,6 +160,17 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
     let settings_store = SettingsStore::new(data_dir.join("settings.json"));
     let translation_history_store =
         TranslationHistoryStore::new(data_dir.join("translations.sqlite3"))?;
+    let bundled_ocr_models_dir = app.path().resolve("ocr/onnx", BaseDirectory::Resource).ok();
+    let dev_ocr_models_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ocr/onnx");
+    let ocr_models_dir = bundled_ocr_models_dir
+        .filter(|path| path.join("text_detection.onnx").is_file())
+        .or_else(|| {
+            dev_ocr_models_dir
+                .join("text_detection.onnx")
+                .is_file()
+                .then_some(dev_ocr_models_dir)
+        })
+        .unwrap_or_else(|| data_dir.join("ocr/onnx"));
     let mut settings = settings_store.load_settings()?;
     let available_engines = available_ocr_engines();
     if !available_engines
@@ -183,15 +199,19 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         capture_snapshots: Mutex::new(Vec::new()),
         history: Mutex::new(VecDeque::new()),
         data_dir: data_dir.clone(),
+        ocr_models_dir: ocr_models_dir.clone(),
         screenshot_dir: Mutex::new(screenshot_dir),
         translation_history_store,
         settings_store,
         settings: Mutex::new(settings.clone()),
         capture_intent: Mutex::new(CaptureIntent::Capture),
-        ocr_service: Mutex::new(create_ocr_service(&settings.ocr_provider)),
+        ocr_service: Mutex::new(create_ocr_service(&settings.ocr_provider, &ocr_models_dir)),
         tts_service: TtsService::new(data_dir.clone()),
         translate_window_state: Mutex::new(TranslateWindowState::default()),
+        translate_window_pinned: Mutex::new(false),
+        #[cfg(target_os = "macos")]
         suppress_next_reopen: Mutex::new(false),
+        #[cfg(target_os = "macos")]
         previous_frontmost_app_pid: Mutex::new(None),
     })
 }

@@ -50,7 +50,8 @@ export default {
       discard: "Discard",
       saveChanges: "Save Changes",
       engines: {
-        macosVision: "macOS Vision (Built-in)"
+        macosVision: "macOS Vision (Built-in)",
+        onnxRuntime: "ONNX Runtime (Bundled Models)"
       },
       languages: {
         english: "English",

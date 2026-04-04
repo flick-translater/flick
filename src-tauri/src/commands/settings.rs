@@ -178,7 +178,7 @@ pub fn update_ocr_provider(
         ));
     }
 
-    let new_service = create_ocr_service(&normalized);
+    let new_service = create_ocr_service(&normalized, &state.ocr_models_dir);
 
     let updated = {
         let mut settings = state

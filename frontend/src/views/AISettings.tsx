@@ -9,7 +9,7 @@ const defaultProviderSettings: ProviderSettings = {
   api_base_url: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
   temperature: 0.7,
-  max_tokens: 0,
+  max_tokens: 4096,
   default_prompt: '',
 };
 

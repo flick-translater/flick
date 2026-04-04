@@ -3,7 +3,7 @@
 #[cfg(target_os = "macos")]
 use std::sync::mpsc;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::{
     app::{AppState, windows},
@@ -20,8 +20,20 @@ pub fn show_translate_window(app: AppHandle) -> Result<(), FlickError> {
 }
 
 #[tauri::command]
-pub fn get_translate_window_pinned(app: AppHandle) -> Result<bool, FlickError> {
-    Ok(windows::ensure_translate_window(&app)?.is_always_on_top()?)
+pub fn get_translate_window_pinned(
+    _app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, FlickError> {
+    state
+        .translate_window_pinned
+        .lock()
+        .map(|value| *value)
+        .map_err(|_| FlickError::LockError("translate_window_pinned".into()))
+}
+
+#[tauri::command]
+pub fn is_translate_window_pinning_supported() -> bool {
+    crate::app::platform::translate_window_pinning_supported()
 }
 
 #[tauri::command]
@@ -37,7 +49,21 @@ pub fn get_translate_window_state(
 
 #[tauri::command]
 pub fn set_translate_window_pinned(app: AppHandle, pinned: bool) -> Result<(), FlickError> {
-    windows::ensure_translate_window(&app)?.set_always_on_top(pinned)?;
+    if !crate::app::platform::translate_window_pinning_supported() {
+        return Err(FlickError::Message(
+            "translate window pinning is not supported on this platform/session".into(),
+        ));
+    }
+
+    let window = windows::ensure_translate_window(&app)?;
+    window.set_always_on_top(pinned)?;
+    if let Some(state) = app.try_state::<AppState>() {
+        let mut pinned_state = state
+            .translate_window_pinned
+            .lock()
+            .map_err(|_| FlickError::LockError("translate_window_pinned".into()))?;
+        *pinned_state = pinned;
+    }
     if !pinned {
         windows::refresh_previous_frontmost_app(&app);
     }
@@ -132,18 +158,16 @@ pub fn begin_translate_window_drag(app: AppHandle) -> Result<(), FlickError> {
     #[cfg(target_os = "linux")]
     {
         let _ = app;
-        let _ = window;
-        Err(FlickError::Message(
-            "translation window native drag is only implemented on macOS".into(),
-        ))
+        window.set_focus()?;
+        window.start_dragging()?;
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
         let _ = app;
-        let _ = window;
-        Err(FlickError::Message(
-            "translation window native drag is only implemented on macOS".into(),
-        ))
+        window.set_focus()?;
+        window.start_dragging()?;
+        Ok(())
     }
 }

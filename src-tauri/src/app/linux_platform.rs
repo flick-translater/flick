@@ -1,3 +1,4 @@
+use gtk::prelude::GtkWindowExt;
 use tauri::{App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 
@@ -114,11 +115,38 @@ pub fn configure_main_window_builder<'a, R: Runtime, M: Manager<R>>(
 
 pub fn show_translate_window_before_focus(_app: &AppHandle) {}
 
+pub fn show_translate_window_after_show(app: &AppHandle) {
+    let app = app.clone();
+    let app_for_closure = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = app_for_closure.get_webview_window("translate") {
+            match window.gtk_window() {
+                Ok(gtk_window) => {
+                    let timestamp = gtk::current_event_time();
+                    gtk_window.set_accept_focus(true);
+                    gtk_window.set_focus_on_map(true);
+                    gtk_window.present_with_time(timestamp);
+                }
+                Err(_error) => {}
+            }
+        }
+    });
+}
+
 pub fn refresh_previous_frontmost_app(_app: &AppHandle) {}
 
 pub fn hide_translate_window_before_hide(_app: &AppHandle) {}
 
 pub fn hide_translate_window_after_hide(_app: &AppHandle) {}
+
+pub fn translate_window_pinning_supported() -> bool {
+    let session_type = std::env::var("XDG_SESSION_TYPE")
+        .unwrap_or_default()
+        .to_lowercase();
+    let has_wayland_display = std::env::var_os("WAYLAND_DISPLAY").is_some();
+
+    session_type != "wayland" && !has_wayland_display
+}
 
 fn register_shortcut_handler(
     app: &AppHandle,
@@ -128,7 +156,7 @@ fn register_shortcut_handler(
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, _, event| {
             if event.state == ShortcutState::Pressed {
-                trigger_shortcut_action(app, action);
+                crate::app::trigger_shortcut_action(app, action);
             }
         })?;
 

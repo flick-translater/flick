@@ -14,6 +14,7 @@ pub fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
     let _ = window.set_visible_on_all_workspaces(true);
     window.show()?;
     window.unminimize()?;
+    platform::show_translate_window_after_show(app);
     window.set_focus()?;
     let _ = window.set_visible_on_all_workspaces(false);
 
@@ -67,12 +68,16 @@ pub fn ensure_translate_window(app: &AppHandle) -> tauri::Result<WebviewWindow> 
 pub fn show_translate_window(app: &AppHandle) -> tauri::Result<()> {
     platform::show_translate_window_before_focus(app);
     let window = ensure_translate_window(app)?;
-    if !window.is_always_on_top().unwrap_or(false) {
+    let pinned = window.is_always_on_top().unwrap_or(false);
+
+    if !pinned {
         let _ = window.center();
     }
+
     let _ = window.set_visible_on_all_workspaces(true);
     window.show()?;
     window.unminimize()?;
+    platform::show_translate_window_after_show(app);
     window.set_focus()?;
     let _ = window.set_visible_on_all_workspaces(false);
     Ok(())
@@ -85,12 +90,23 @@ pub fn refresh_previous_frontmost_app(app: &AppHandle) {
 pub fn hide_translate_window(app: &AppHandle) -> tauri::Result<()> {
     if let Some(state) = app.try_state::<AppState>() {
         let _ = state.tts_service.stop();
+        if let Ok(mut pinned) = state.translate_window_pinned.lock() {
+            *pinned = false;
+        }
     }
 
     platform::hide_translate_window_before_hide(app);
 
     if let Some(window) = app.get_webview_window(TRANSLATE_WINDOW_LABEL) {
-        window.hide()?;
+        #[cfg(target_os = "linux")]
+        {
+            window.close()?;
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            window.hide()?;
+        }
     }
 
     platform::hide_translate_window_after_hide(app);

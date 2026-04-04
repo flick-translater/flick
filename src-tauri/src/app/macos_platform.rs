@@ -111,6 +111,8 @@ pub fn show_translate_window_before_focus(app: &AppHandle) {
     remember_previous_frontmost_app(app);
 }
 
+pub fn show_translate_window_after_show(_app: &AppHandle) {}
+
 pub fn refresh_previous_frontmost_app(app: &AppHandle) {
     remember_previous_frontmost_app(app);
 }

@@ -65,6 +65,8 @@ export default function OCRSettings() {
     switch (engineId) {
       case 'vision':
         return t('ocr.engines.macosVision');
+      case 'onnx':
+        return t('ocr.engines.onnxRuntime');
       default:
         return engineId;
     }

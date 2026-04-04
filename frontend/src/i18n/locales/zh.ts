@@ -50,7 +50,8 @@ export default {
       discard: "放弃",
       saveChanges: "保存更改",
       engines: {
-        macosVision: "macOS Vision（系统内置）"
+        macosVision: "macOS Vision（系统内置）",
+        onnxRuntime: "ONNX Runtime（内置模型）"
       },
       languages: {
         english: "英语",

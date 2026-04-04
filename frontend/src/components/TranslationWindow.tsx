@@ -80,9 +80,12 @@ export default function TranslationWindow({
 }: TranslationWindowProps) {
   const { t } = useTranslation();
   const [isPinned, setIsPinned] = useState(false);
+  const [pinningSupported, setPinningSupported] = useState(true);
   const [sourceCopied, setSourceCopied] = useState(false);
   const [translationCopied, setTranslationCopied] = useState(false);
   const isClosingRef = useRef(false);
+  const interactionGuardRef = useRef<number | null>(null);
+  const suppressBlurCloseRef = useRef(false);
   const pinnedRef = useRef(false);
   const windowHandle = standalone ? getCurrentWindow() : null;
   const isTranslateDisabled = isLoading || isTranslating || !payload.sourceText.trim();
@@ -111,13 +114,17 @@ export default function TranslationWindow({
       return;
     }
 
-    void invoke<boolean>('get_translate_window_pinned')
-      .then((pinned) => {
-        pinnedRef.current = pinned;
-        setIsPinned(pinned);
+    void Promise.all([
+      invoke<boolean>('is_translate_window_pinning_supported'),
+      invoke<boolean>('get_translate_window_pinned'),
+    ])
+      .then(([supported, pinned]) => {
+        setPinningSupported(supported);
+        pinnedRef.current = supported && pinned;
+        setIsPinned(supported && pinned);
       })
       .catch((error) => {
-        console.error('Failed to read always-on-top state', error);
+        console.error('Failed to read translate window pinning state', error);
       });
   }, [windowHandle]);
 
@@ -132,6 +139,14 @@ export default function TranslationWindow({
     }
 
     event.preventDefault();
+    suppressBlurCloseRef.current = true;
+    if (interactionGuardRef.current !== null) {
+      window.clearTimeout(interactionGuardRef.current);
+    }
+    interactionGuardRef.current = window.setTimeout(() => {
+      suppressBlurCloseRef.current = false;
+      interactionGuardRef.current = null;
+    }, 300);
 
     try {
       await invoke('begin_translate_window_drag');
@@ -146,6 +161,10 @@ export default function TranslationWindow({
   };
 
   const handleTogglePinned = async () => {
+    if (!pinningSupported) {
+      return;
+    }
+
     const next = !isPinned;
     const previous = isPinned;
     pinnedRef.current = next;
@@ -153,6 +172,8 @@ export default function TranslationWindow({
 
     try {
       await invoke('set_translate_window_pinned', { pinned: next });
+      pinnedRef.current = next;
+      setIsPinned(next);
     } catch (error) {
       pinnedRef.current = previous;
       setIsPinned(previous);
@@ -196,7 +217,7 @@ export default function TranslationWindow({
     }
 
     const handleWindowBlur = () => {
-      if (document.hasFocus() || pinnedRef.current) {
+      if (document.hasFocus() || pinnedRef.current || suppressBlurCloseRef.current) {
         return;
       }
 
@@ -206,6 +227,9 @@ export default function TranslationWindow({
     window.addEventListener('blur', handleWindowBlur);
 
     return () => {
+      if (interactionGuardRef.current !== null) {
+        window.clearTimeout(interactionGuardRef.current);
+      }
       window.removeEventListener('blur', handleWindowBlur);
     };
   }, [standalone]);
@@ -259,13 +283,21 @@ export default function TranslationWindow({
         </div>
         <div className="flex gap-1">
           <button
+            disabled={!pinningSupported}
             onMouseDown={(event) => {
               event.stopPropagation();
             }}
             onClick={() => {
               void handleTogglePinned();
             }}
-            className={`w-8 h-8 flex items-center justify-center rounded transition-colors ${isPinned ? 'bg-primary text-white' : 'text-on-surface-variant hover:bg-surface-container'}`}
+            title={pinningSupported ? undefined : 'Pinning is not supported in this Linux session'}
+            className={`w-8 h-8 flex items-center justify-center rounded transition-colors ${
+              !pinningSupported
+                ? 'cursor-not-allowed text-outline-variant opacity-50'
+                : isPinned
+                  ? 'bg-primary text-white'
+                  : 'text-on-surface-variant hover:bg-surface-container'
+            }`}
           >
             <Pin size={16} className={isPinned ? 'fill-current' : ''} />
           </button>
