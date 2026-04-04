@@ -31,6 +31,7 @@ thiserror = "2.0.17"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 uuid = { version = "1.18.1", features = ["v4", "serde"] }
 edge-tts-rust = "0.1.2"
+rodio = { version = "0.22.2", features = ["mp3"] }
 
 [target."cfg(target_os = \"macos\")".dependencies]
 core-foundation = "0.10.1"
@@ -41,7 +42,6 @@ objc2-app-kit = { version = "0.3.2", features = ["NSColor", "NSPanel", "NSView",
 objc2-core-foundation = "0.3.2"
 objc2-foundation = "0.3.2"
 objc2-quartz-core = "0.3.2"
-rodio = { version = "0.22.2", features = ["mp3"] }
 screencapturekit = { version = "1.5.4", features = ["macos_15_2"] }
 
 [target."cfg(target_os = \"linux\")".dependencies]
@@ -51,4 +51,3 @@ gtk = "0.18.2"
 x11rb = { version = "0.13.2", features = ["shape", "randr"] }
 
 [target."cfg(target_os = \"windows\")".dependencies]
-rodio = { version = "0.22.2", features = ["mp3"] }
