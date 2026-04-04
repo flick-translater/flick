@@ -353,8 +353,9 @@ fn update_shortcut(
 #[tauri::command]
 pub fn update_ai_settings(
     state: State<'_, AppState>,
-    ai_settings: AISettings,
+    mut ai_settings: AISettings,
 ) -> Result<AppSettings, FlickError> {
+    ai_settings.normalize();
     let updated = {
         let mut settings = state
             .settings

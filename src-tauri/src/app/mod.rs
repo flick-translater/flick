@@ -172,6 +172,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         })
         .unwrap_or_else(|| data_dir.join("ocr/onnx"));
     let mut settings = settings_store.load_settings()?;
+    settings.ai.normalize();
     let available_engines = available_ocr_engines();
     if !available_engines
         .iter()
