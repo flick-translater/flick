@@ -18,6 +18,8 @@ use std::{borrow::Cow, path::Path, sync::Arc};
 
 use anyhow::Context;
 use arboard::{Clipboard, ImageData};
+#[cfg(target_os = "linux")]
+use arboard::{LinuxClipboardKind, SetExtLinux};
 #[cfg(target_os = "macos")]
 use core_graphics::image::CGImage;
 use image::{ImageBuffer, Rgba};
@@ -174,18 +176,26 @@ impl ScreenCaptureService {
     }
 
     pub fn copy_to_clipboard(&self, image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> anyhow::Result<()> {
-        // Clipboard integration is shared, so it stays in the facade instead of per-platform code.
-        let mut clipboard = Clipboard::new().context("failed to access clipboard")?;
-        let width = usize::try_from(image.width()).context("invalid image width")?;
-        let height = usize::try_from(image.height()).context("invalid image height")?;
+        #[cfg(target_os = "linux")]
+        {
+            return copy_to_clipboard_linux(image);
+        }
 
-        clipboard
-            .set_image(ImageData {
-                width,
-                height,
-                bytes: Cow::Borrowed(image.as_raw()),
-            })
-            .context("failed to write screenshot to clipboard")
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut clipboard = Clipboard::new().context("failed to access clipboard")?;
+            let width = usize::try_from(image.width()).context("invalid image width")?;
+            let height = usize::try_from(image.height()).context("invalid image height")?;
+
+            clipboard
+                .set_image(ImageData {
+                    width,
+                    height,
+                    bytes: Cow::Borrowed(image.as_raw()),
+                })
+                .context("failed to write screenshot to clipboard")?;
+            Ok(())
+        }
     }
 
     pub fn save_png(
@@ -193,6 +203,36 @@ impl ScreenCaptureService {
         image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
         path: &Path,
     ) -> anyhow::Result<()> {
-        image.save(path).context("failed to save screenshot")
+        image.save(path).context("failed to save screenshot")?;
+        Ok(())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn copy_to_clipboard_linux(image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> anyhow::Result<()> {
+    let width = usize::try_from(image.width()).context("invalid image width")?;
+    let height = usize::try_from(image.height()).context("invalid image height")?;
+    let bytes = image.as_raw().clone();
+
+    std::thread::spawn(move || {
+        let run = || -> anyhow::Result<()> {
+            let mut clipboard = Clipboard::new().context("failed to access clipboard")?;
+            clipboard
+                .set()
+                .clipboard(LinuxClipboardKind::Clipboard)
+                .wait()
+                .image(ImageData {
+                    width,
+                    height,
+                    bytes: Cow::Owned(bytes),
+                })
+                .context("failed to write screenshot to clipboard")?;
+            Ok(())
+        };
+
+        if let Err(_error) = run() {
+            // Ignore background clipboard ownership failures silently in production.
+        }
+    });
+    Ok(())
 }

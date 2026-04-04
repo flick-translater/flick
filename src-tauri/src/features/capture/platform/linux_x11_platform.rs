@@ -9,7 +9,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use tauri::{AppHandle, Manager, State};
@@ -38,10 +38,13 @@ use crate::{
 use overlay::{OverlaySetup, OverlayVisuals, border_rects, collect_overlay_setup};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(16);
+const OVERLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(8);
+const POST_OVERLAY_SETTLE_DELAY: Duration = Duration::from_millis(80);
 const DRAG_THRESHOLD: f64 = 4.0;
-const BORDER_THICKNESS: u32 = 2;
-const DIM_ALPHA: f64 = 0.18;
+const BORDER_THICKNESS: u32 = 3;
+const DIM_ALPHA: f64 = 0.28;
 const ESCAPE_KEYCODE: u8 = 9;
+const BLUE_PIXEL: u32 = 0x4C8DFF;
 
 fn overlay_visuals() -> OverlayVisuals {
     OverlayVisuals {
@@ -74,6 +77,11 @@ struct NativeOverlay {
     border_gc: u32,
     opacity_atom: u32,
     desktop_origin: (i32, i32),
+}
+
+enum CaptureLoopOutcome {
+    Complete(SelectionRect),
+    Cancelled,
 }
 
 pub fn begin_interactive_capture_session(
@@ -135,7 +143,7 @@ pub fn cleanup_after_cancel(_app: &AppHandle, _state: &State<'_, AppState>) {
 }
 
 fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id: u64) {
-    let run = || -> Result<(), FlickError> {
+    let run = || -> Result<CaptureLoopOutcome, FlickError> {
         let (conn, screen_num) =
             x11rb::connect(None).map_err(|error| FlickError::Message(error.to_string()))?;
         let screen = &conn.setup().roots[screen_num];
@@ -175,11 +183,7 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
             .map_err(|error| FlickError::Message(error.to_string()))?
             .reply()
             .map_err(|error| FlickError::Message(error.to_string()))?;
-        if keyboard_status.status != GrabStatus::SUCCESS {
-            return Err(FlickError::Message(
-                "failed to grab keyboard for Linux capture".into(),
-            ));
-        }
+        let _keyboard_grabbed = keyboard_status.status == GrabStatus::SUCCESS;
 
         conn.flush()
             .map_err(|error| FlickError::Message(error.to_string()))?;
@@ -187,6 +191,8 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
         let stop = AtomicBool::new(false);
         let mut drag_anchor: Option<CursorPosition> = None;
         let mut dragging = false;
+        let mut last_drawn_selection: Option<SelectionRect> = None;
+        let mut last_overlay_update: Option<Instant> = None;
 
         while !stop.load(Ordering::Relaxed) {
             if !is_active_session(session_id) {
@@ -215,12 +221,22 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                                         None
                                     }
                                 };
-                                update_overlay_selection(
-                                    &conn,
-                                    &_cleanup.overlay,
-                                    &overlay,
+                                let should_redraw = !selection_option_eq(
+                                    last_drawn_selection.as_ref(),
                                     next_selection.as_ref(),
-                                )?;
+                                ) && last_overlay_update
+                                    .map(|instant| instant.elapsed() >= OVERLAY_UPDATE_INTERVAL)
+                                    .unwrap_or(true);
+                                if should_redraw {
+                                    update_overlay_selection(
+                                        &conn,
+                                        &_cleanup.overlay,
+                                        &overlay,
+                                        next_selection.as_ref(),
+                                    )?;
+                                    last_drawn_selection = next_selection;
+                                    last_overlay_update = Some(Instant::now());
+                                }
                             }
                         }
                     }
@@ -231,11 +247,15 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                                 y: event.root_y.into(),
                             });
                             dragging = false;
-                            update_overlay_selection(&conn, &_cleanup.overlay, &overlay, None)?;
+                            if last_drawn_selection.is_some() {
+                                update_overlay_selection(&conn, &_cleanup.overlay, &overlay, None)?;
+                                last_drawn_selection = None;
+                                last_overlay_update = Some(Instant::now());
+                            }
                         }
                         detail if detail == u8::from(ButtonIndex::M3) => {
-                            let _ = crate::features::capture::cancel_capture(&app);
                             stop.store(true, Ordering::Relaxed);
+                            return Ok(CaptureLoopOutcome::Cancelled);
                         }
                         _ => {}
                     },
@@ -259,23 +279,18 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                                 None
                             };
 
-                            if let Some(selection) = final_selection {
-                                let state = app.state::<AppState>();
-                                if let Err(error) = crate::features::capture::complete_capture(
-                                    &app, &state, selection,
-                                ) {
-                                    emit_capture_status(&app, "capture-error", error.to_string());
-                                }
-                            } else {
-                                let _ = crate::features::capture::cancel_capture(&app);
-                            }
                             stop.store(true, Ordering::Relaxed);
+                            if let Some(selection) = final_selection {
+                                return Ok(CaptureLoopOutcome::Complete(selection));
+                            }
+
+                            return Ok(CaptureLoopOutcome::Cancelled);
                         }
                     }
                     Event::KeyPress(event) => {
                         if event.detail == ESCAPE_KEYCODE {
-                            let _ = crate::features::capture::cancel_capture(&app);
                             stop.store(true, Ordering::Relaxed);
+                            return Ok(CaptureLoopOutcome::Cancelled);
                         }
                     }
                     _ => {}
@@ -285,13 +300,26 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
             thread::sleep(POLL_INTERVAL);
         }
 
-        Ok(())
+        Ok(CaptureLoopOutcome::Cancelled)
     };
 
-    if let Err(error) = run() {
-        if is_active_session(session_id) {
-            emit_capture_status(&app, "capture-error", error.to_string());
+    match run() {
+        Ok(CaptureLoopOutcome::Complete(selection)) => {
+            thread::sleep(POST_OVERLAY_SETTLE_DELAY);
+            let state = app.state::<AppState>();
+            if let Err(error) = crate::features::capture::complete_capture(&app, &state, selection)
+            {
+                emit_capture_status(&app, "capture-error", error.to_string());
+            }
+        }
+        Ok(CaptureLoopOutcome::Cancelled) => {
             let _ = crate::features::capture::cancel_capture(&app);
+        }
+        Err(error) => {
+            if is_active_session(session_id) {
+                emit_capture_status(&app, "capture-error", error.to_string());
+                let _ = crate::features::capture::cancel_capture(&app);
+            }
         }
     }
 }
@@ -328,7 +356,7 @@ fn create_overlay(
         border_gc,
         root,
         &CreateGCAux::new()
-            .foreground(screen.white_pixel)
+            .foreground(BLUE_PIXEL)
             .graphics_exposures(0),
     )
     .map_err(|error| FlickError::Message(error.to_string()))?;
@@ -425,7 +453,8 @@ fn create_border_windows(
             0,
             &CreateWindowAux::new()
                 .override_redirect(1)
-                .background_pixel(screen.white_pixel),
+                .background_pixel(BLUE_PIXEL)
+                .border_pixel(screen.black_pixel),
         )
         .map_err(|error| FlickError::Message(error.to_string()))?;
         conn.unmap_window(window)
@@ -502,6 +531,19 @@ fn update_overlay_selection(
     let _ = &native_overlay.opacity_atom;
     let _ = &native_overlay.desktop_origin;
     Ok(())
+}
+
+fn selection_option_eq(left: Option<&SelectionRect>, right: Option<&SelectionRect>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            left.x == right.x
+                && left.y == right.y
+                && left.width == right.width
+                && left.height == right.height
+        }
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 fn full_window_rectangles(bounds: &SelectionRect) -> Vec<Rectangle> {
