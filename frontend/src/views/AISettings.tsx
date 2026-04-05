@@ -98,8 +98,7 @@ export default function AISettings() {
   };
 
   const updateCurrentSettings = (updates: Partial<ProviderSettings>) => {
-    const provider = selectedProvider;
-    const key = provider as keyof AISettings;
+    const key = selectedProvider as keyof AISettings;
     if (key === 'active_provider') return;
     setAiSettings(prev => {
       const prevSettings = prev[key] as ProviderSettings | undefined;
