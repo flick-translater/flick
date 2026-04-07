@@ -126,6 +126,10 @@ pub fn hide_translate_window_before_hide(app: &AppHandle) {
 }
 
 pub fn hide_translate_window_after_hide(app: &AppHandle) {
+    if is_current_app_frontmost() {
+        return;
+    }
+
     if let Some(main_window) = app.get_webview_window("main") {
         let is_visible = main_window.is_visible().unwrap_or(false);
         if !is_visible {
@@ -167,13 +171,11 @@ fn restore_previous_frontmost_app(app: &AppHandle) {
         return;
     };
 
-    let current_app = NSRunningApplication::currentApplication();
-    let current_pid = current_app.processIdentifier();
     let frontmost_pid = NSWorkspace::sharedWorkspace()
         .frontmostApplication()
         .map(|frontmost| frontmost.processIdentifier());
 
-    if frontmost_pid.is_some_and(|pid| pid > 0 && pid != current_pid) {
+    if frontmost_pid.is_some_and(|pid| pid > 0) {
         return;
     }
 
@@ -182,4 +184,12 @@ fn restore_previous_frontmost_app(app: &AppHandle) {
     {
         let _ = previous_app.activateWithOptions(NSApplicationActivationOptions(0));
     }
+}
+
+fn is_current_app_frontmost() -> bool {
+    let current_pid = NSRunningApplication::currentApplication().processIdentifier();
+    NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map(|frontmost| frontmost.processIdentifier())
+        .is_some_and(|pid| pid > 0 && pid == current_pid)
 }
