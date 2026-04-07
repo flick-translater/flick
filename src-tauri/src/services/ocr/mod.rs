@@ -26,13 +26,13 @@ pub trait OcrService: Send + Sync {
     fn run_with_data(&self, image_data: &[u8]) -> anyhow::Result<OcrResponse>;
 }
 
-pub fn create_ocr_service(engine_id: &str, _model_dir: &Path) -> Arc<dyn OcrService> {
+pub fn create_ocr_service(engine_id: &str, model_dir: &Path) -> Arc<dyn OcrService> {
     #[cfg(target_os = "macos")]
     {
         match engine_id {
             "mock" => Arc::new(MockOcrService),
             #[cfg(target_arch = "aarch64")]
-            "onnx" => Arc::new(OnnxRuntimeOcrService::new(_model_dir)),
+            "onnx" => Arc::new(OnnxRuntimeOcrService::new(model_dir)),
             _ => Arc::new(MacosVisionOcrService),
         }
     }
