@@ -3,7 +3,6 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::anyhow;
 use once_cell::sync::Lazy;
 
 use super::OcrService;

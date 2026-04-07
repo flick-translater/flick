@@ -11,15 +11,14 @@ use crate::{
     models::AppSettings,
 };
 
-use super::{macos_hotkeys, macos_permissions};
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
 
 pub fn configure_app_setup(app: &mut App) {
     app.set_activation_policy(ActivationPolicy::Accessory);
-    let _ = macos_permissions::request_startup_permissions();
+    let _ = crate::app::macos_permissions::request_startup_permissions();
 }
 
-pub fn handle_run_event<R: Runtime>(app: &AppHandle<R>, event: &RunEvent) {
+pub fn handle_run_event(app: &AppHandle, event: &RunEvent) {
     if let RunEvent::Reopen { .. } = event {
         let state = app.state::<AppState>();
         if let Ok(mut suppress) = state.suppress_next_reopen.lock() {
@@ -33,9 +32,9 @@ pub fn handle_run_event<R: Runtime>(app: &AppHandle<R>, event: &RunEvent) {
 }
 
 pub fn register_platform_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
-    let permissions = macos_permissions::current_permission_status();
+    let permissions = crate::app::macos_permissions::current_permission_status();
     if permissions.hotkeys_ready() {
-        macos_hotkeys::install_hotkey_tap(app)?;
+        crate::app::macos_hotkeys::install_hotkey_tap(app)?;
     } else {
         eprintln!(
             "skipping macOS hotkey event tap during startup because accessibility/input monitoring permissions are not ready"
@@ -46,7 +45,7 @@ pub fn register_platform_shortcuts(app: &AppHandle) -> anyhow::Result<()> {
 
 pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
     let _ = app;
-    macos_hotkeys::apply_shortcuts(
+    crate::app::macos_hotkeys::apply_shortcuts(
         settings.capture_shortcut.as_str(),
         settings.translate_shortcut.as_str(),
         settings.selected_translate_shortcut.as_str(),
@@ -83,7 +82,7 @@ pub fn set_shortcut_recording(
 ) -> Result<(), FlickError> {
     let _ = app;
     let _ = state;
-    macos_hotkeys::set_recording_paused(recording)
+    crate::app::macos_hotkeys::set_recording_paused(recording)
         .map_err(|error| FlickError::Message(format!("切换快捷键录制状态失败: {error}")))
 }
 

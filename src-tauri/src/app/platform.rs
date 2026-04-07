@@ -29,7 +29,7 @@ pub fn configure_app_setup(app: &mut App) {
     linux_platform::configure_app_setup(app);
 }
 
-pub fn handle_run_event<R: Runtime>(app: &AppHandle<R>, event: &RunEvent) {
+pub fn handle_run_event(app: &AppHandle, event: &RunEvent) {
     #[cfg(target_os = "macos")]
     macos_platform::handle_run_event(app, event);
 
