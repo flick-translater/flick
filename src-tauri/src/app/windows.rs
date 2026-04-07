@@ -70,6 +70,7 @@ pub fn show_translate_window(app: &AppHandle) -> tauri::Result<()> {
     let window = ensure_translate_window(app)?;
     let pinned = window.is_always_on_top().unwrap_or(false);
 
+    #[cfg(not(target_os = "linux"))]
     if !pinned {
         let _ = window.center();
     }
