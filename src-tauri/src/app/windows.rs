@@ -108,28 +108,38 @@ pub fn hide_translate_window(app: &AppHandle) -> tauri::Result<()> {
         let _ = state.tts_service.stop();
     }
 
-    #[cfg(target_os = "macos")]
-    restore_previous_frontmost_app(app);
-
     if let Some(window) = app.get_webview_window(TRANSLATE_WINDOW_LABEL) {
         window.hide()?;
     }
 
     #[cfg(target_os = "macos")]
     {
-        if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-            let is_visible = main_window.is_visible().unwrap_or(false);
-            if !is_visible {
-                let _ = app.set_activation_policy(ActivationPolicy::Accessory);
-                let _ = app.hide();
-            }
-        } else {
+        if should_keep_app_active_after_translate_close(app) {
+            return Ok(());
+        }
+
+        restore_previous_frontmost_app(app);
+
+        if app.get_webview_window(MAIN_WINDOW_LABEL).is_none() {
             let _ = app.set_activation_policy(ActivationPolicy::Accessory);
             let _ = app.hide();
+            return Ok(());
         }
+
+        let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+        let _ = app.hide();
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn should_keep_app_active_after_translate_close(app: &AppHandle) -> bool {
+    let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return false;
+    };
+
+    main_window.is_visible().unwrap_or(false) || main_window.is_focused().unwrap_or(false)
 }
 
 #[cfg(target_os = "macos")]
