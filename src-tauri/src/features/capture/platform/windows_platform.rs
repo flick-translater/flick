@@ -9,7 +9,7 @@ use std::{
 
 use arboard::Clipboard;
 use image::{ImageBuffer, Rgba};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber;
 
 use crate::{
