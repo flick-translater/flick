@@ -1,16 +1,20 @@
 //! Windows-specific capture-session behavior.
 
+#[path = "windows_frozen_overlay_platform.rs"]
+mod frozen_overlay;
+#[path = "windows_overlay_platform.rs"]
+mod overlay;
+
 use std::{
-    process::Command,
     sync::{Mutex, OnceLock},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use arboard::Clipboard;
-use image::{ImageBuffer, Rgba};
 use tauri::{AppHandle, Manager, State};
-use windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON, VK_RBUTTON,
+};
 
 use crate::{
     app::{AppState, windows::emit_capture_status},
@@ -18,19 +22,43 @@ use crate::{
     models::SelectionRect,
     services::CachedScreenCapture,
 };
+use overlay::{OverlayVisuals, collect_overlay_setup};
 
-const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(120);
-const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
+const POLL_INTERVAL: Duration = Duration::from_millis(8);
+const DRAG_THRESHOLD: f64 = 4.0;
+const BORDER_THICKNESS: u32 = 2;
+const DIM_ALPHA: f32 = 0.22;
+const BORDER_COLOR: [u8; 4] = [0, 102, 204, 255];
+const CROSSHAIR_COLOR: [u8; 4] = [0, 102, 204, 255];
+const CROSSHAIR_DASH_LENGTH: u32 = 8;
+const CROSSHAIR_GAP_LENGTH: u32 = 6;
 
-#[derive(Debug, Default)]
-struct WindowsCaptureRuntime {
-    active_session_id: Option<u64>,
-    next_session_id: u64,
+fn overlay_visuals() -> OverlayVisuals {
+    OverlayVisuals {
+        dim_alpha: DIM_ALPHA,
+        border_thickness: BORDER_THICKNESS,
+        border_color: BORDER_COLOR,
+        crosshair_color: CROSSHAIR_COLOR,
+        crosshair_dash_length: CROSSHAIR_DASH_LENGTH,
+        crosshair_gap_length: CROSSHAIR_GAP_LENGTH,
+    }
 }
 
-fn capture_runtime() -> &'static Mutex<WindowsCaptureRuntime> {
-    static RUNTIME: OnceLock<Mutex<WindowsCaptureRuntime>> = OnceLock::new();
-    RUNTIME.get_or_init(|| Mutex::new(WindowsCaptureRuntime::default()))
+#[derive(Debug, Clone)]
+struct CursorPosition {
+    x: f64,
+    y: f64,
+}
+
+#[derive(Debug, Default)]
+struct NativeCaptureRuntime {
+    next_session_id: u64,
+    active_session_id: Option<u64>,
+}
+
+fn native_runtime() -> &'static Mutex<NativeCaptureRuntime> {
+    static RUNTIME: OnceLock<Mutex<NativeCaptureRuntime>> = OnceLock::new();
+    RUNTIME.get_or_init(|| Mutex::new(NativeCaptureRuntime::default()))
 }
 
 pub fn begin_interactive_capture_session(
@@ -38,7 +66,7 @@ pub fn begin_interactive_capture_session(
     state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
     let session_id = {
-        let mut runtime = capture_runtime()
+        let mut runtime = native_runtime()
             .lock()
             .map_err(|_| FlickError::Message("windows capture runtime mutex poisoned".into()))?;
         if runtime.active_session_id.is_some() {
@@ -49,20 +77,13 @@ pub fn begin_interactive_capture_session(
         runtime.next_session_id
     };
 
-    {
-        let mut snapshots = state
-            .capture_snapshots
-            .lock()
-            .map_err(|_| FlickError::Message("capture snapshot mutex poisoned".into()))?;
-        snapshots.clear();
+    if let Err(error) = cache_frozen_desktop_snapshots(app, state) {
+        clear_active_session();
+        return Err(error);
     }
 
-    let initial_sequence = clipboard_sequence_number();
-    launch_system_snipping_ui()?;
-
     let app_handle = app.clone();
-    thread::spawn(move || watch_clipboard_for_capture(app_handle, session_id, initial_sequence));
-
+    thread::spawn(move || run_native_capture_session(app_handle, session_id));
     Ok(())
 }
 
@@ -78,10 +99,11 @@ pub fn prepare_for_capture_session(
 }
 
 pub fn complete_ui_before_capture_processing(
-    _app: &AppHandle,
+    app: &AppHandle,
     state: &State<'_, AppState>,
 ) -> Result<Vec<CachedScreenCapture>, FlickError> {
     clear_active_session();
+    frozen_overlay::hide_native_overlay(app)?;
     let mut snapshots = state
         .capture_snapshots
         .lock()
@@ -90,120 +112,229 @@ pub fn complete_ui_before_capture_processing(
 }
 
 pub fn finalize_capture_session(
-    _app: &AppHandle,
+    app: &AppHandle,
     _state: &State<'_, AppState>,
     _restore_previous_frontmost: bool,
 ) {
+    let _ = frozen_overlay::hide_native_overlay(app);
 }
 
 pub fn restore_after_failed_capture(
-    _app: &AppHandle,
-    _state: &State<'_, AppState>,
-    _restore_previous_frontmost: bool,
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    restore_previous_frontmost: bool,
 ) {
-    clear_active_session();
+    finalize_capture_session(app, state, restore_previous_frontmost);
 }
 
-pub fn cleanup_after_cancel(_app: &AppHandle, state: &State<'_, AppState>) {
+pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
     clear_active_session();
+    let _ = frozen_overlay::hide_native_overlay(app);
     if let Ok(mut snapshots) = state.capture_snapshots.lock() {
         snapshots.clear();
     }
 }
 
-fn watch_clipboard_for_capture(app: AppHandle, session_id: u64, initial_sequence: u32) {
-    let deadline = Instant::now() + CAPTURE_TIMEOUT;
+fn run_native_capture_session(app: AppHandle, session_id: u64) {
+    if !is_active_session(session_id) {
+        return;
+    }
 
-    while session_is_active(session_id) && Instant::now() < deadline {
-        let current_sequence = clipboard_sequence_number();
-        if current_sequence != initial_sequence {
-            if let Some(image) = clipboard_image() {
-                if let Err(error) = cache_clipboard_capture(&app, &image) {
-                    clear_active_session();
-                    emit_capture_status(&app, "capture-error", error.to_string());
-                    return;
-                }
+    let snapshots = match app
+        .state::<AppState>()
+        .capture_snapshots
+        .lock()
+        .map(|guard| guard.clone())
+    {
+        Ok(snapshots) if !snapshots.is_empty() => snapshots,
+        Ok(_) => {
+            emit_capture_status(&app, "capture-error", "missing frozen desktop snapshots");
+            let _ = crate::features::capture::cancel_capture(&app);
+            return;
+        }
+        Err(_) => {
+            emit_capture_status(&app, "capture-error", "capture snapshot mutex poisoned");
+            let _ = crate::features::capture::cancel_capture(&app);
+            return;
+        }
+    };
 
-                let selection = SelectionRect {
-                    x: 0,
-                    y: 0,
-                    width: image.width(),
-                    height: image.height(),
-                };
-                let state = app.state::<AppState>();
-                if let Err(error) =
-                    crate::features::capture::complete_capture(&app, &state, selection)
-                {
-                    clear_active_session();
-                    emit_capture_status(&app, "capture-error", error.to_string());
-                }
-                return;
-            }
+    if let Err(error) = frozen_overlay::show_native_overlay(&snapshots, overlay_visuals()) {
+        if is_active_session(session_id) {
+            emit_capture_status(&app, "capture-error", error.to_string());
+            let _ = crate::features::capture::cancel_capture(&app);
+        }
+        return;
+    }
+
+    run_native_capture_loop(app, session_id);
+}
+
+fn run_native_capture_loop(app: AppHandle, session_id: u64) {
+    let mut drag_anchor: Option<CursorPosition> = None;
+    let mut dragging = false;
+    let mut active_selection: Option<SelectionRect> = None;
+    let mut left_was_down = false;
+    let mut right_was_down = false;
+
+    loop {
+        frozen_overlay::pump_native_overlay_messages();
+
+        if !is_active_session(session_id) {
+            break;
         }
 
-        thread::sleep(CLIPBOARD_POLL_INTERVAL);
+        if key_is_down(VK_ESCAPE.into()) {
+            let _ = crate::features::capture::cancel_capture(&app);
+            break;
+        }
+
+        let cursor = match current_global_cursor_position() {
+            Ok(cursor) => cursor,
+            Err(_) => {
+                thread::sleep(POLL_INTERVAL);
+                continue;
+            }
+        };
+
+        let left_down = key_is_down(VK_LBUTTON.into());
+        let right_down = key_is_down(VK_RBUTTON.into());
+
+        if right_down && !right_was_down {
+            let _ = crate::features::capture::cancel_capture(&app);
+            break;
+        }
+
+        if left_down && !left_was_down {
+            drag_anchor = Some(cursor.clone());
+            dragging = false;
+            active_selection = None;
+        }
+
+        if left_down {
+            if let Some(anchor) = drag_anchor.as_ref() {
+                let drag_rect = selection_from_points(anchor, &cursor);
+                if is_selection_large_enough(&drag_rect, DRAG_THRESHOLD) {
+                    dragging = true;
+                    active_selection = Some(normalize_selection(drag_rect));
+                } else if active_selection.is_some() {
+                    active_selection = None;
+                }
+                let _ = frozen_overlay::update_highlight(&app, active_selection.clone());
+            }
+        } else if active_selection.take().is_some() {
+            let _ = frozen_overlay::update_highlight(&app, None);
+        }
+
+        if left_down {
+            let _ = frozen_overlay::update_crosshair(&app, None);
+        } else {
+            let _ = frozen_overlay::update_crosshair(&app, Some((cursor.x, cursor.y)));
+        }
+
+        if !left_down && left_was_down {
+            clear_active_session();
+            let final_selection = if dragging {
+                drag_anchor
+                    .as_ref()
+                    .map(|anchor| normalize_selection(selection_from_points(anchor, &cursor)))
+                    .filter(|selection| selection.width >= 2 && selection.height >= 2)
+            } else {
+                None
+            };
+
+            if let Some(selection) = final_selection {
+                let state = app.state::<AppState>();
+                if let Err(error) = crate::features::capture::complete_capture(&app, &state, selection)
+                {
+                    emit_capture_status(&app, "capture-error", error.to_string());
+                }
+            } else {
+                let _ = crate::features::capture::cancel_capture(&app);
+            }
+            break;
+        }
+
+        left_was_down = left_down;
+        right_was_down = right_down;
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn current_global_cursor_position() -> Result<CursorPosition, FlickError> {
+    let mut point = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+    let ok = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut point) };
+    if ok == 0 {
+        return Err(FlickError::Message("failed to read cursor position".into()));
     }
 
-    if session_is_active(session_id) {
-        let _ = crate::features::capture::cancel_capture(&app);
+    Ok(CursorPosition {
+        x: point.x as f64,
+        y: point.y as f64,
+    })
+}
+
+fn selection_from_points(start: &CursorPosition, end: &CursorPosition) -> SelectionRect {
+    let x = start.x.min(end.x);
+    let y = start.y.min(end.y);
+    let width = (start.x - end.x).abs();
+    let height = (start.y - end.y).abs();
+
+    SelectionRect {
+        x: x.floor() as i32,
+        y: y.floor() as i32,
+        width: width.ceil() as u32,
+        height: height.ceil() as u32,
     }
 }
 
-fn launch_system_snipping_ui() -> Result<(), FlickError> {
-    Command::new("explorer.exe")
-        .arg("ms-screenclip:")
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| {
-            FlickError::Message(format!("failed to launch Windows snipping UI: {error}"))
-        })
+fn normalize_selection(selection: SelectionRect) -> SelectionRect {
+    SelectionRect {
+        x: selection.x,
+        y: selection.y,
+        width: selection.width.max(1),
+        height: selection.height.max(1),
+    }
 }
 
-fn clipboard_sequence_number() -> u32 {
-    unsafe { GetClipboardSequenceNumber() }
+fn is_selection_large_enough(selection: &SelectionRect, threshold: f64) -> bool {
+    selection.width as f64 >= threshold || selection.height as f64 >= threshold
 }
 
-fn clipboard_image() -> Option<ImageBuffer<Rgba<u8>, Vec<u8>>> {
-    let mut clipboard = Clipboard::new().ok()?;
-    let image = clipboard.get_image().ok()?;
-    let width = u32::try_from(image.width).ok()?;
-    let height = u32::try_from(image.height).ok()?;
-    let bytes = image.bytes.into_owned();
-    ImageBuffer::from_vec(width, height, bytes)
-}
-
-fn cache_clipboard_capture(
+fn cache_frozen_desktop_snapshots(
     app: &AppHandle,
-    image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+    state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
-    let snapshot = CachedScreenCapture::new(
-        SelectionRect {
-            x: 0,
-            y: 0,
-            width: image.width(),
-            height: image.height(),
-        },
-        image.clone(),
-    );
-    let state = app.state::<AppState>();
-    let mut snapshots = state
+    let overlay = collect_overlay_setup(app)?;
+    let snapshots = overlay
+        .geometry
+        .iter()
+        .map(frozen_overlay::capture_desktop_snapshot)
+        .collect::<anyhow::Result<Vec<_>>>()
+        .map_err(FlickError::from)?;
+
+    let mut guard = state
         .capture_snapshots
         .lock()
         .map_err(|_| FlickError::Message("capture snapshot mutex poisoned".into()))?;
-    snapshots.clear();
-    snapshots.push(snapshot);
+    guard.clear();
+    guard.extend(snapshots);
     Ok(())
 }
 
-fn session_is_active(session_id: u64) -> bool {
-    capture_runtime()
-        .lock()
-        .map(|runtime| runtime.active_session_id == Some(session_id))
-        .unwrap_or(false)
+fn key_is_down(vk: i32) -> bool {
+    unsafe { (GetAsyncKeyState(vk) as u16 & 0x8000) != 0 }
 }
 
 fn clear_active_session() {
-    if let Ok(mut runtime) = capture_runtime().lock() {
+    if let Ok(mut runtime) = native_runtime().lock() {
         runtime.active_session_id = None;
     }
+}
+
+fn is_active_session(session_id: u64) -> bool {
+    native_runtime()
+        .lock()
+        .map(|runtime| runtime.active_session_id == Some(session_id))
+        .unwrap_or(false)
 }

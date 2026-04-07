@@ -21,8 +21,8 @@ use x11rb::{
         shape::{ConnectionExt as ShapeExt, SK, SO},
         xproto::{
             AtomEnum, ButtonIndex, ClipOrdering, ConfigureWindowAux, ConnectionExt, CreateGCAux,
-            CreateWindowAux, EventMask, GrabMode, GrabStatus, KeyButMask, Rectangle, StackMode,
-            Window, WindowClass,
+            CreateWindowAux, EventMask, GrabMode, GrabStatus, Gx, KeyButMask, LineStyle,
+            Rectangle, StackMode, Window, WindowClass,
         },
     },
     rust_connection::RustConnection,
@@ -44,7 +44,10 @@ const DRAG_THRESHOLD: f64 = 4.0;
 const BORDER_THICKNESS: u32 = 3;
 const DIM_ALPHA: f64 = 0.28;
 const ESCAPE_KEYCODE: u8 = 9;
-const BLUE_PIXEL: u32 = 0x4C8DFF;
+const BLUE_PIXEL: u32 = 0x0066CC;
+const CROSSHAIR_THICKNESS: u32 = 1;
+const CROSSHAIR_DASH: u8 = 8;
+const CROSSHAIR_GAP: u8 = 6;
 
 fn overlay_visuals() -> OverlayVisuals {
     OverlayVisuals {
@@ -73,8 +76,11 @@ fn native_runtime() -> &'static Mutex<NativeCaptureRuntime> {
 struct NativeOverlay {
     windows: Vec<Window>,
     border_windows: [Window; 4],
+    crosshair_horizontal_windows: Vec<Window>,
+    crosshair_vertical_windows: Vec<Window>,
     dim_gc: u32,
     border_gc: u32,
+    crosshair_gc: u32,
     opacity_atom: u32,
     desktop_origin: (i32, i32),
 }
@@ -193,6 +199,7 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
         let mut dragging = false;
         let mut last_drawn_selection: Option<SelectionRect> = None;
         let mut last_overlay_update: Option<Instant> = None;
+        let mut last_cursor = CursorPosition::default();
 
         while !stop.load(Ordering::Relaxed) {
             if !is_active_session(session_id) {
@@ -209,6 +216,7 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                             x: event.root_x.into(),
                             y: event.root_y.into(),
                         };
+                        last_cursor = cursor.clone();
                         if event.state.contains(KeyButMask::BUTTON1) {
                             if let Some(anchor) = drag_anchor.as_ref() {
                                 let next_selection = {
@@ -239,6 +247,13 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                                 }
                             }
                         }
+                        update_overlay_crosshair(
+                            &conn,
+                            &_cleanup.overlay,
+                            &overlay,
+                            &cursor,
+                            event.state.contains(KeyButMask::BUTTON1),
+                        )?;
                     }
                     Event::ButtonPress(event) => match event.detail {
                         detail if detail == u8::from(ButtonIndex::M1) => {
@@ -246,12 +261,23 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                                 x: event.root_x.into(),
                                 y: event.root_y.into(),
                             });
+                            last_cursor = CursorPosition {
+                                x: event.root_x.into(),
+                                y: event.root_y.into(),
+                            };
                             dragging = false;
                             if last_drawn_selection.is_some() {
                                 update_overlay_selection(&conn, &_cleanup.overlay, &overlay, None)?;
                                 last_drawn_selection = None;
                                 last_overlay_update = Some(Instant::now());
                             }
+                            update_overlay_crosshair(
+                                &conn,
+                                &_cleanup.overlay,
+                                &overlay,
+                                &last_cursor,
+                                true,
+                            )?;
                         }
                         detail if detail == u8::from(ButtonIndex::M3) => {
                             stop.store(true, Ordering::Relaxed);
@@ -266,6 +292,7 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                                 x: event.root_x.into(),
                                 y: event.root_y.into(),
                             };
+                            last_cursor = cursor.clone();
                             let final_selection = if dragging {
                                 drag_anchor
                                     .as_ref()
@@ -280,6 +307,13 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                             };
 
                             stop.store(true, Ordering::Relaxed);
+                            update_overlay_crosshair(
+                                &conn,
+                                &_cleanup.overlay,
+                                &overlay,
+                                &last_cursor,
+                                false,
+                            )?;
                             if let Some(selection) = final_selection {
                                 return Ok(CaptureLoopOutcome::Complete(selection));
                             }
@@ -337,6 +371,9 @@ fn create_overlay(
     let border_gc = conn
         .generate_id()
         .map_err(|error| FlickError::Message(error.to_string()))?;
+    let crosshair_gc = conn
+        .generate_id()
+        .map_err(|error| FlickError::Message(error.to_string()))?;
     let opacity_atom = conn
         .intern_atom(false, b"_NET_WM_WINDOW_OPACITY")
         .map_err(|error| FlickError::Message(error.to_string()))?
@@ -360,6 +397,19 @@ fn create_overlay(
             .graphics_exposures(0),
     )
     .map_err(|error| FlickError::Message(error.to_string()))?;
+    conn.create_gc(
+        crosshair_gc,
+        root,
+        &CreateGCAux::new()
+            .foreground(BLUE_PIXEL)
+            .graphics_exposures(0)
+            .line_style(LineStyle::ON_OFF_DASH)
+            .line_width(CROSSHAIR_THICKNESS)
+            .function(Gx::COPY),
+    )
+    .map_err(|error| FlickError::Message(error.to_string()))?;
+    conn.set_dashes(crosshair_gc, 0, &[CROSSHAIR_DASH, CROSSHAIR_GAP])
+        .map_err(|error| FlickError::Message(error.to_string()))?;
 
     let opacity = ((u32::MAX as f64) * visuals.dim_alpha.clamp(0.0, 1.0)).round() as u32;
     let mut windows = Vec::with_capacity(overlay.geometry.len());
@@ -415,14 +465,19 @@ fn create_overlay(
     }
 
     let border_windows = create_border_windows(conn, root, visuals.border_thickness)?;
+    let (crosshair_horizontal_windows, crosshair_vertical_windows) =
+        create_crosshair_windows(conn, root, &overlay.geometry)?;
     conn.flush()
         .map_err(|error| FlickError::Message(error.to_string()))?;
 
     Ok(NativeOverlay {
         windows,
         border_windows,
+        crosshair_horizontal_windows,
+        crosshair_vertical_windows,
         dim_gc,
         border_gc,
+        crosshair_gc,
         opacity_atom,
         desktop_origin: (overlay.desktop_bounds.x, overlay.desktop_bounds.y),
     })
@@ -463,6 +518,65 @@ fn create_border_windows(
     }
 
     Ok([ids[0], ids[1], ids[2], ids[3]])
+}
+
+fn create_crosshair_windows(
+    conn: &RustConnection,
+    root: Window,
+    geometry: &[SelectionRect],
+) -> Result<(Vec<Window>, Vec<Window>), FlickError> {
+    let mut horizontal = Vec::with_capacity(geometry.len());
+    let mut vertical = Vec::with_capacity(geometry.len());
+
+    for bounds in geometry {
+        let horizontal_window = conn
+            .generate_id()
+            .map_err(|error| FlickError::Message(error.to_string()))?;
+        conn.create_window(
+            COPY_DEPTH_FROM_PARENT,
+            horizontal_window,
+            root,
+            bounds.x as i16,
+            bounds.y as i16,
+            bounds.width as u16,
+            CROSSHAIR_THICKNESS as u16,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new()
+                .override_redirect(1)
+                .background_pixel(0),
+        )
+        .map_err(|error| FlickError::Message(error.to_string()))?;
+        conn.unmap_window(horizontal_window)
+            .map_err(|error| FlickError::Message(error.to_string()))?;
+        horizontal.push(horizontal_window);
+
+        let vertical_window = conn
+            .generate_id()
+            .map_err(|error| FlickError::Message(error.to_string()))?;
+        conn.create_window(
+            COPY_DEPTH_FROM_PARENT,
+            vertical_window,
+            root,
+            bounds.x as i16,
+            bounds.y as i16,
+            CROSSHAIR_THICKNESS as u16,
+            bounds.height as u16,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new()
+                .override_redirect(1)
+                .background_pixel(0),
+        )
+        .map_err(|error| FlickError::Message(error.to_string()))?;
+        conn.unmap_window(vertical_window)
+            .map_err(|error| FlickError::Message(error.to_string()))?;
+        vertical.push(vertical_window);
+    }
+
+    Ok((horizontal, vertical))
 }
 
 fn update_overlay_selection(
@@ -530,6 +644,115 @@ fn update_overlay_selection(
         .map_err(|error| FlickError::Message(error.to_string()))?;
     let _ = &native_overlay.opacity_atom;
     let _ = &native_overlay.desktop_origin;
+    Ok(())
+}
+
+fn update_overlay_crosshair(
+    conn: &RustConnection,
+    native_overlay: &NativeOverlay,
+    overlay: &OverlaySetup,
+    cursor: &CursorPosition,
+    dragging: bool,
+) -> Result<(), FlickError> {
+    for ((bounds, horizontal_window), vertical_window) in overlay
+        .geometry
+        .iter()
+        .zip(native_overlay.crosshair_horizontal_windows.iter())
+        .zip(native_overlay.crosshair_vertical_windows.iter())
+    {
+        if dragging {
+            conn.unmap_window(*horizontal_window)
+                .map_err(|error| FlickError::Message(error.to_string()))?;
+            conn.unmap_window(*vertical_window)
+                .map_err(|error| FlickError::Message(error.to_string()))?;
+            continue;
+        }
+
+        let within_bounds = cursor.x >= bounds.x
+            && cursor.x < bounds.x + bounds.width as i32
+            && cursor.y >= bounds.y
+            && cursor.y < bounds.y + bounds.height as i32;
+        if !within_bounds {
+            conn.unmap_window(*horizontal_window)
+                .map_err(|error| FlickError::Message(error.to_string()))?;
+            conn.unmap_window(*vertical_window)
+                .map_err(|error| FlickError::Message(error.to_string()))?;
+            continue;
+        }
+
+        conn.configure_window(
+            *horizontal_window,
+            &ConfigureWindowAux::new()
+                .x(bounds.x)
+                .y(cursor.y)
+                .width(bounds.width)
+                .height(CROSSHAIR_THICKNESS)
+                .stack_mode(StackMode::ABOVE),
+        )
+        .map_err(|error| FlickError::Message(error.to_string()))?;
+        conn.map_window(*horizontal_window)
+            .map_err(|error| FlickError::Message(error.to_string()))?;
+        conn.clear_area(
+            false,
+            *horizontal_window,
+            0,
+            0,
+            bounds.width as u16,
+            CROSSHAIR_THICKNESS as u16,
+        )
+        .map_err(|error| FlickError::Message(error.to_string()))?;
+        conn.poly_line(
+            x11rb::protocol::xproto::CoordMode::ORIGIN,
+            *horizontal_window,
+            native_overlay.crosshair_gc,
+            &[
+                x11rb::protocol::xproto::Point { x: 0, y: 0 },
+                x11rb::protocol::xproto::Point {
+                    x: bounds.width.min(i16::MAX as u32) as i16,
+                    y: 0,
+                },
+            ],
+        )
+        .map_err(|error| FlickError::Message(error.to_string()))?;
+
+        conn.configure_window(
+            *vertical_window,
+            &ConfigureWindowAux::new()
+                .x(cursor.x)
+                .y(bounds.y)
+                .width(CROSSHAIR_THICKNESS)
+                .height(bounds.height)
+                .stack_mode(StackMode::ABOVE),
+        )
+        .map_err(|error| FlickError::Message(error.to_string()))?;
+        conn.map_window(*vertical_window)
+            .map_err(|error| FlickError::Message(error.to_string()))?;
+        conn.clear_area(
+            false,
+            *vertical_window,
+            0,
+            0,
+            CROSSHAIR_THICKNESS as u16,
+            bounds.height as u16,
+        )
+        .map_err(|error| FlickError::Message(error.to_string()))?;
+        conn.poly_line(
+            x11rb::protocol::xproto::CoordMode::ORIGIN,
+            *vertical_window,
+            native_overlay.crosshair_gc,
+            &[
+                x11rb::protocol::xproto::Point { x: 0, y: 0 },
+                x11rb::protocol::xproto::Point {
+                    x: 0,
+                    y: bounds.height.min(i16::MAX as u32) as i16,
+                },
+            ],
+        )
+        .map_err(|error| FlickError::Message(error.to_string()))?;
+    }
+
+    conn.flush()
+        .map_err(|error| FlickError::Message(error.to_string()))?;
     Ok(())
 }
 
@@ -693,8 +916,15 @@ impl Drop for OverlayCleanup<'_> {
         for window in self.overlay.border_windows {
             let _ = self.conn.destroy_window(window);
         }
+        for window in self.overlay.crosshair_horizontal_windows.iter().copied() {
+            let _ = self.conn.destroy_window(window);
+        }
+        for window in self.overlay.crosshair_vertical_windows.iter().copied() {
+            let _ = self.conn.destroy_window(window);
+        }
         let _ = self.conn.free_gc(self.overlay.dim_gc);
         let _ = self.conn.free_gc(self.overlay.border_gc);
+        let _ = self.conn.free_gc(self.overlay.crosshair_gc);
         let _ = self
             .conn
             .configure_window(self.root, &ConfigureWindowAux::new());

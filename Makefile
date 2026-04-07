@@ -1,15 +1,35 @@
+ifeq ($(OS),Windows_NT)
+SHELL := powershell.exe
+.SHELLFLAGS := -NoProfile -Command
+TAURI_CLI := .\frontend\node_modules\.bin\tauri.cmd
+WINDOWS_TARGET_DIR := target\release
+WINDOWS_BUNDLE_DIR := $(WINDOWS_TARGET_DIR)\bundle
+WINDOWS_MSI_DIR := $(WINDOWS_BUNDLE_DIR)\msi
+WINDOWS_NSIS_DIR := $(WINDOWS_BUNDLE_DIR)\nsis
+else
 SHELL := /bin/bash
-
-BUNDLE_DIR := target/release/bundle
+TAURI_CLI := ./frontend/node_modules/.bin/tauri
+BUNDLE_DIR := src-tauri/target/release/bundle
 APP_DIR := $(BUNDLE_DIR)/macos
 DMG_DIR := $(BUNDLE_DIR)/dmg
-TAURI_CLI := ./frontend/node_modules/.bin/tauri
+endif
 
 .PHONY: release build-release open-release clean
 .PHONY: check-linux-deps setup-linux-deps-ubuntu
 
 release: build-release open-release
 
+ifeq ($(OS),Windows_NT)
+build-release:
+	if (!(Test-Path "$(TAURI_CLI)")) { Write-Error "Missing local Tauri CLI at $(TAURI_CLI). Run 'cd frontend; npm install' first."; exit 1 }
+	& "$(TAURI_CLI)" build --config src-tauri/tauri.conf.json
+
+open-release:
+	$$candidate = Get-ChildItem "$(WINDOWS_MSI_DIR)" -Filter *.msi -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+	if (-not $$candidate) { $$candidate = Get-ChildItem "$(WINDOWS_NSIS_DIR)" -Filter *.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 }
+	if (-not $$candidate -and (Test-Path "$(WINDOWS_TARGET_DIR)\flick-desktop.exe")) { $$candidate = Get-Item "$(WINDOWS_TARGET_DIR)\flick-desktop.exe" }
+	if ($$candidate) { Start-Process $$candidate.FullName } else { Write-Error "No Windows installer found under $(WINDOWS_BUNDLE_DIR). Run 'make build-release' first."; exit 1 }
+else
 build-release:
 	@if [ ! -x "$(TAURI_CLI)" ]; then \
 		echo "Missing local Tauri CLI at $(TAURI_CLI). Run 'cd frontend && npm install' first."; \
@@ -62,6 +82,7 @@ setup-linux-deps-ubuntu:
 		librsvg2-dev \
 		libxdo-dev \
 		libssl-dev
+endif
 
 clean:
 	cd src-tauri && cargo clean

@@ -23,9 +23,9 @@ use super::{
     overlay::border_rects, shielding_window_level,
 };
 
-const ACCENT_RED: f64 = 0.45;
-const ACCENT_GREEN: f64 = 0.74;
-const ACCENT_BLUE: f64 = 1.0;
+const ACCENT_RED: f64 = 0.0;
+const ACCENT_GREEN: f64 = 0.4;
+const ACCENT_BLUE: f64 = 0.8;
 const ACCENT_ALPHA: f64 = 1.0;
 const INTERACTIVE_BLOCKER_ALPHA: f64 = 0.001;
 
