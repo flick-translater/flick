@@ -4,16 +4,13 @@ use arboard::{Clipboard, GetExtLinux, LinuxClipboardKind};
 pub fn read_selected_text() -> anyhow::Result<String> {
     let mut clipboard = Clipboard::new().context("无法访问系统剪贴板")?;
 
-    read_clipboard_text(&mut clipboard, LinuxClipboardKind::Primary)
-        .or_else(|primary_error| {
-            read_clipboard_text(&mut clipboard, LinuxClipboardKind::Clipboard).map_err(
-                |clipboard_error| {
-                    anyhow!(
-                        "读取主选区失败: {primary_error}; 读取普通剪贴板也失败: {clipboard_error}"
-                    )
-                },
-            )
-        })
+    read_clipboard_text(&mut clipboard, LinuxClipboardKind::Primary).or_else(|primary_error| {
+        read_clipboard_text(&mut clipboard, LinuxClipboardKind::Clipboard).map_err(
+            |clipboard_error| {
+                anyhow!("读取主选区失败: {primary_error}; 读取普通剪贴板也失败: {clipboard_error}")
+            },
+        )
+    })
 }
 
 fn read_clipboard_text(

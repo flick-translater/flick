@@ -35,8 +35,8 @@ pub fn play_audio_with_lifecycle(
         guard.target = Some(target);
     }
 
-    let sink = DeviceSinkBuilder::open_default_sink()
-        .context("failed to open default audio output")?;
+    let sink =
+        DeviceSinkBuilder::open_default_sink().context("failed to open default audio output")?;
     let player = Player::connect_new(&sink.mixer());
     let decoder = Decoder::try_from(Cursor::new(audio)).context("failed to decode tts audio")?;
     player.append(decoder);
