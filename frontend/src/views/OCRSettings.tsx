@@ -35,7 +35,7 @@ export default function OCRSettings() {
   const [enableShortcut, setEnableShortcut] = useState(true);
   const [autoTranslate, setAutoTranslate] = useState(true);
   const [targetLanguage, setTargetLanguage] = useState(getDefaultLanguage);
-  const [ocrProvider, setOcrProvider] = useState('vision');
+  const [ocrProvider, setOcrProvider] = useState('');
   const [availableEngines, setAvailableEngines] = useState<OcrEngineInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -64,9 +64,11 @@ export default function OCRSettings() {
   const ocrEngineLabel = (engineId: string) => {
     switch (engineId) {
       case 'vision':
-        return t('ocr.engines.macosVision');
+        return t('ocr.engines.macosVision', { defaultValue: 'macOS Vision (Built-in)' });
+      case 'windows':
+        return t('ocr.engines.windowsBuiltin', { defaultValue: 'Windows OCR (Built-in)' });
       case 'onnx':
-        return t('ocr.engines.onnxRuntime');
+        return t('ocr.engines.onnxRuntime', { defaultValue: 'ONNX Runtime (Bundled Models)' });
       default:
         return engineId;
     }

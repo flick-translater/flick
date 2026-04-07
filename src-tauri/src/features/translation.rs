@@ -55,11 +55,18 @@ pub async fn run_pipeline_with_ai_settings(
     ai_settings: &AISettings,
     pipeline: &TranslationPipeline,
 ) -> Result<TranslateResponse, FlickError> {
+    if !has_active_ai_provider(ai_settings) {
+        return Err(FlickError::Message("no AI provider selected".into()));
+    }
     let response = TranslationGateway::new(ai_settings.clone())
         .translate(pipeline.request.clone())
         .await
         .map_err(FlickError::from)?;
     Ok(finalize_response(&pipeline.request, response))
+}
+
+pub fn has_active_ai_provider(ai_settings: &AISettings) -> bool {
+    !ai_settings.active_provider.trim().is_empty()
 }
 
 pub fn save_pipeline_history(
@@ -491,14 +498,13 @@ pub fn translate_selected_text_to_window(app: &AppHandle) -> Result<(), FlickErr
     let selected_text = read_selected_text()
         .map_err(|error| FlickError::Message(format!("读取选中文本失败: {error}")))?;
 
-    let target_language = {
+    let (ai_settings, target_language) = {
         let state = app.state::<AppState>();
-        state
+        let settings = state
             .settings
             .lock()
-            .map_err(|_| FlickError::LockError("settings".into()))?
-            .ocr_target_language
-            .clone()
+            .map_err(|_| FlickError::LockError("settings".into()))?;
+        (settings.ai.clone(), settings.ocr_target_language.clone())
     };
     let pipeline = TranslationPipeline::new(TranslateRequest {
         text: selected_text.clone(),
@@ -513,6 +519,18 @@ pub fn translate_selected_text_to_window(app: &AppHandle) -> Result<(), FlickErr
         pipeline.request.source_language.as_deref(),
         &target_language,
     )?;
+
+    if !has_active_ai_provider(&ai_settings) {
+        emit_ocr_ready(
+            app,
+            "",
+            &selected_text,
+            pipeline.request.source_language.as_deref(),
+            false,
+            &target_language,
+        )?;
+        return Ok(());
+    }
 
     let app_handle = app.clone();
     thread::spawn(move || {
@@ -546,7 +564,7 @@ pub fn translate_selected_text_to_window(app: &AppHandle) -> Result<(), FlickErr
         };
 
         if let Err(error) = run() {
-            eprintln!("selected text translation failed: {error}");
+            eprintln!("selected text translation failed: {error:#}");
 
             if let Some(state) = app_handle.try_state::<AppState>() {
                 if let Ok(mut snapshot) = state.translate_window_state.lock() {

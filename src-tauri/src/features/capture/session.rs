@@ -143,16 +143,27 @@ pub fn complete_capture(
                 match ocr_result {
                     Ok(ocr) => {
                         let detected_source_language = translation::detect_text_language(&ocr.text);
+                        let has_ocr_text = !ocr.text.trim().is_empty();
+                        let should_auto_translate = ocr_auto_translate
+                            && has_ocr_text
+                            && translation::has_active_ai_provider(&ai_settings);
                         translation::emit_ocr_ready(
                             &app_handle,
                             &record.path,
                             &ocr.text,
                             detected_source_language.as_deref(),
-                            ocr_auto_translate,
+                            should_auto_translate,
                             &ocr_target_language,
                         )?;
 
-                        if !ocr_auto_translate {
+                        if !has_ocr_text {
+                            eprintln!(
+                                "OCR completed but returned empty text; skipping translation"
+                            );
+                            return Ok(());
+                        }
+
+                        if !should_auto_translate {
                             return Ok(());
                         }
 

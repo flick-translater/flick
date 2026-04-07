@@ -51,6 +51,7 @@ export default {
       saveChanges: "Save Changes",
       engines: {
         macosVision: "macOS Vision (Built-in)",
+        windowsBuiltin: "Windows OCR (Built-in)",
         onnxRuntime: "ONNX Runtime (Bundled Models)"
       },
       languages: {

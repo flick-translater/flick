@@ -153,7 +153,7 @@ fn default_prompt() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AISettings {
-    #[serde(default = "default_provider")]
+    #[serde(default)]
     pub active_provider: String,
     #[serde(default)]
     pub openai: ProviderSettings,
@@ -171,6 +171,19 @@ pub struct AISettings {
 
 impl ProviderSettings {
     pub fn normalize(&mut self) {
+        self.api_key = self.api_key.trim().to_string();
+        self.api_base_url = self.api_base_url.trim().to_string();
+        self.model = self.model.trim().to_string();
+        self.default_prompt = self.default_prompt.trim().to_string();
+
+        if self.api_base_url.is_empty() {
+            self.api_base_url = default_openai_api_base_url();
+        }
+
+        if self.model.is_empty() {
+            self.model = default_model();
+        }
+
         if self.max_tokens == 0 {
             self.max_tokens = DEFAULT_MAX_TOKENS;
         }
@@ -179,6 +192,7 @@ impl ProviderSettings {
 
 impl AISettings {
     pub fn normalize(&mut self) {
+        self.active_provider = self.active_provider.trim().to_lowercase();
         self.openai.normalize();
         self.anthropic.normalize();
         self.openai_compatible.normalize();
@@ -186,10 +200,6 @@ impl AISettings {
         self.ollama.normalize();
         self.lmstudio.normalize();
     }
-}
-
-fn default_provider() -> String {
-    "openai".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,8 +236,25 @@ impl Default for AppSettings {
             ocr_shortcut_enabled: true,
             ocr_auto_translate: true,
             ocr_target_language: "zh".into(),
-            ocr_provider: "vision".into(),
+            ocr_provider: default_ocr_provider().into(),
             ai: AISettings::default(),
         }
+    }
+}
+
+fn default_ocr_provider() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "vision"
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        "onnx"
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        "windows"
     }
 }

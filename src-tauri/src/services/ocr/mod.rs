@@ -7,6 +7,8 @@ mod mock;
     all(target_os = "macos", target_arch = "aarch64")
 ))]
 mod onnx;
+#[cfg(target_os = "windows")]
+mod windows_builtin;
 
 use std::{path::Path, sync::Arc};
 
@@ -19,6 +21,8 @@ pub use mock::MockOcrService;
     all(target_os = "macos", target_arch = "aarch64")
 ))]
 pub use onnx::OnnxRuntimeOcrService;
+#[cfg(target_os = "windows")]
+pub use windows_builtin::WindowsBuiltinOcrService;
 
 use crate::models::{OcrEngineInfo, OcrResponse};
 
@@ -49,6 +53,7 @@ pub fn create_ocr_service(engine_id: &str, model_dir: &Path) -> Arc<dyn OcrServi
     {
         match engine_id {
             "mock" => Arc::new(MockOcrService),
+            "windows" => Arc::new(WindowsBuiltinOcrService),
             _ => Arc::new(OnnxRuntimeOcrService::new(model_dir)),
         }
     }
@@ -79,7 +84,12 @@ pub fn available_ocr_engines() -> Vec<OcrEngineInfo> {
 
     #[cfg(target_os = "windows")]
     {
-        vec![OcrEngineInfo { id: "onnx".into() }]
+        vec![
+            OcrEngineInfo {
+                id: "windows".into(),
+            },
+            OcrEngineInfo { id: "onnx".into() },
+        ]
     }
 }
 
@@ -89,8 +99,13 @@ pub fn default_ocr_provider() -> String {
         "vision".into()
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         "onnx".into()
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        "windows".into()
     }
 }
