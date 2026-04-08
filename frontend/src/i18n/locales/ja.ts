@@ -47,7 +47,7 @@ export default {
       ttsEngineHint: "現在利用可能な TTS エンジン。",
       noTtsEngineAvailable: "このプラットフォームでは利用可能な TTS エンジンがありません",
       targetLanguage: "翻訳先言語",
-      targetLanguageHint: "翻訳先として使う言語です。",
+      targetLanguageHint: "翻訳後の対象言語です。",
       replaceTargetLanguage: "置換先言語",
       replaceTargetLanguageHint: "選択翻訳置換ショートカットで使う翻訳先言語です。",
       autoTranslateDesc: "OCR処理後に検出されたテキストを自動的に翻訳します",

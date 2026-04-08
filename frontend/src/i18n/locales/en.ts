@@ -47,7 +47,7 @@ export default {
       ttsEngineHint: "Currently available TTS engines.",
       noTtsEngineAvailable: "No TTS engine is currently available on this platform",
       targetLanguage: "Target Translation Language",
-      targetLanguageHint: "The target translation language to translate into.",
+      targetLanguageHint: "The target language to translate into.",
       replaceTargetLanguage: "Replacement Target Language",
       replaceTargetLanguageHint: "Target language used by the translate-and-replace selection shortcut.",
       autoTranslateDesc: "Automatically translate detected text after OCR processing",

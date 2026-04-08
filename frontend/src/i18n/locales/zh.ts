@@ -47,7 +47,7 @@ export default {
       ttsEngineHint: "当前可用的 TTS 引擎。",
       noTtsEngineAvailable: "当前平台暂无可用 TTS 引擎",
       targetLanguage: "目标翻译语言",
-      targetLanguageHint: "翻译成的目标翻译语言。",
+      targetLanguageHint: "翻译成的目标语言。",
       replaceTargetLanguage: "目标替换语言",
       replaceTargetLanguageHint: "用于选中翻译替换快捷键的目标语言。",
       autoTranslateDesc: "OCR 处理后自动翻译检测到的文本",
