@@ -2,6 +2,7 @@ use std::{mem::size_of, thread, time::Duration};
 
 use anyhow::{Context, anyhow};
 use arboard::Clipboard;
+use uuid::Uuid;
 use windows_sys::Win32::{
     System::DataExchange::GetClipboardSequenceNumber,
     UI::Input::KeyboardAndMouse::{
@@ -21,11 +22,18 @@ pub fn read_selected_text() -> anyhow::Result<String> {
     let mut clipboard = Clipboard::new().context("failed to access clipboard")?;
     let previous_text = clipboard.get_text().ok();
     let previous_sequence = unsafe { GetClipboardSequenceNumber() };
+    let sentinel = format!("__flick_selection_probe__{}", Uuid::new_v4());
+    let _ = clipboard.set_text(sentinel.clone());
 
     wait_for_modifier_keys_release();
     simulate_copy_shortcut().context("failed to trigger system copy shortcut")?;
 
-    let text = wait_for_copied_text(&mut clipboard, previous_sequence, previous_text.as_deref())
+    let text = wait_for_copied_text(
+        &mut clipboard,
+        previous_sequence,
+        previous_text.as_deref(),
+        &sentinel,
+    )
         .context("clipboard does not contain newly copied text")?;
     let normalized = sanitize_selected_text(&text);
 
@@ -63,6 +71,7 @@ fn wait_for_copied_text(
     clipboard: &mut Clipboard,
     previous_sequence: u32,
     previous_text: Option<&str>,
+    sentinel: &str,
 ) -> anyhow::Result<String> {
     for _ in 0..CLIPBOARD_POLL_ATTEMPTS {
         thread::sleep(CLIPBOARD_POLL_INTERVAL);
@@ -74,12 +83,20 @@ fn wait_for_copied_text(
         };
 
         if current_sequence != previous_sequence {
+            if text != sentinel {
+                return Ok(text);
+            }
+        }
+
+        if text == sentinel {
+            continue;
+        }
+
+        if previous_text.is_some_and(|previous| previous == text) {
             return Ok(text);
         }
 
-        if previous_text.is_none_or(|previous| previous != text) {
-            return Ok(text);
-        }
+        return Ok(text);
     }
 
     Err(anyhow!("there is no translatable selected text"))
