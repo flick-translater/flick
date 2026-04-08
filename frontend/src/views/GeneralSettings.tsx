@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Database, Edit2, FolderOpen, Globe, Keyboard, LoaderCircle, Power } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import Toggle from '../components/Toggle';
-import { AppSettings, StorageInfo } from '../types';
+import { AppSettings, AutostartStatus, StorageInfo } from '../types';
 
 type ShortcutField = keyof Pick<AppSettings, 'capture_shortcut' | 'translate_shortcut' | 'selected_translate_shortcut'>;
 
@@ -20,7 +20,7 @@ const defaultStorageInfo: StorageInfo = {
 
 export default function GeneralSettings() {
   const { t, i18n } = useTranslation();
-  const [startup, setStartup] = useState(true);
+  const [startup, setStartup] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [storageInfo, setStorageInfo] = useState<StorageInfo>(defaultStorageInfo);
   const [recordingField, setRecordingField] = useState<ShortcutField | null>(null);
@@ -42,7 +42,7 @@ export default function GeneralSettings() {
     void Promise.all([
       invoke<AppSettings>('get_app_settings'),
       invoke<StorageInfo>('get_storage_info'),
-      invoke<{ enabled: boolean }>('get_autostart_status'),
+      invoke<AutostartStatus>('get_autostart_status'),
     ])
       .then(([appSettings, storage, autostartStatus]) => {
         setSettings(appSettings);
@@ -171,7 +171,18 @@ export default function GeneralSettings() {
                 onChange={(checked) => {
                   setStartup(checked);
                   setIsUpdatingAutostart(true);
-                  void invoke('set_autostart_enabled', { enabled: checked })
+                  void invoke<AutostartStatus>('set_autostart_enabled', { enabled: checked })
+                    .then((status) => {
+                      setStartup(status.enabled);
+                      setSettings((current) => current
+                        ? {
+                            ...current,
+                            autostart_enabled: status.enabled,
+                            autostart_configured: true,
+                          }
+                        : current);
+                      setGeneralError('');
+                    })
                     .catch((error: unknown) => {
                       setStartup(!checked);
                       setGeneralError(String(error));

@@ -36,6 +36,11 @@ export type AppSettings = {
   ai: AISettings;
 };
 
+export type AutostartStatus = {
+  enabled: boolean;
+  supported: boolean;
+};
+
 export type OcrEngineInfo = {
   id: string;
 };

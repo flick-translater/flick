@@ -24,9 +24,12 @@ pub fn get_autostart_status(app: AppHandle) -> Result<AutostartStatus, FlickErro
 }
 
 #[tauri::command]
-pub fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Result<(), FlickError> {
-    crate::app::set_autostart_enabled(&app, enabled)?;
-    Ok(())
+pub fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Result<AutostartStatus, FlickError> {
+    let enabled = crate::app::set_autostart_enabled(&app, enabled)?;
+    Ok(AutostartStatus {
+        enabled,
+        supported: cfg!(desktop),
+    })
 }
 
 #[tauri::command]

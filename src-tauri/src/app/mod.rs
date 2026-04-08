@@ -14,7 +14,9 @@ use tauri::{
 };
 #[cfg(target_os = "windows")]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
+use tauri_plugin_autostart::{Builder as AutostartBuilder, ManagerExt as _};
+#[cfg(target_os = "macos")]
+use tauri_plugin_autostart::MacosLauncher;
 
 use crate::{
     commands,
@@ -68,17 +70,17 @@ pub enum ShortcutAction {
     TranslateSelectedText,
 }
 
+const AUTOSTART_ARG: &str = "--autostart";
+
 /// Build and run the Tauri desktop application.
 pub fn run() {
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,
-            None,
-        ))
+        .plugin(build_autostart_plugin())
         .setup(|app| {
             platform::configure_app_setup(app);
             windows::ensure_main_window(app.handle())?;
             windows::ensure_translate_window(app.handle())?;
+            hide_windows_for_autostart_launch(app.handle());
             let state = build_state(app.handle())?;
             app.manage(state);
 
@@ -234,7 +236,6 @@ fn detect_system_language() -> String {
 }
 
 pub fn initialize_autostart(app: &AppHandle) -> anyhow::Result<()> {
-    let current_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let state = app.state::<AppState>();
     let (configured, desired_enabled) = {
         let settings = state
@@ -245,22 +246,26 @@ pub fn initialize_autostart(app: &AppHandle) -> anyhow::Result<()> {
     };
 
     if !configured {
-        persist_autostart_preference(app, current_enabled, true)?;
+        // Honor explicit config on first sync so a persisted `autostart_enabled = true`
+        // immediately provisions the OS startup entry on Windows/Linux/macOS.
+        let actual_enabled = sync_autostart_state(app, desired_enabled)?;
+        persist_autostart_preference(app, actual_enabled, true)?;
         return Ok(());
     }
 
-    if desired_enabled != current_enabled {
-        if desired_enabled {
-            app.autolaunch().enable()?;
-        } else {
-            app.autolaunch().disable()?;
-        }
-    }
+    let actual_enabled = sync_autostart_state(app, desired_enabled)?;
+    persist_autostart_preference(app, actual_enabled, true)?;
 
     Ok(())
 }
 
-pub fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> anyhow::Result<()> {
+pub fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> anyhow::Result<bool> {
+    let actual_enabled = sync_autostart_state(app, enabled)?;
+    persist_autostart_preference(app, actual_enabled, true)?;
+    Ok(actual_enabled)
+}
+
+fn sync_autostart_state(app: &AppHandle, enabled: bool) -> anyhow::Result<bool> {
     let current_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     if enabled != current_enabled {
         if enabled {
@@ -270,7 +275,7 @@ pub fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> anyhow::Result<(
         }
     }
 
-    persist_autostart_preference(app, enabled, true)
+    Ok(app.autolaunch().is_enabled().unwrap_or(enabled))
 }
 
 fn persist_autostart_preference(
@@ -291,6 +296,43 @@ fn persist_autostart_preference(
 
     state.settings_store.save_settings(&updated)?;
     Ok(())
+}
+
+fn build_autostart_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    #[cfg(target_os = "macos")]
+    {
+        return AutostartBuilder::new()
+            .app_name("Flick")
+            .arg(AUTOSTART_ARG)
+            .macos_launcher(MacosLauncher::LaunchAgent)
+            .build();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        AutostartBuilder::new()
+            .app_name("Flick")
+            .arg(AUTOSTART_ARG)
+            .build()
+    }
+}
+
+fn hide_windows_for_autostart_launch(app: &AppHandle) {
+    if !is_autostart_launch() {
+        return;
+    }
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+
+    if let Some(window) = app.get_webview_window("translate") {
+        let _ = window.hide();
+    }
+}
+
+fn is_autostart_launch() -> bool {
+    std::env::args_os().any(|arg| arg == AUTOSTART_ARG)
 }
 
 fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
