@@ -23,7 +23,7 @@ use crate::{
     models::{AppSettings, CaptureRecord, TranslateWindowState},
     services::{
         CachedScreenCapture, OcrService, SettingsStore, TranslationHistoryStore, TtsService,
-        available_ocr_engines, create_ocr_service, default_ocr_provider,
+        available_ocr_engines, create_ocr_service, default_ocr_provider, normalize_ocr_engine_id,
     },
 };
 
@@ -165,19 +165,27 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
     let settings_store = SettingsStore::new(data_dir.join("settings.json"));
     let translation_history_store =
         TranslationHistoryStore::new(data_dir.join("translations.sqlite3"))?;
-    let bundled_ocr_models_dir = app.path().resolve("ocr/onnx", BaseDirectory::Resource).ok();
-    let dev_ocr_models_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ocr/onnx");
+    let bundled_ocr_models_dir = app
+        .path()
+        .resolve("ocr/paddle_ocr_v5_mobile", BaseDirectory::Resource)
+        .ok();
+    let dev_ocr_models_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ocr/paddle_ocr_v5_mobile");
     let ocr_models_dir = bundled_ocr_models_dir
-        .filter(|path| path.join("text_detection.onnx").is_file())
+        .filter(|path| {
+            path.join("paddle_ocr_v5_mobile_text_detection.onnx")
+                .is_file()
+        })
         .or_else(|| {
             dev_ocr_models_dir
-                .join("text_detection.onnx")
+                .join("paddle_ocr_v5_mobile_text_detection.onnx")
                 .is_file()
                 .then_some(dev_ocr_models_dir)
         })
-        .unwrap_or_else(|| data_dir.join("ocr/onnx"));
+        .unwrap_or_else(|| data_dir.join("ocr/paddle_ocr_v5_mobile"));
     let mut settings = settings_store.load_settings()?;
     settings.ai.normalize();
+    settings.ocr_provider = normalize_ocr_engine_id(&settings.ocr_provider);
     let available_engines = available_ocr_engines();
     if !available_engines
         .iter()

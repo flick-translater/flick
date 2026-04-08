@@ -68,7 +68,8 @@ export default function OCRSettings() {
       case 'windows':
         return t('ocr.engines.windowsBuiltin', { defaultValue: 'Windows OCR (Built-in)' });
       case 'onnx':
-        return t('ocr.engines.onnxRuntime', { defaultValue: 'ONNX Runtime (Bundled Models)' });
+      case 'paddle_ocr_v5_mobile':
+        return t('ocr.engines.paddleOcrV5Mobile', { defaultValue: 'Paddle OCRV5 Mobile (Bundled Models)' });
       default:
         return engineId;
     }

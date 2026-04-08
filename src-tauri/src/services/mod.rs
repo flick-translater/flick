@@ -9,7 +9,10 @@ mod translation_history;
 mod tts;
 
 pub use ai::TranslationGateway;
-pub use ocr::{OcrService, available_ocr_engines, create_ocr_service, default_ocr_provider};
+pub use ocr::{
+    OcrService, available_ocr_engines, create_ocr_service, default_ocr_provider,
+    normalize_ocr_engine_id,
+};
 pub use screen_capture::{CachedScreenCapture, ScreenCaptureService};
 pub use selected_text::read_selected_text;
 pub use settings::SettingsStore;

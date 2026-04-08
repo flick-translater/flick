@@ -119,9 +119,9 @@ pub struct AiTestResult {
 pub struct ProviderSettings {
     #[serde(default)]
     pub api_key: String,
-    #[serde(default = "default_openai_api_base_url")]
+    #[serde(default)]
     pub api_base_url: String,
-    #[serde(default = "default_model")]
+    #[serde(default)]
     pub model: String,
     #[serde(default = "default_temperature")]
     pub temperature: f32,
@@ -129,14 +129,6 @@ pub struct ProviderSettings {
     pub max_tokens: u32,
     #[serde(default = "default_prompt")]
     pub default_prompt: String,
-}
-
-fn default_openai_api_base_url() -> String {
-    "https://api.openai.com/v1".into()
-}
-
-fn default_model() -> String {
-    "gpt-4o-mini".into()
 }
 
 fn default_temperature() -> f32 {
@@ -175,14 +167,6 @@ impl ProviderSettings {
         self.api_base_url = self.api_base_url.trim().to_string();
         self.model = self.model.trim().to_string();
         self.default_prompt = self.default_prompt.trim().to_string();
-
-        if self.api_base_url.is_empty() {
-            self.api_base_url = default_openai_api_base_url();
-        }
-
-        if self.model.is_empty() {
-            self.model = default_model();
-        }
 
         if self.max_tokens == 0 {
             self.max_tokens = DEFAULT_MAX_TOKENS;
@@ -250,7 +234,7 @@ fn default_ocr_provider() -> &'static str {
 
     #[cfg(target_os = "linux")]
     {
-        "onnx"
+        "paddle_ocr_v5_mobile"
     }
 
     #[cfg(target_os = "windows")]

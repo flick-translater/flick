@@ -10,7 +10,7 @@ use crate::{
     error::FlickError,
     features::capture,
     models::{AISettings, AppSettings, AutostartStatus, OcrEngineInfo},
-    services::{available_ocr_engines, create_ocr_service},
+    services::{available_ocr_engines, create_ocr_service, normalize_ocr_engine_id},
 };
 
 #[tauri::command]
@@ -173,7 +173,7 @@ pub fn update_ocr_provider(
     state: State<'_, AppState>,
     provider: String,
 ) -> Result<AppSettings, FlickError> {
-    let normalized = provider.trim().to_lowercase();
+    let normalized = normalize_ocr_engine_id(&provider);
     let available = available_ocr_engines();
     if !available.iter().any(|engine| engine.id == normalized) {
         return Err(FlickError::Message(

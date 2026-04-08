@@ -11,23 +11,23 @@ use oar_ocr::prelude::OAROCRBuilder;
 use super::OcrService;
 use crate::models::{OcrResponse, OcrTextBlock};
 
-const OCR_MODELS_DIR_ENV: &str = "FLICK_OCR_ONNX_MODELS_DIR";
-const DET_MODEL_FILE: &str = "text_detection.onnx";
-const REC_MODEL_FILE: &str = "text_recognition.onnx";
-const DICT_FILE: &str = "characters.txt";
+const OCR_MODELS_DIR_ENV: &str = "FLICK_OCR_PADDLE_OCR_V5_MOBILE_MODELS_DIR";
+const DET_MODEL_FILE: &str = "paddle_ocr_v5_mobile_text_detection.onnx";
+const REC_MODEL_FILE: &str = "paddle_ocr_v5_mobile_text_recognition.onnx";
+const DICT_FILE: &str = "paddle_ocr_v5_mobile_characters.txt";
 const LINE_ORIENTATION_MODEL_FILE: &str = "text_line_orientation.onnx";
 
-pub struct OnnxRuntimeOcrService {
-    bundle: OnnxModelBundle,
-    runtime: Mutex<Option<OnnxRuntime>>,
+pub struct PaddleOcrV5MobileOcrService {
+    bundle: PaddleOcrV5MobileModelBundle,
+    runtime: Mutex<Option<PaddleOcrV5MobileRuntime>>,
 }
 
-struct OnnxRuntime {
+struct PaddleOcrV5MobileRuntime {
     ocr: oar_ocr::prelude::OAROCR,
 }
 
 #[derive(Clone, Debug)]
-struct OnnxModelBundle {
+struct PaddleOcrV5MobileModelBundle {
     root: PathBuf,
     detection_model: PathBuf,
     recognition_model: PathBuf,
@@ -35,22 +35,24 @@ struct OnnxModelBundle {
     line_orientation_model: Option<PathBuf>,
 }
 
-impl OnnxRuntimeOcrService {
+impl PaddleOcrV5MobileOcrService {
     pub fn new(model_dir: &Path) -> Self {
         Self {
-            bundle: OnnxModelBundle::from_model_dir(model_dir),
+            bundle: PaddleOcrV5MobileModelBundle::from_model_dir(model_dir),
             runtime: Mutex::new(None),
         }
     }
 
-    fn runtime(&self) -> anyhow::Result<std::sync::MutexGuard<'_, Option<OnnxRuntime>>> {
+    fn runtime(
+        &self,
+    ) -> anyhow::Result<std::sync::MutexGuard<'_, Option<PaddleOcrV5MobileRuntime>>> {
         let mut runtime = self
             .runtime
             .lock()
-            .map_err(|_| anyhow!("onnx ocr runtime mutex poisoned"))?;
+            .map_err(|_| anyhow!("paddle OCRV5 mobile runtime mutex poisoned"))?;
 
         if runtime.is_none() {
-            *runtime = Some(OnnxRuntime {
+            *runtime = Some(PaddleOcrV5MobileRuntime {
                 ocr: self.bundle.build_ocr()?,
             });
         }
@@ -59,7 +61,7 @@ impl OnnxRuntimeOcrService {
     }
 }
 
-impl OcrService for OnnxRuntimeOcrService {
+impl OcrService for PaddleOcrV5MobileOcrService {
     fn run_with_data(&self, image_data: &[u8]) -> anyhow::Result<OcrResponse> {
         let image = ImageReader::new(std::io::Cursor::new(image_data))
             .with_guessed_format()
@@ -71,13 +73,13 @@ impl OcrService for OnnxRuntimeOcrService {
         let mut runtime = self.runtime()?;
         let result = runtime
             .as_mut()
-            .expect("onnx runtime initialized")
+            .expect("paddle OCRV5 mobile runtime initialized")
             .ocr
             .predict(vec![image])
-            .context("onnx OCR inference failed")?
+            .context("Paddle OCRV5 Mobile inference failed")?
             .into_iter()
             .next()
-            .ok_or_else(|| anyhow!("onnx OCR returned no result"))?;
+            .ok_or_else(|| anyhow!("Paddle OCRV5 Mobile returned no result"))?;
 
         let blocks: Vec<OcrTextBlock> = result
             .text_regions
@@ -103,14 +105,14 @@ impl OcrService for OnnxRuntimeOcrService {
             .join("\n");
 
         Ok(OcrResponse {
-            provider: "onnx".into(),
+            provider: "paddle_ocr_v5_mobile".into(),
             text,
             blocks,
         })
     }
 }
 
-impl OnnxModelBundle {
+impl PaddleOcrV5MobileModelBundle {
     fn from_model_dir(model_dir: &Path) -> Self {
         let root = std::env::var_os(OCR_MODELS_DIR_ENV)
             .map(PathBuf::from)
@@ -145,7 +147,7 @@ impl OnnxModelBundle {
 
         builder.build().map_err(|error| {
             anyhow!(
-                "failed to initialize ONNX OCR from {}: {error}",
+                "failed to initialize Paddle OCRV5 Mobile from {}: {error}",
                 self.root.display()
             )
         })
@@ -154,7 +156,7 @@ impl OnnxModelBundle {
     fn ensure_required_files(&self) -> anyhow::Result<()> {
         fs::create_dir_all(&self.root).with_context(|| {
             format!(
-                "failed to create ONNX OCR model directory at {}",
+                "failed to create Paddle OCRV5 Mobile model directory at {}",
                 self.root.display()
             )
         })?;
@@ -166,7 +168,7 @@ impl OnnxModelBundle {
         ] {
             if !path.is_file() {
                 return Err(anyhow!(
-                    "missing ONNX OCR asset: {}. Expected files under {}",
+                    "missing Paddle OCRV5 Mobile asset: {}. Expected files under {}",
                     path.display(),
                     self.root.display()
                 ));

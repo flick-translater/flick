@@ -51,7 +51,7 @@ export default {
       saveChanges: "保存更改",
       engines: {
         macosVision: "macOS Vision（系统内置）",
-        onnxRuntime: "ONNX Runtime（内置模型）"
+        paddleOcrV5Mobile: "Paddle OCRV5 Mobile（内置模型）"
       },
       languages: {
         english: "英语",

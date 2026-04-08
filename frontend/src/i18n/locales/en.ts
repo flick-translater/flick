@@ -52,7 +52,7 @@ export default {
       engines: {
         macosVision: "macOS Vision (Built-in)",
         windowsBuiltin: "Windows OCR (Built-in)",
-        onnxRuntime: "ONNX Runtime (Bundled Models)"
+        paddleOcrV5Mobile: "Paddle OCRV5 Mobile (Bundled Models)"
       },
       languages: {
         english: "English",

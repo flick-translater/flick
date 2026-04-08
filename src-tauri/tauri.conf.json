@@ -20,7 +20,7 @@
   "bundle": {
     "active": true,
     "resources": [
-      "resources/ocr/onnx/**/*",
+      "resources/ocr/paddle_ocr_v5_mobile/**/*",
       "icons/trayTemplate.png",
       "icons/trayTemplate@2x.png"
     ],

@@ -1,25 +1,16 @@
 import { useState, useEffect } from 'react';
-import { Network, Key, Terminal, SlidersHorizontal, Eye, EyeOff, ChevronDown, Check } from 'lucide-react';
+import { Network, Key, Terminal, SlidersHorizontal, Eye, EyeOff, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import type { AISettings, AiTestResult, AppSettings, ProviderSettings } from '../types';
 
 const defaultProviderSettings: ProviderSettings = {
   api_key: '',
-  api_base_url: 'https://api.openai.com/v1',
-  model: 'gpt-4o-mini',
+  api_base_url: '',
+  model: '',
   temperature: 0.7,
   max_tokens: 4096,
   default_prompt: '',
-};
-
-const defaultBaseUrlMap: Record<string, string> = {
-  openai: 'https://api.openai.com/v1',
-  anthropic: 'https://api.anthropic.com/v1',
-  openai_compatible: 'https://api.openai.com/v1',
-  anthropic_compatible: 'https://api.anthropic.com/v1',
-  ollama: 'http://localhost:11434/v1',
-  lmstudio: 'http://localhost:1234/v1',
 };
 
 export default function AISettings() {
@@ -27,12 +18,12 @@ export default function AISettings() {
   const [isLoading, setIsLoading] = useState(true);
   const [aiSettings, setAiSettings] = useState<AISettings>({
     active_provider: '',
-    openai: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.openai },
-    anthropic: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.anthropic },
-    openai_compatible: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.openai_compatible },
-    anthropic_compatible: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.anthropic_compatible },
-    ollama: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.ollama },
-    lmstudio: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.lmstudio },
+    openai: { ...defaultProviderSettings },
+    anthropic: { ...defaultProviderSettings },
+    openai_compatible: { ...defaultProviderSettings },
+    anthropic_compatible: { ...defaultProviderSettings },
+    ollama: { ...defaultProviderSettings },
+    lmstudio: { ...defaultProviderSettings },
   });
   const [savedSettings, setSavedSettings] = useState<AISettings | null>(null);
   const [selectedProvider, setSelectedProvider] = useState('');
@@ -50,12 +41,12 @@ export default function AISettings() {
       const appSettings = await invoke<AppSettings>('get_app_settings');
       const ai = appSettings.ai || {
         active_provider: '',
-        openai: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.openai },
-        anthropic: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.anthropic },
-        openai_compatible: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.openai_compatible },
-        anthropic_compatible: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.anthropic_compatible },
-        ollama: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.ollama },
-        lmstudio: { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap.lmstudio },
+        openai: { ...defaultProviderSettings },
+        anthropic: { ...defaultProviderSettings },
+        openai_compatible: { ...defaultProviderSettings },
+        anthropic_compatible: { ...defaultProviderSettings },
+        ollama: { ...defaultProviderSettings },
+        lmstudio: { ...defaultProviderSettings },
       };
       
       // Ensure all provider settings exist with defaults
@@ -92,7 +83,7 @@ export default function AISettings() {
     }
     const settings = aiSettings[key];
     if (!settings) {
-      return { ...defaultProviderSettings, api_base_url: defaultBaseUrlMap[provider] || defaultBaseUrlMap.openai };
+      return { ...defaultProviderSettings };
     }
     return settings as ProviderSettings;
   };
@@ -167,19 +158,6 @@ export default function AISettings() {
       setTestResult(null);
       return;
     }
-    setAiSettings(prev => {
-      const key = provider as keyof AISettings;
-      if (key === 'active_provider') return prev;
-      const existingSettings = (prev[key] as ProviderSettings | undefined) || defaultProviderSettings;
-      const baseUrl = defaultBaseUrlMap[provider] || defaultBaseUrlMap.openai;
-      return {
-        ...prev,
-        [key]: {
-          ...existingSettings,
-          api_base_url: existingSettings.api_base_url || baseUrl,
-        },
-      };
-    });
     setSelectedProvider(provider);
     setTestResult(null);
   };
@@ -197,14 +175,6 @@ export default function AISettings() {
     { key: 'ollama', label: t('ai.providerOllama') },
     { key: 'lmstudio', label: t('ai.providerLMStudio') },
   ];
-
-  const openaiModels = [
-    { key: 'gpt-4-turbo-preview', label: t('ai.modelGPT4Turbo') },
-    { key: 'gpt-4o', label: t('ai.modelGPT4o') },
-    { key: 'gpt-3.5-turbo', label: t('ai.modelGPT35Turbo') },
-  ];
-
-  const isStandardProvider = selectedProvider === 'openai' || selectedProvider === 'anthropic';
 
   if (isLoading) {
     return (
@@ -250,30 +220,14 @@ export default function AISettings() {
           <div className="space-y-3">
             <div className="group">
               <label className="block text-xs font-bold text-on-surface-variant mb-1 ml-1">{t('ai.modelSelection')}</label>
-              {isStandardProvider ? (
-                <div className="relative">
-                  <select 
-                    value={currentSettings.model}
-                    onChange={(e) => updateCurrentSettings({ model: e.target.value })}
-                    disabled={!hasSelectedProvider}
-                    className="w-full px-3 py-2.5 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all appearance-none cursor-pointer"
-                  >
-                    {openaiModels.map(m => (
-                      <option key={m.key} value={m.key}>{m.label}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" size={16} />
-                </div>
-              ) : (
-                <input
-                  type="text"
-                  value={currentSettings.model}
-                  onChange={(e) => updateCurrentSettings({ model: e.target.value })}
-                  placeholder={t('ai.modelNamePlaceholder')}
-                  disabled={!hasSelectedProvider}
-                  className="w-full px-3 py-2.5 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all"
-                />
-              )}
+              <input
+                type="text"
+                value={currentSettings.model}
+                onChange={(e) => updateCurrentSettings({ model: e.target.value })}
+                placeholder={t('ai.modelNamePlaceholder')}
+                disabled={!hasSelectedProvider}
+                className="w-full px-3 py-2.5 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-sm text-on-surface focus:ring-2 focus:ring-primary/30 outline-none shadow-sm transition-all"
+              />
             </div>
             <div className="group">
               <label className="block text-xs font-bold text-on-surface-variant mb-1 ml-1">{t('ai.apiAddress')}</label>
