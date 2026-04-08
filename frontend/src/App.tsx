@@ -34,7 +34,7 @@ function getViewTitle(view: ViewState, t: (key: string) => string) {
   switch (view) {
     case 'general': return t('sidebar.general');
     case 'history': return t('sidebar.history');
-    case 'ocr': return t('sidebar.ocr');
+    case 'ocr': return t('sidebar.engine');
     case 'ai': return t('sidebar.ai');
   }
 }

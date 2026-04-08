@@ -23,7 +23,8 @@ use crate::{
     models::{AppSettings, CaptureRecord, TranslateWindowState},
     services::{
         CachedScreenCapture, OcrService, SettingsStore, TranslationHistoryStore, TtsService,
-        available_ocr_engines, create_ocr_service, default_ocr_provider, normalize_ocr_engine_id,
+        available_ocr_engines, available_tts_engines, create_ocr_service, default_ocr_provider,
+        normalize_ocr_engine_id, normalize_tts_engine_id,
     },
 };
 
@@ -118,11 +119,12 @@ pub fn run() {
             commands::settings::update_screenshot_directory,
             commands::settings::update_translate_shortcut,
             commands::settings::update_selected_translate_shortcut,
-            commands::settings::update_ocr_shortcut_enabled,
             commands::settings::update_ocr_auto_translate,
             commands::settings::update_ocr_target_language,
             commands::settings::get_available_ocr_engines,
             commands::settings::update_ocr_provider,
+            commands::settings::get_available_tts_engines,
+            commands::settings::update_tts_provider,
             commands::settings::update_ai_settings,
             commands::translate_window::show_translate_window,
             commands::translate_window::get_translate_window_pinned,
@@ -193,6 +195,14 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
     {
         settings.ocr_provider = default_ocr_provider();
     }
+    settings.tts_provider = normalize_tts_engine_id(&settings.tts_provider);
+    let available_tts = available_tts_engines();
+    if !available_tts
+        .iter()
+        .any(|engine| engine.id == settings.tts_provider)
+    {
+        settings.tts_provider = normalize_tts_engine_id("edge");
+    }
     settings_store.save_settings(&settings)?;
     // When the user has not picked a UI language yet, initialize it from the system locale.
     if !settings.interface_language_set {
@@ -220,7 +230,11 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         settings: Mutex::new(settings.clone()),
         capture_intent: Mutex::new(CaptureIntent::Capture),
         ocr_service: Mutex::new(create_ocr_service(&settings.ocr_provider, &ocr_models_dir)),
-        tts_service: TtsService::new(data_dir.clone()),
+        tts_service: {
+            let service = TtsService::new(data_dir.clone());
+            let _ = service.set_engine(&settings.tts_provider);
+            service
+        },
         translate_window_state: Mutex::new(TranslateWindowState::default()),
         translate_window_pinned: Mutex::new(false),
         #[cfg(target_os = "macos")]

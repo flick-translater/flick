@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import TranslationWindow from './components/TranslationWindow';
 import './index.css';
+import { normalizeSelectableLanguage } from './languages';
 import { normalizeLanguage, setupI18n } from './i18n/config';
 import { TranslationPayload, AppSettings, TranslateResponse, TranslateWindowState } from './types';
 
@@ -47,11 +48,21 @@ function resolveSourceLanguage(payload: TranslationPayload): string {
     : (payload.detectedSourceLanguage ?? payload.ocrDetectedSourceLanguage ?? payload.targetLanguage);
 }
 
+function getPreferredSourceLanguage(payload: TranslationPayload): string {
+  return normalizeSelectableLanguage(resolveSourceLanguage(payload), 'auto');
+}
+
+function getPreferredTargetLanguage(payload: TranslationPayload): string {
+  return normalizeSelectableLanguage(payload.targetLanguage, 'zh');
+}
+
 function TranslateWindowApp() {
   const [payload, setPayload] = useState<TranslationPayload>(placeholderPayload);
   const [isLoading, setIsLoading] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
   const [ttsSnapshot, setTtsSnapshot] = useState<TtsSnapshot>({ status: 'idle', target: null, engine: 'edge' });
+  const [selectedSourceLanguage, setSelectedSourceLanguage] = useState('auto');
+  const [selectedTargetLanguage, setSelectedTargetLanguage] = useState(placeholderPayload.targetLanguage);
   const lastSnapshotRef = useRef('');
 
   const syncFromSnapshot = async () => {
@@ -68,16 +79,19 @@ function TranslateWindowApp() {
       }
 
       lastSnapshotRef.current = nextKey;
-      setPayload(buildPayloadFromSnapshot(snapshot));
+      const nextPayload = buildPayloadFromSnapshot(snapshot);
+      setPayload(nextPayload);
       setIsLoading(snapshot.is_loading);
       setIsTranslating(snapshot.is_translating);
       setTtsSnapshot(nextTtsSnapshot);
+      setSelectedSourceLanguage(getPreferredSourceLanguage(nextPayload));
+      setSelectedTargetLanguage(getPreferredTargetLanguage(nextPayload));
     } catch (error) {
       console.error('Failed to read translate window state', error);
     }
   };
 
-  const handleTranslate = async () => {
+  const handleTranslate = async (sourceLanguage: string, targetLanguage: string) => {
     if (!payload.sourceText.trim()) {
       return;
     }
@@ -92,8 +106,8 @@ function TranslateWindowApp() {
       const response = await invoke<TranslateResponse>('translate', {
         request: {
           text: payload.sourceText,
-          source_language: resolveSourceLanguage(payload),
-          target_language: payload.targetLanguage,
+          source_language: sourceLanguage,
+          target_language: targetLanguage,
         },
       });
 
@@ -102,6 +116,7 @@ function TranslateWindowApp() {
         translatedText: response.translated_text,
         provider: response.provider,
         detectedSourceLanguage: response.detected_source_language ?? prev.detectedSourceLanguage,
+        targetLanguage,
       }));
     } catch (error) {
       console.error('[TRANSLATE] manual translate failed', error);
@@ -117,9 +132,12 @@ function TranslateWindowApp() {
 
       const nextSnapshot = await invoke<TranslateWindowState>('swap_translate_window_content');
       lastSnapshotRef.current = JSON.stringify(nextSnapshot);
-      setPayload(buildPayloadFromSnapshot(nextSnapshot));
+      const nextPayload = buildPayloadFromSnapshot(nextSnapshot);
+      setPayload(nextPayload);
       setIsLoading(nextSnapshot.is_loading);
       setIsTranslating(nextSnapshot.is_translating);
+      setSelectedSourceLanguage(getPreferredSourceLanguage(nextPayload));
+      setSelectedTargetLanguage(getPreferredTargetLanguage(nextPayload));
     } catch (error) {
       console.error('Failed to swap translation window content', error);
     }
@@ -129,8 +147,8 @@ function TranslateWindowApp() {
     const isSource = target === 'source';
     const text = isSource ? payload.sourceText : payload.translatedText;
     const language = isSource
-      ? (payload.detectedSourceLanguage || payload.ocrDetectedSourceLanguage || null)
-      : (payload.targetLanguage || payload.detectedSourceLanguage || null);
+      ? (selectedSourceLanguage === 'auto' ? (payload.detectedSourceLanguage || payload.ocrDetectedSourceLanguage || null) : selectedSourceLanguage)
+      : (selectedTargetLanguage || payload.detectedSourceLanguage || null);
 
     if (!text.trim()) {
       return;
@@ -200,12 +218,16 @@ function TranslateWindowApp() {
       payload={payload}
       isLoading={isLoading}
       isTranslating={isTranslating}
+      sourceLanguage={selectedSourceLanguage}
+      targetLanguage={selectedTargetLanguage}
+      onSourceLanguageChange={setSelectedSourceLanguage}
+      onTargetLanguageChange={setSelectedTargetLanguage}
       isSourceSpeaking={sourceSpeaking}
       isSourceSpeechLoading={sourceSpeechLoading}
       isTranslationSpeaking={translationSpeaking}
       isTranslationSpeechLoading={translationSpeechLoading}
-      onTranslate={() => {
-        void handleTranslate();
+      onTranslate={(sourceLanguage, targetLanguage) => {
+        void handleTranslate(sourceLanguage, targetLanguage);
       }}
       onSwap={() => {
         void handleSwap();

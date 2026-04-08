@@ -11,6 +11,8 @@ use async_trait::async_trait;
 pub use edge::EdgeTtsEngine;
 use serde::{Deserialize, Serialize};
 
+use crate::models::TtsEngineInfo;
+
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TtsStatus {
@@ -43,7 +45,7 @@ pub trait TextToSpeechEngine: Send + Sync {
 #[derive(Clone)]
 pub struct TtsService {
     inner: Arc<Mutex<TtsRuntime>>,
-    engine: Arc<dyn TextToSpeechEngine>,
+    engine: Arc<Mutex<Arc<dyn TextToSpeechEngine>>>,
 }
 
 pub(super) struct TtsRuntime {
@@ -60,7 +62,7 @@ impl TtsService {
                 status: TtsStatus::Idle,
                 target: None,
             })),
-            engine: create_tts_engine("edge"),
+            engine: Arc::new(Mutex::new(create_tts_engine("edge"))),
         }
     }
 
@@ -89,7 +91,11 @@ impl TtsService {
         drop(inner);
 
         let inner = Arc::clone(&self.inner);
-        let engine = Arc::clone(&self.engine);
+        let engine = self
+            .engine
+            .lock()
+            .map_err(|_| anyhow!("tts engine mutex poisoned"))?
+            .clone();
         tauri::async_runtime::spawn(async move {
             let result = engine
                 .synthesize(&text, language.as_deref())
@@ -119,26 +125,52 @@ impl TtsService {
         Ok(())
     }
 
+    pub fn set_engine(&self, engine_id: &str) -> anyhow::Result<String> {
+        let normalized = normalize_tts_engine_id(engine_id);
+        let mut engine = self
+            .engine
+            .lock()
+            .map_err(|_| anyhow!("tts engine mutex poisoned"))?;
+        *engine = create_tts_engine(&normalized);
+        Ok(normalized)
+    }
+
     pub fn snapshot(&self) -> TtsSnapshot {
+        let engine_id = self
+            .engine
+            .lock()
+            .map(|engine| engine.id().to_string())
+            .unwrap_or_else(|_| "edge".to_string());
         self.inner
             .lock()
             .map(|inner| TtsSnapshot {
                 status: inner.status,
                 target: inner.target,
-                engine: self.engine.id().to_string(),
+                engine: engine_id.clone(),
             })
             .unwrap_or_else(|_| TtsSnapshot {
                 status: TtsStatus::Idle,
                 target: None,
-                engine: self.engine.id().to_string(),
+                engine: engine_id,
             })
     }
 }
 
 pub fn create_tts_engine(engine_id: &str) -> Arc<dyn TextToSpeechEngine> {
-    match engine_id {
+    match normalize_tts_engine_id(engine_id).as_str() {
         "edge" => Arc::new(EdgeTtsEngine),
         _ => Arc::new(EdgeTtsEngine),
+    }
+}
+
+pub fn available_tts_engines() -> Vec<TtsEngineInfo> {
+    vec![TtsEngineInfo { id: "edge".into() }]
+}
+
+pub fn normalize_tts_engine_id(engine_id: &str) -> String {
+    match engine_id.trim().to_lowercase().as_str() {
+        "edge" => "edge".into(),
+        _ => "edge".into(),
     }
 }
 

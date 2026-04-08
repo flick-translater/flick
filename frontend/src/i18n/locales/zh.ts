@@ -3,7 +3,7 @@ export default {
     sidebar: {
       general: "常规设置",
       history: "历史记录",
-      ocr: "OCR 设置",
+      engine: "引擎设置",
       ai: "AI 设置"
     },
     general: {
@@ -38,20 +38,25 @@ export default {
       savePreferences: "保存首选项"
     },
     ocr: {
-      enableShortcut: "启用 OCR 快捷键",
       autoTranslate: "自动翻译",
       ocrEngine: "OCR 引擎",
       ocrEngineHint: "仅显示当前平台实际可用的 OCR 引擎。",
       noEngineAvailable: "当前平台暂无可用 OCR 引擎",
+      ttsEngine: "TTS 引擎",
+      ttsEngineHint: "当前可用的 TTS 引擎。",
+      noTtsEngineAvailable: "当前平台暂无可用 TTS 引擎",
       targetLanguage: "目标语言",
-      targetLanguageHint: "用于「自动翻译」功能和 OCR 词典的语言。",
+      targetLanguageHint: "翻译成的目标语言。",
       autoTranslateDesc: "OCR 处理后自动翻译检测到的文本",
-      triggerOcrDesc: "使用快捷键快速触发文字捕获",
       discard: "放弃",
       saveChanges: "保存更改",
       engines: {
         macosVision: "macOS Vision（系统内置）",
+        windowsBuiltin: "Windows OCR（系统内置）",
         paddleOcrV5Mobile: "Paddle OCRV5 Mobile（内置模型）"
+      },
+      ttsEngines: {
+        edge: "Microsoft Edge TTS"
       },
       languages: {
         english: "英语",

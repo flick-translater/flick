@@ -3,7 +3,7 @@ export default {
     sidebar: {
       general: "General",
       history: "History",
-      ocr: "OCR Settings",
+      engine: "Engine Settings",
       ai: "AI Settings"
     },
     general: {
@@ -38,21 +38,25 @@ export default {
       savePreferences: "Save Preferences"
     },
     ocr: {
-      enableShortcut: "Enable OCR Shortcut",
       autoTranslate: "Auto-Translate",
       ocrEngine: "OCR Engine",
       ocrEngineHint: "Only OCR engines actually available on the current platform are shown here.",
       noEngineAvailable: "No OCR engine is currently available on this platform",
+      ttsEngine: "TTS Engine",
+      ttsEngineHint: "Currently available TTS engines.",
+      noTtsEngineAvailable: "No TTS engine is currently available on this platform",
       targetLanguage: "Target Language",
-      targetLanguageHint: "Language used for the 'Auto-Translate' feature and OCR dictionary.",
+      targetLanguageHint: "The target language to translate into.",
       autoTranslateDesc: "Automatically translate detected text after OCR processing",
-      triggerOcrDesc: "Quickly trigger text capture using",
       discard: "Discard",
       saveChanges: "Save Changes",
       engines: {
         macosVision: "macOS Vision (Built-in)",
         windowsBuiltin: "Windows OCR (Built-in)",
         paddleOcrV5Mobile: "Paddle OCRV5 Mobile (Bundled Models)"
+      },
+      ttsEngines: {
+        edge: "Microsoft Edge TTS"
       },
       languages: {
         english: "English",

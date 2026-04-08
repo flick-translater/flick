@@ -79,6 +79,11 @@ pub struct OcrEngineInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsEngineInfo {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranslateRequest {
     pub text: String,
     pub source_language: Option<String>,
@@ -198,10 +203,10 @@ pub struct AppSettings {
     pub interface_language: String,
     pub interface_language_set: bool,
     pub screenshot_directory: String,
-    pub ocr_shortcut_enabled: bool,
     pub ocr_auto_translate: bool,
     pub ocr_target_language: String,
     pub ocr_provider: String,
+    pub tts_provider: String,
     pub ai: AISettings,
 }
 
@@ -217,10 +222,10 @@ impl Default for AppSettings {
             interface_language: "en".into(),
             interface_language_set: false,
             screenshot_directory: String::new(),
-            ocr_shortcut_enabled: true,
             ocr_auto_translate: true,
             ocr_target_language: "zh".into(),
             ocr_provider: default_ocr_provider().into(),
+            tts_provider: default_tts_provider().into(),
             ai: AISettings::default(),
         }
     }
@@ -241,4 +246,8 @@ fn default_ocr_provider() -> &'static str {
     {
         "windows"
     }
+}
+
+fn default_tts_provider() -> &'static str {
+    "edge"
 }

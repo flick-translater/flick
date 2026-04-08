@@ -9,8 +9,11 @@ use crate::{
     app::{AppState, apply_shortcut_bindings, platform},
     error::FlickError,
     features::capture,
-    models::{AISettings, AppSettings, AutostartStatus, OcrEngineInfo},
-    services::{available_ocr_engines, create_ocr_service, normalize_ocr_engine_id},
+    models::{AISettings, AppSettings, AutostartStatus, OcrEngineInfo, TtsEngineInfo},
+    services::{
+        available_ocr_engines, available_tts_engines, create_ocr_service, normalize_ocr_engine_id,
+        normalize_tts_engine_id,
+    },
 };
 
 #[tauri::command]
@@ -209,47 +212,6 @@ pub fn get_available_ocr_engines() -> Result<Vec<OcrEngineInfo>, FlickError> {
 }
 
 #[tauri::command]
-pub fn update_ocr_shortcut_enabled(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    enabled: bool,
-) -> Result<AppSettings, FlickError> {
-    let current_settings = {
-        let settings = state
-            .settings
-            .lock()
-            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
-        settings.clone()
-    };
-
-    if current_settings.ocr_shortcut_enabled == enabled {
-        return get_app_settings(state);
-    }
-
-    let mut next_settings = current_settings.clone();
-    next_settings.ocr_shortcut_enabled = enabled;
-
-    if let Err(error) = apply_shortcut_bindings(&app, &next_settings) {
-        let _ = apply_shortcut_bindings(&app, &current_settings);
-        return Err(FlickError::Message(format!(
-            "OCR 快捷键状态更新失败: {error}"
-        )));
-    }
-
-    let updated = {
-        let mut settings = state
-            .settings
-            .lock()
-            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
-        *settings = next_settings.clone();
-        settings.clone()
-    };
-
-    state.settings_store.save_settings(&updated)?;
-    Ok(updated)
-}
-
-#[tauri::command]
 pub fn update_ocr_auto_translate(
     state: State<'_, AppState>,
     enabled: bool,
@@ -283,6 +245,40 @@ pub fn update_ocr_target_language(
             .lock()
             .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
         settings.ocr_target_language = normalized;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn get_available_tts_engines() -> Result<Vec<TtsEngineInfo>, FlickError> {
+    Ok(available_tts_engines())
+}
+
+#[tauri::command]
+pub fn update_tts_provider(
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = normalize_tts_engine_id(&provider);
+    let available = available_tts_engines();
+    if !available.iter().any(|engine| engine.id == normalized) {
+        return Err(FlickError::Message(
+            "invalid TTS provider for current platform".into(),
+        ));
+    }
+
+    state.tts_service.stop()?;
+    state.tts_service.set_engine(&normalized)?;
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.tts_provider = normalized;
         settings.clone()
     };
 

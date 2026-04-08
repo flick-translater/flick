@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import Toggle from '../components/Toggle';
-import type { AppSettings, OcrEngineInfo } from '../types';
+import { getLanguageOptions } from '../languages';
+import type { AppSettings, OcrEngineInfo, TtsEngineInfo } from '../types';
 
 const languageMap: Record<string, string> = {
   en: 'en', 'en-US': 'en', 'en-GB': 'en', 'en-AU': 'en', 'en-CA': 'en',
@@ -32,34 +33,15 @@ function getDefaultLanguage(): string {
 
 export default function OCRSettings() {
   const { t } = useTranslation();
-  const [enableShortcut, setEnableShortcut] = useState(true);
   const [autoTranslate, setAutoTranslate] = useState(true);
   const [targetLanguage, setTargetLanguage] = useState(getDefaultLanguage);
   const [ocrProvider, setOcrProvider] = useState('');
+  const [ttsProvider, setTtsProvider] = useState('');
   const [availableEngines, setAvailableEngines] = useState<OcrEngineInfo[]>([]);
+  const [availableTtsEngines, setAvailableTtsEngines] = useState<TtsEngineInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const targetLanguages = useMemo(() => [
-    { value: 'en', label: t('ocr.languages.english') },
-    { value: 'zh', label: t('ocr.languages.chineseSimplified') },
-    { value: 'zh-tw', label: t('ocr.languages.chineseTraditional') },
-    { value: 'ja', label: t('ocr.languages.japanese') },
-    { value: 'ko', label: t('ocr.languages.korean') },
-    { value: 'es', label: t('ocr.languages.spanish') },
-    { value: 'fr', label: t('ocr.languages.french') },
-    { value: 'de', label: t('ocr.languages.german') },
-    { value: 'it', label: t('ocr.languages.italian') },
-    { value: 'pt', label: t('ocr.languages.portuguese') },
-    { value: 'ru', label: t('ocr.languages.russian') },
-    { value: 'ar', label: t('ocr.languages.arabic') },
-    { value: 'th', label: t('ocr.languages.thai') },
-    { value: 'vi', label: t('ocr.languages.vietnamese') },
-    { value: 'nl', label: t('ocr.languages.dutch') },
-    { value: 'pl', label: t('ocr.languages.polish') },
-    { value: 'tr', label: t('ocr.languages.turkish') },
-    { value: 'id', label: t('ocr.languages.indonesian') },
-    { value: 'hi', label: t('ocr.languages.hindi') },
-  ], [t]);
+  const targetLanguages = useMemo(() => getLanguageOptions(t), [t]);
 
   const ocrEngineLabel = (engineId: string) => {
     switch (engineId) {
@@ -75,33 +57,33 @@ export default function OCRSettings() {
     }
   };
 
+  const ttsEngineLabel = (engineId: string) => {
+    switch (engineId) {
+      case 'edge':
+        return t('ocr.ttsEngines.edge', { defaultValue: 'Microsoft Edge TTS' });
+      default:
+        return engineId;
+    }
+  };
+
   useEffect(() => {
     void Promise.all([
       invoke<AppSettings>('get_app_settings'),
       invoke<OcrEngineInfo[]>('get_available_ocr_engines'),
+      invoke<TtsEngineInfo[]>('get_available_tts_engines'),
     ])
-      .then(([settings, engines]) => {
+      .then(([settings, engines, ttsEngines]) => {
         setAvailableEngines(engines);
-        setEnableShortcut(settings.ocr_shortcut_enabled);
+        setAvailableTtsEngines(ttsEngines);
         setAutoTranslate(settings.ocr_auto_translate);
         setTargetLanguage(settings.ocr_target_language || getDefaultLanguage());
         setOcrProvider(settings.ocr_provider);
+        setTtsProvider(settings.tts_provider);
       })
       .finally(() => {
         setIsLoading(false);
       });
   }, []);
-
-  const handleShortcutToggle = (checked: boolean) => {
-    setEnableShortcut(checked);
-    void invoke<AppSettings>('update_ocr_shortcut_enabled', { enabled: checked })
-      .then((settings) => {
-        setEnableShortcut(settings.ocr_shortcut_enabled);
-      })
-      .catch(() => {
-        setEnableShortcut(!checked);
-      });
-  };
 
   const handleAutoTranslateToggle = (checked: boolean) => {
     setAutoTranslate(checked);
@@ -137,6 +119,18 @@ export default function OCRSettings() {
       });
   };
 
+  const handleTtsProviderChange = (provider: string) => {
+    const previousProvider = ttsProvider;
+    setTtsProvider(provider);
+    void invoke<AppSettings>('update_tts_provider', { provider })
+      .then((settings) => {
+        setTtsProvider(settings.tts_provider);
+      })
+      .catch(() => {
+        setTtsProvider(previousProvider);
+      });
+  };
+
   if (isLoading) {
     return (
       <div className="mx-auto max-w-4xl animate-in fade-in duration-500">
@@ -154,18 +148,6 @@ export default function OCRSettings() {
           <div className="group rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-colors hover:bg-surface-container/50 sm:p-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="space-y-1.5 pr-4">
-                <div className="font-bold text-on-surface text-base">{t('ocr.enableShortcut')}</div>
-                <p className="text-xs text-on-surface-variant leading-relaxed">
-                  {t('ocr.triggerOcrDesc')}
-                </p>
-              </div>
-              <Toggle checked={enableShortcut} onChange={handleShortcutToggle} />
-            </div>
-          </div>
-
-          <div className="group rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm transition-colors hover:bg-surface-container/50 sm:p-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div className="space-y-1.5 pr-4">
                 <div className="font-bold text-on-surface text-base">{t('ocr.autoTranslate')}</div>
                 <p className="text-xs text-on-surface-variant leading-relaxed">
                   {t('ocr.autoTranslateDesc')}
@@ -177,28 +159,54 @@ export default function OCRSettings() {
         </div>
 
         <div className="space-y-6 pt-4">
-          <div className="max-w-md">
-            <label className="text-sm font-bold text-on-surface block mb-2">{t('ocr.ocrEngine')}</label>
-            <div className="relative group">
-              <select
-                value={ocrProvider}
-                disabled={availableEngines.length === 0}
-                onChange={(e) => handleOcrProviderChange(e.target.value)}
-                className="w-full appearance-none bg-surface-container-lowest border border-outline-variant/30 px-4 py-3.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none cursor-pointer shadow-sm transition-all text-on-surface disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {availableEngines.length > 0 ? availableEngines.map((engine) => (
-                  <option key={engine.id} value={engine.id}>{ocrEngineLabel(engine.id)}</option>
-                )) : (
-                  <option value="">{t('ocr.noEngineAvailable')}</option>
-                )}
-              </select>
-              <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-on-surface-variant">
-                <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M1.41 0.589966L6 5.16997L10.59 0.589966L12 1.99997L6 7.99997L0 1.99997L1.41 0.589966Z" fill="currentColor"/>
-                </svg>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div className="max-w-md">
+              <label className="text-sm font-bold text-on-surface block mb-2">{t('ocr.ocrEngine')}</label>
+              <div className="relative group">
+                <select
+                  value={ocrProvider}
+                  disabled={availableEngines.length === 0}
+                  onChange={(e) => handleOcrProviderChange(e.target.value)}
+                  className="w-full appearance-none bg-surface-container-lowest border border-outline-variant/30 px-4 py-3.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none cursor-pointer shadow-sm transition-all text-on-surface disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {availableEngines.length > 0 ? availableEngines.map((engine) => (
+                    <option key={engine.id} value={engine.id}>{ocrEngineLabel(engine.id)}</option>
+                  )) : (
+                    <option value="">{t('ocr.noEngineAvailable')}</option>
+                  )}
+                </select>
+                <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-on-surface-variant">
+                  <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M1.41 0.589966L6 5.16997L10.59 0.589966L12 1.99997L6 7.99997L0 1.99997L1.41 0.589966Z" fill="currentColor"/>
+                  </svg>
+                </div>
               </div>
+              <p className="mt-2 text-[11px] text-on-surface-variant italic">{t('ocr.ocrEngineHint')}</p>
             </div>
-            <p className="mt-2 text-[11px] text-on-surface-variant italic">{t('ocr.ocrEngineHint')}</p>
+
+            <div className="max-w-md">
+              <label className="text-sm font-bold text-on-surface block mb-2">{t('ocr.ttsEngine')}</label>
+              <div className="relative group">
+                <select
+                  value={ttsProvider}
+                  disabled={availableTtsEngines.length === 0}
+                  onChange={(e) => handleTtsProviderChange(e.target.value)}
+                  className="w-full appearance-none bg-surface-container-lowest border border-outline-variant/30 px-4 py-3.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none cursor-pointer shadow-sm transition-all text-on-surface disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {availableTtsEngines.length > 0 ? availableTtsEngines.map((engine) => (
+                    <option key={engine.id} value={engine.id}>{ttsEngineLabel(engine.id)}</option>
+                  )) : (
+                    <option value="">{t('ocr.noTtsEngineAvailable')}</option>
+                  )}
+                </select>
+                <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-on-surface-variant">
+                  <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M1.41 0.589966L6 5.16997L10.59 0.589966L12 1.99997L6 7.99997L0 1.99997L1.41 0.589966Z" fill="currentColor"/>
+                  </svg>
+                </div>
+              </div>
+              <p className="mt-2 text-[11px] text-on-surface-variant italic">{t('ocr.ttsEngineHint')}</p>
+            </div>
           </div>
 
           <div className="max-w-md">

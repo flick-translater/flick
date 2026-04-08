@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Pin, Minus, X, Copy, ArrowRightLeft, Volume2, VolumeX, ScanText, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getLanguageOptions, getSourceLanguageOptions, prioritizeLanguageOption, type LanguageOption } from '../languages';
 import { TranslationPayload } from '../types';
 import { useTypewriter } from '../hooks/useTypewriter';
 
@@ -15,10 +16,14 @@ interface TranslationWindowProps {
   isTranslationSpeaking?: boolean;
   isTranslationSpeechLoading?: boolean;
   onClose: () => void;
-  onTranslate?: () => void;
+  onTranslate?: (sourceLanguage: string, targetLanguage: string) => void;
   onSwap?: () => void;
   onSourceSpeakToggle?: () => void;
   onTranslationSpeakToggle?: () => void;
+  sourceLanguage: string;
+  targetLanguage: string;
+  onSourceLanguageChange?: (language: string) => void;
+  onTargetLanguageChange?: (language: string) => void;
   standalone?: boolean;
 }
 
@@ -78,6 +83,10 @@ export default function TranslationWindow({
   onSwap,
   onSourceSpeakToggle,
   onTranslationSpeakToggle,
+  sourceLanguage,
+  targetLanguage,
+  onSourceLanguageChange,
+  onTargetLanguageChange,
   standalone = false,
 }: TranslationWindowProps) {
   const { t } = useTranslation();
@@ -96,8 +105,16 @@ export default function TranslationWindow({
   const resolvedSourceLanguage = payload.detectedSourceLanguage?.toLowerCase() === 'auto'
     ? (payload.ocrDetectedSourceLanguage ?? 'auto')
     : (payload.detectedSourceLanguage ?? payload.ocrDetectedSourceLanguage);
-  const sourceLanguageText = languageLabel(resolvedSourceLanguage, t);
-  const targetLanguageText = languageLabel(payload.targetLanguage, t);
+  const sourceLanguageOptions = prioritizeLanguageOption(
+    getSourceLanguageOptions(t),
+    resolvedSourceLanguage ?? sourceLanguage,
+    languageLabel(resolvedSourceLanguage, t),
+  );
+  const targetLanguageOptions = prioritizeLanguageOption(
+    getLanguageOptions(t),
+    payload.targetLanguage || targetLanguage,
+    languageLabel(payload.targetLanguage, t),
+  );
   const normalizedSourceText = normalizeDisplayText(payload.sourceText);
   const normalizedTranslatedText = normalizeDisplayText(payload.translatedText);
 
@@ -381,8 +398,16 @@ export default function TranslationWindow({
         {/* Language Selector */}
         <div className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2">
           <div className="relative min-w-0">
-            <select className="w-full appearance-none py-2.5 px-3 rounded-lg border border-outline-variant/30 bg-white text-on-surface font-medium text-xs hover:border-primary/50 transition-all outline-none cursor-pointer shadow-sm">
-              <option>{sourceLanguageText}</option>
+            <select
+              value={sourceLanguage}
+              onChange={(event) => {
+                onSourceLanguageChange?.(event.target.value);
+              }}
+              className="w-full appearance-none py-2.5 px-3 rounded-lg border border-outline-variant/30 bg-white text-on-surface font-medium text-xs hover:border-primary/50 transition-all outline-none cursor-pointer shadow-sm"
+            >
+              {sourceLanguageOptions.map((option: LanguageOption) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
             <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-on-surface-variant">
               <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -407,8 +432,16 @@ export default function TranslationWindow({
           </button>
           
           <div className="relative min-w-0">
-            <select className="w-full appearance-none py-2.5 px-3 rounded-lg border border-outline-variant/30 bg-white text-on-surface font-medium text-xs hover:border-primary/50 transition-all outline-none cursor-pointer shadow-sm">
-              <option>{targetLanguageText}</option>
+            <select
+              value={targetLanguage}
+              onChange={(event) => {
+                onTargetLanguageChange?.(event.target.value);
+              }}
+              className="w-full appearance-none py-2.5 px-3 rounded-lg border border-outline-variant/30 bg-white text-on-surface font-medium text-xs hover:border-primary/50 transition-all outline-none cursor-pointer shadow-sm"
+            >
+              {targetLanguageOptions.map((option: LanguageOption) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
             <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-on-surface-variant">
               <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -475,7 +508,7 @@ export default function TranslationWindow({
           type="button"
           disabled={isTranslateDisabled}
           onClick={() => {
-            onTranslate?.();
+            onTranslate?.(sourceLanguage, targetLanguage);
           }}
           className={`px-6 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-all ${
             isTranslateDisabled

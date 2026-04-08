@@ -29,7 +29,7 @@ export default function Sidebar({ currentView, setCurrentView }: SidebarProps) {
   const navItems: { id: ViewState; label: string; icon: React.ElementType }[] = [
     { id: 'general', label: t('sidebar.general'), icon: Settings },
     { id: 'history', label: t('sidebar.history'), icon: History },
-    { id: 'ocr', label: t('sidebar.ocr'), icon: ScanText },
+    { id: 'ocr', label: t('sidebar.engine'), icon: ScanText },
     { id: 'ai', label: t('sidebar.ai'), icon: Bot },
   ];
 

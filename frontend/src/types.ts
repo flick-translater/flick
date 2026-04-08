@@ -29,10 +29,10 @@ export type AppSettings = {
   interface_language: string;
   interface_language_set: boolean;
   screenshot_directory: string;
-  ocr_shortcut_enabled: boolean;
   ocr_auto_translate: boolean;
   ocr_target_language: string;
   ocr_provider: string;
+  tts_provider: string;
   ai: AISettings;
 };
 
@@ -42,6 +42,10 @@ export type AutostartStatus = {
 };
 
 export type OcrEngineInfo = {
+  id: string;
+};
+
+export type TtsEngineInfo = {
   id: string;
 };
 

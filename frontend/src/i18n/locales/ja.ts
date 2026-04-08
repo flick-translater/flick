@@ -3,7 +3,7 @@ export default {
     sidebar: {
       general: "一般設定",
       history: "履歴",
-      ocr: "OCR 設定",
+      engine: "エンジン設定",
       ai: "AI 設定"
     },
     general: {
@@ -38,20 +38,25 @@ export default {
       savePreferences: "設定を保存"
     },
     ocr: {
-      enableShortcut: "OCRショートカットを有効にする",
       autoTranslate: "自動翻訳",
       ocrEngine: "OCR エンジン",
       ocrEngineHint: "ここには現在のプラットフォームで実際に利用できる OCR エンジンのみを表示します。",
       noEngineAvailable: "このプラットフォームでは利用可能な OCR エンジンがありません",
+      ttsEngine: "TTS エンジン",
+      ttsEngineHint: "現在利用可能な TTS エンジン。",
+      noTtsEngineAvailable: "このプラットフォームでは利用可能な TTS エンジンがありません",
       targetLanguage: "ターゲット言語",
-      targetLanguageHint: "「自動翻訳」機能とOCR辞書に使用される言語。",
+      targetLanguageHint: "翻訳先のターゲット言語。",
       autoTranslateDesc: "OCR処理後に検出されたテキストを自動的に翻訳します",
-      triggerOcrDesc: "ショートカットキーを使用してテキストキャプチャを素早くトリガー",
       discard: "破棄",
       saveChanges: "変更を保存",
       engines: {
         macosVision: "macOS Vision（システム内蔵）",
+        windowsBuiltin: "Windows OCR（標準搭載）",
         paddleOcrV5Mobile: "Paddle OCRV5 Mobile（内蔵モデル）"
+      },
+      ttsEngines: {
+        edge: "Microsoft Edge TTS"
       },
       languages: {
         english: "英語",
