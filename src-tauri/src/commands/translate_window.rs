@@ -48,6 +48,34 @@ pub fn get_translate_window_state(
 }
 
 #[tauri::command]
+pub fn swap_translate_window_content(
+    state: tauri::State<'_, AppState>,
+) -> Result<TranslateWindowState, FlickError> {
+    let mut snapshot = state
+        .translate_window_state
+        .lock()
+        .map_err(|_| FlickError::LockError("translate_window_state".into()))?;
+
+    let resolved_source_language = snapshot
+        .detected_source_language
+        .as_deref()
+        .filter(|value| !value.eq_ignore_ascii_case("auto"))
+        .or(snapshot.ocr_detected_source_language.as_deref())
+        .unwrap_or(snapshot.target_language.as_str())
+        .to_string();
+    let previous_target_language = snapshot.target_language.clone();
+
+    let previous_source_text = std::mem::take(&mut snapshot.source_text);
+    snapshot.source_text = std::mem::take(&mut snapshot.translated_text);
+    snapshot.translated_text = previous_source_text;
+    snapshot.detected_source_language = Some(previous_target_language.clone());
+    snapshot.ocr_detected_source_language = Some(previous_target_language);
+    snapshot.target_language = resolved_source_language;
+
+    Ok(snapshot.clone())
+}
+
+#[tauri::command]
 pub fn set_translate_window_pinned(app: AppHandle, pinned: bool) -> Result<(), FlickError> {
     if !crate::app::platform::translate_window_pinning_supported() {
         return Err(FlickError::Message(

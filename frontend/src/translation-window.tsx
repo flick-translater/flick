@@ -41,6 +41,12 @@ function buildPayloadFromSnapshot(snapshot: TranslateWindowState): TranslationPa
   };
 }
 
+function resolveSourceLanguage(payload: TranslationPayload): string {
+  return payload.detectedSourceLanguage?.toLowerCase() === 'auto'
+    ? (payload.ocrDetectedSourceLanguage ?? payload.targetLanguage)
+    : (payload.detectedSourceLanguage ?? payload.ocrDetectedSourceLanguage ?? payload.targetLanguage);
+}
+
 function TranslateWindowApp() {
   const [payload, setPayload] = useState<TranslationPayload>(placeholderPayload);
   const [isLoading, setIsLoading] = useState(false);
@@ -86,7 +92,7 @@ function TranslateWindowApp() {
       const response = await invoke<TranslateResponse>('translate', {
         request: {
           text: payload.sourceText,
-          source_language: payload.ocrDetectedSourceLanguage ?? null,
+          source_language: resolveSourceLanguage(payload),
           target_language: payload.targetLanguage,
         },
       });
@@ -101,6 +107,21 @@ function TranslateWindowApp() {
       console.error('[TRANSLATE] manual translate failed', error);
     } finally {
       setIsTranslating(false);
+    }
+  };
+
+  const handleSwap = async () => {
+    try {
+      await invoke('stop_window_tts');
+      setTtsSnapshot((prev) => ({ ...prev, status: 'idle', target: null }));
+
+      const nextSnapshot = await invoke<TranslateWindowState>('swap_translate_window_content');
+      lastSnapshotRef.current = JSON.stringify(nextSnapshot);
+      setPayload(buildPayloadFromSnapshot(nextSnapshot));
+      setIsLoading(nextSnapshot.is_loading);
+      setIsTranslating(nextSnapshot.is_translating);
+    } catch (error) {
+      console.error('Failed to swap translation window content', error);
     }
   };
 
@@ -185,6 +206,9 @@ function TranslateWindowApp() {
       isTranslationSpeechLoading={translationSpeechLoading}
       onTranslate={() => {
         void handleTranslate();
+      }}
+      onSwap={() => {
+        void handleSwap();
       }}
       onSourceSpeakToggle={() => {
         void handleSpeakToggle('source');

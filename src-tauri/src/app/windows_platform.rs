@@ -140,12 +140,21 @@ fn register_shortcut_handler(
 ) -> anyhow::Result<()> {
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, _, event| {
-            if event.state == ShortcutState::Pressed {
+            if shortcut_event_matches_action(event.state, action) {
                 crate::app::trigger_shortcut_action(app, action);
             }
         })?;
 
     Ok(())
+}
+
+fn shortcut_event_matches_action(state: ShortcutState, action: ShortcutAction) -> bool {
+    match action {
+        ShortcutAction::TranslateSelectedText => state == ShortcutState::Released,
+        ShortcutAction::Capture | ShortcutAction::TranslateCapture => {
+            state == ShortcutState::Pressed
+        }
+    }
 }
 
 fn set_window_icons(window: &WebviewWindow) -> anyhow::Result<()> {

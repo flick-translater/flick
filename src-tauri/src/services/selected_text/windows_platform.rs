@@ -2,20 +2,30 @@ use std::{mem::size_of, thread, time::Duration};
 
 use anyhow::{Context, anyhow};
 use arboard::Clipboard;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL,
+use windows_sys::Win32::{
+    System::DataExchange::GetClipboardSequenceNumber,
+    UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+        VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    },
 };
 
 const COPY_KEY: VIRTUAL_KEY = b'C' as VIRTUAL_KEY;
+const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const CLIPBOARD_POLL_ATTEMPTS: usize = 12;
+const MODIFIER_RELEASE_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const MODIFIER_RELEASE_ATTEMPTS: usize = 15;
 
 pub fn read_selected_text() -> anyhow::Result<String> {
-    let mut clipboard = Clipboard::new().context("无法访问剪贴板")?;
+    let mut clipboard = Clipboard::new().context("failed to access clipboard")?;
     let previous_text = clipboard.get_text().ok();
+    let previous_sequence = unsafe { GetClipboardSequenceNumber() };
 
-    simulate_copy_shortcut().context("无法触发系统复制快捷键")?;
-    thread::sleep(Duration::from_millis(150));
+    wait_for_modifier_keys_release();
+    simulate_copy_shortcut().context("failed to trigger system copy shortcut")?;
 
-    let text = clipboard.get_text().context("剪贴板中没有文本内容")?;
+    let text = wait_for_copied_text(&mut clipboard, previous_sequence, previous_text.as_deref())
+        .context("clipboard does not contain newly copied text")?;
     let normalized = sanitize_selected_text(&text);
 
     if let Some(previous_text) = previous_text {
@@ -23,10 +33,36 @@ pub fn read_selected_text() -> anyhow::Result<String> {
     }
 
     if normalized.is_empty() {
-        return Err(anyhow!("当前没有可翻译的选中文本"));
+        return Err(anyhow!("there is no translatable selected text"));
     }
 
     Ok(normalized)
+}
+
+fn wait_for_copied_text(
+    clipboard: &mut Clipboard,
+    previous_sequence: u32,
+    previous_text: Option<&str>,
+) -> anyhow::Result<String> {
+    for _ in 0..CLIPBOARD_POLL_ATTEMPTS {
+        thread::sleep(CLIPBOARD_POLL_INTERVAL);
+
+        let current_sequence = unsafe { GetClipboardSequenceNumber() };
+        let text = match clipboard.get_text() {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+
+        if current_sequence != previous_sequence {
+            return Ok(text);
+        }
+
+        if previous_text.is_none_or(|previous| previous != text) {
+            return Ok(text);
+        }
+    }
+
+    Err(anyhow!("there is no translatable selected text"))
 }
 
 fn sanitize_selected_text(text: &str) -> String {
@@ -35,6 +71,25 @@ fn sanitize_selected_text(text: &str) -> String {
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+fn wait_for_modifier_keys_release() {
+    for _ in 0..MODIFIER_RELEASE_ATTEMPTS {
+        if !modifier_key_pressed(VK_CONTROL)
+            && !modifier_key_pressed(VK_MENU)
+            && !modifier_key_pressed(VK_SHIFT)
+            && !modifier_key_pressed(VK_LWIN)
+            && !modifier_key_pressed(VK_RWIN)
+        {
+            return;
+        }
+
+        thread::sleep(MODIFIER_RELEASE_POLL_INTERVAL);
+    }
+}
+
+fn modifier_key_pressed(vk: VIRTUAL_KEY) -> bool {
+    unsafe { (GetAsyncKeyState(vk as i32) as u16 & 0x8000) != 0 }
 }
 
 fn simulate_copy_shortcut() -> anyhow::Result<()> {
@@ -53,7 +108,7 @@ fn simulate_copy_shortcut() -> anyhow::Result<()> {
         )
     };
     if sent != inputs.len() as u32 {
-        return Err(anyhow!("发送复制快捷键失败"));
+        return Err(anyhow!("failed to send copy shortcut"));
     }
 
     Ok(())

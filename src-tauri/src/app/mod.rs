@@ -128,6 +128,7 @@ pub fn run() {
             commands::translate_window::get_translate_window_pinned,
             commands::translate_window::is_translate_window_pinning_supported,
             commands::translate_window::get_translate_window_state,
+            commands::translate_window::swap_translate_window_content,
             commands::translate_window::set_translate_window_pinned,
             commands::translate_window::minimize_translate_window,
             commands::translate_window::close_translate_window,

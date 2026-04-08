@@ -16,6 +16,7 @@ interface TranslationWindowProps {
   isTranslationSpeechLoading?: boolean;
   onClose: () => void;
   onTranslate?: () => void;
+  onSwap?: () => void;
   onSourceSpeakToggle?: () => void;
   onTranslationSpeakToggle?: () => void;
   standalone?: boolean;
@@ -74,6 +75,7 @@ export default function TranslationWindow({
   isTranslationSpeechLoading = false,
   onClose,
   onTranslate,
+  onSwap,
   onSourceSpeakToggle,
   onTranslationSpeakToggle,
   standalone = false,
@@ -389,7 +391,18 @@ export default function TranslationWindow({
             </div>
           </div>
           
-          <button className="w-10 h-10 rounded-lg bg-primary text-white flex items-center justify-center shadow-md hover:bg-primary-container transition-all active:scale-95 shrink-0">
+          <button
+            type="button"
+            disabled={!payload.sourceText.trim() && !payload.translatedText.trim()}
+            onClick={() => {
+              onSwap?.();
+            }}
+            className={`w-10 h-10 rounded-lg flex items-center justify-center shadow-md transition-all active:scale-95 shrink-0 ${
+              payload.sourceText.trim() || payload.translatedText.trim()
+                ? 'bg-primary text-white hover:bg-primary-container'
+                : 'cursor-not-allowed bg-surface-container-high text-on-surface-variant shadow-none'
+            }`}
+          >
             <ArrowRightLeft size={18} />
           </button>
           
