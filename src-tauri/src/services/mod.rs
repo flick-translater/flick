@@ -14,7 +14,7 @@ pub use ocr::{
     normalize_ocr_engine_id,
 };
 pub use screen_capture::{CachedScreenCapture, ScreenCaptureService};
-pub use selected_text::read_selected_text;
+pub use selected_text::{read_selected_text, replace_selected_text};
 pub use settings::SettingsStore;
 pub use translation_history::{NewTranslationRecord, TranslationHistoryStore};
 pub use tts::{TtsService, TtsSnapshot, TtsTarget, available_tts_engines, normalize_tts_engine_id};

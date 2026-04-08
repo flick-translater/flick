@@ -4,10 +4,11 @@ use anyhow::{Context, anyhow};
 use arboard::Clipboard;
 use core_foundation::{
     base::{CFRelease, CFTypeRef, TCFType},
+    boolean::CFBoolean,
     string::{CFString, CFStringRef},
 };
 use core_graphics::{
-    event::{CGEvent, CGEventFlags, CGEventTapLocation, KeyCode},
+    event::{CGEvent, CGEventFlags, CGEventTapLocation},
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 
@@ -34,15 +35,31 @@ pub fn read_selected_text() -> anyhow::Result<String> {
     })
 }
 
-fn read_selected_text_via_accessibility() -> anyhow::Result<String> {
-    let system_wide = unsafe { AXUIElementCreateSystemWide() };
-    if system_wide.is_null() {
-        return Err(anyhow!("无法创建系统辅助功能对象"));
+pub fn replace_selected_text(text: &str) -> anyhow::Result<bool> {
+    match focused_ui_element() {
+        Ok(focused) => {
+            let is_editable = is_focused_element_editable(focused.cast()).unwrap_or(true);
+            unsafe {
+                CFRelease(focused);
+            }
+
+            if !is_editable {
+                return Ok(false);
+            }
+        }
+        Err(_error) => {
+            // Some apps transiently stop exposing a focused accessibility element after the
+            // global shortcut fires. Fall back to paste-based replacement in that case.
+        }
     }
 
+    replace_selected_text_via_paste(text)?;
+    Ok(true)
+}
+
+fn read_selected_text_via_accessibility() -> anyhow::Result<String> {
+    let focused = focused_ui_element().context("无法读取当前焦点元素")?;
     let result = (|| -> anyhow::Result<String> {
-        let focused = copy_attribute_value(system_wide, "AXFocusedUIElement")
-            .context("无法读取当前焦点元素")?;
         let selected = copy_attribute_value(focused.cast(), "AXSelectedText")
             .context("无法读取当前选中文本")?;
 
@@ -50,10 +67,6 @@ fn read_selected_text_via_accessibility() -> anyhow::Result<String> {
             let selected_text = CFString::wrap_under_create_rule(selected.cast());
             selected_text.to_string()
         };
-
-        unsafe {
-            CFRelease(focused);
-        }
 
         let normalized = text.trim().to_string();
         if normalized.is_empty() {
@@ -64,7 +77,7 @@ fn read_selected_text_via_accessibility() -> anyhow::Result<String> {
     })();
 
     unsafe {
-        CFRelease(system_wide.cast());
+        CFRelease(focused);
     }
 
     result
@@ -85,19 +98,67 @@ fn read_selected_text_via_copy_shortcut() -> anyhow::Result<String> {
 }
 
 fn simulate_copy_shortcut() -> anyhow::Result<()> {
+    simulate_shortcut(0x08, CGEventFlags::CGEventFlagCommand)
+}
+
+fn replace_selected_text_via_paste(text: &str) -> anyhow::Result<()> {
+    let mut clipboard = Clipboard::new().context("无法访问剪贴板")?;
+    let previous_text = clipboard.get_text().ok();
+    clipboard
+        .set_text(text.to_string())
+        .context("无法写入剪贴板")?;
+    thread::sleep(Duration::from_millis(40));
+    simulate_shortcut(0x09, CGEventFlags::CGEventFlagCommand)
+        .context("无法触发系统粘贴快捷键")?;
+    thread::sleep(Duration::from_millis(120));
+
+    if let Some(previous_text) = previous_text {
+        let _ = clipboard.set_text(previous_text);
+    }
+
+    Ok(())
+}
+
+fn simulate_shortcut(key_code: u16, modifiers: CGEventFlags) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
         .map_err(|_| anyhow!("无法创建键盘事件源"))?;
-    let key_down = CGEvent::new_keyboard_event(source.clone(), KeyCode::ANSI_C, true)
-        .map_err(|_| anyhow!("无法创建复制按下事件"))?;
-    key_down.set_flags(CGEventFlags::CGEventFlagCommand);
+    let key_down = CGEvent::new_keyboard_event(source.clone(), key_code, true)
+        .map_err(|_| anyhow!("无法创建快捷键按下事件"))?;
+    key_down.set_flags(modifiers);
 
-    let key_up = CGEvent::new_keyboard_event(source, KeyCode::ANSI_C, false)
-        .map_err(|_| anyhow!("无法创建复制抬起事件"))?;
-    key_up.set_flags(CGEventFlags::CGEventFlagCommand);
+    let key_up = CGEvent::new_keyboard_event(source, key_code, false)
+        .map_err(|_| anyhow!("无法创建快捷键抬起事件"))?;
+    key_up.set_flags(modifiers);
 
     key_down.post(CGEventTapLocation::HID);
     key_up.post(CGEventTapLocation::HID);
     Ok(())
+}
+
+fn focused_ui_element() -> anyhow::Result<AXUIElementRef> {
+    let system_wide = unsafe { AXUIElementCreateSystemWide() };
+    if system_wide.is_null() {
+        return Err(anyhow!("无法创建系统辅助功能对象"));
+    }
+
+    let focused = copy_attribute_value(system_wide, "AXFocusedUIElement");
+    unsafe {
+        CFRelease(system_wide.cast());
+    }
+    focused.map(|value| value.cast())
+}
+
+fn is_focused_element_editable(element: AXUIElementRef) -> anyhow::Result<bool> {
+    let editable = copy_attribute_value(element, "AXEditable")
+        .context("无法判断当前选区是否可编辑")?;
+    let result = unsafe {
+        let editable_ref = editable.cast::<std::ffi::c_void>();
+        CFBoolean::wrap_under_get_rule(editable_ref.cast()).into()
+    };
+    unsafe {
+        CFRelease(editable);
+    }
+    Ok(result)
 }
 
 fn copy_attribute_value(element: AXUIElementRef, attribute: &str) -> anyhow::Result<CFTypeRef> {

@@ -11,6 +11,7 @@ use windows_sys::Win32::{
 };
 
 const COPY_KEY: VIRTUAL_KEY = b'C' as VIRTUAL_KEY;
+const PASTE_KEY: VIRTUAL_KEY = b'V' as VIRTUAL_KEY;
 const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const CLIPBOARD_POLL_ATTEMPTS: usize = 12;
 const MODIFIER_RELEASE_POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -37,6 +38,25 @@ pub fn read_selected_text() -> anyhow::Result<String> {
     }
 
     Ok(normalized)
+}
+
+pub fn replace_selected_text(text: &str) -> anyhow::Result<bool> {
+    let mut clipboard = Clipboard::new().context("failed to access clipboard")?;
+    let previous_text = clipboard.get_text().ok();
+
+    wait_for_modifier_keys_release();
+    clipboard
+        .set_text(text.to_string())
+        .context("failed to write translated text to clipboard")?;
+    thread::sleep(Duration::from_millis(40));
+    simulate_paste_shortcut().context("failed to trigger system paste shortcut")?;
+    thread::sleep(Duration::from_millis(120));
+
+    if let Some(previous_text) = previous_text {
+        let _ = clipboard.set_text(previous_text);
+    }
+
+    Ok(true)
 }
 
 fn wait_for_copied_text(
@@ -93,10 +113,18 @@ fn modifier_key_pressed(vk: VIRTUAL_KEY) -> bool {
 }
 
 fn simulate_copy_shortcut() -> anyhow::Result<()> {
+    simulate_control_shortcut(COPY_KEY)
+}
+
+fn simulate_paste_shortcut() -> anyhow::Result<()> {
+    simulate_control_shortcut(PASTE_KEY)
+}
+
+fn simulate_control_shortcut(key: VIRTUAL_KEY) -> anyhow::Result<()> {
     let inputs = [
         keyboard_input(VK_CONTROL, false),
-        keyboard_input(COPY_KEY, false),
-        keyboard_input(COPY_KEY, true),
+        keyboard_input(key, false),
+        keyboard_input(key, true),
         keyboard_input(VK_CONTROL, true),
     ];
 
@@ -110,7 +138,6 @@ fn simulate_copy_shortcut() -> anyhow::Result<()> {
     if sent != inputs.len() as u32 {
         return Err(anyhow!("failed to send copy shortcut"));
     }
-
     Ok(())
 }
 

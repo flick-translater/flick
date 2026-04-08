@@ -23,6 +23,7 @@ export type AppSettings = {
   capture_shortcut: string;
   translate_shortcut: string;
   selected_translate_shortcut: string;
+  selected_translate_replace_shortcut: string;
   autostart_enabled: boolean;
   autostart_configured: boolean;
   max_screenshots: number;
@@ -31,6 +32,7 @@ export type AppSettings = {
   screenshot_directory: string;
   ocr_auto_translate: boolean;
   ocr_target_language: string;
+  selected_replace_target_language: string;
   ocr_provider: string;
   tts_provider: string;
   ai: AISettings;

@@ -61,6 +61,7 @@ pub fn apply_shortcuts(
     capture_shortcut: &str,
     translate_shortcut: &str,
     selected_translate_shortcut: &str,
+    selected_translate_replace_shortcut: &str,
 ) -> anyhow::Result<()> {
     let capture = capture_shortcut
         .parse::<Shortcut>()
@@ -71,6 +72,9 @@ pub fn apply_shortcuts(
     let selected_translate = selected_translate_shortcut
         .parse::<Shortcut>()
         .map_err(|error| anyhow!("选中翻译快捷键无效: {error}"))?;
+    let selected_translate_replace = selected_translate_replace_shortcut
+        .parse::<Shortcut>()
+        .map_err(|error| anyhow!("选中翻译替换快捷键无效: {error}"))?;
 
     let mut runtime = hotkey_runtime()
         .lock()
@@ -87,6 +91,10 @@ pub fn apply_shortcuts(
         RegisteredHotkey {
             shortcut: selected_translate,
             action: ShortcutAction::TranslateSelectedText,
+        },
+        RegisteredHotkey {
+            shortcut: selected_translate_replace,
+            action: ShortcutAction::TranslateSelectedTextAndReplace,
         },
     ];
     Ok(())

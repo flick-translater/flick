@@ -19,3 +19,18 @@ pub fn read_selected_text() -> anyhow::Result<String> {
 pub fn read_selected_text() -> anyhow::Result<String> {
     windows_platform::read_selected_text()
 }
+
+#[cfg(target_os = "linux")]
+pub fn replace_selected_text(text: &str) -> anyhow::Result<bool> {
+    linux_platform::replace_selected_text(text)
+}
+
+#[cfg(target_os = "macos")]
+pub fn replace_selected_text(text: &str) -> anyhow::Result<bool> {
+    macos_platform::replace_selected_text(text)
+}
+
+#[cfg(target_os = "windows")]
+pub fn replace_selected_text(text: &str) -> anyhow::Result<bool> {
+    windows_platform::replace_selected_text(text)
+}

@@ -49,6 +49,7 @@ pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyho
         settings.capture_shortcut.as_str(),
         settings.translate_shortcut.as_str(),
         settings.selected_translate_shortcut.as_str(),
+        settings.selected_translate_replace_shortcut.as_str(),
     )?;
     Ok(())
 }
@@ -70,6 +71,11 @@ pub fn trigger_shortcut_action(app: &AppHandle, action: ShortcutAction) {
         ShortcutAction::TranslateSelectedText => {
             if let Err(error) = translation::translate_selected_text_to_window(app) {
                 eprintln!("selected text shortcut failed: {error}");
+            }
+        }
+        ShortcutAction::TranslateSelectedTextAndReplace => {
+            if let Err(error) = translation::translate_selected_text_and_replace(app) {
+                eprintln!("selected text replace shortcut failed: {error}");
             }
         }
     }

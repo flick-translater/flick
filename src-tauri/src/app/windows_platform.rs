@@ -29,6 +29,7 @@ pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyho
         &settings.capture_shortcut,
         &settings.translate_shortcut,
         &settings.selected_translate_shortcut,
+        &settings.selected_translate_replace_shortcut,
     ] {
         if global_shortcut.is_registered(shortcut.as_str()) {
             global_shortcut.unregister(shortcut.as_str())?;
@@ -49,6 +50,11 @@ pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyho
         app,
         settings.selected_translate_shortcut.as_str(),
         ShortcutAction::TranslateSelectedText,
+    )?;
+    register_shortcut_handler(
+        app,
+        settings.selected_translate_replace_shortcut.as_str(),
+        ShortcutAction::TranslateSelectedTextAndReplace,
     )?;
 
     Ok(())
@@ -73,6 +79,11 @@ pub fn trigger_shortcut_action(app: &AppHandle, action: ShortcutAction) {
                 eprintln!("selected text shortcut failed: {error}");
             }
         }
+        ShortcutAction::TranslateSelectedTextAndReplace => {
+            if let Err(error) = translation::translate_selected_text_and_replace(app) {
+                eprintln!("selected text replace shortcut failed: {error}");
+            }
+        }
     }
 }
 
@@ -92,6 +103,7 @@ pub fn set_shortcut_recording(
         &settings.capture_shortcut,
         &settings.translate_shortcut,
         &settings.selected_translate_shortcut,
+        &settings.selected_translate_replace_shortcut,
     ] {
         if recording {
             if global_shortcut.is_registered(shortcut.as_str()) {
@@ -150,7 +162,9 @@ fn register_shortcut_handler(
 
 fn shortcut_event_matches_action(state: ShortcutState, action: ShortcutAction) -> bool {
     match action {
-        ShortcutAction::TranslateSelectedText => state == ShortcutState::Released,
+        ShortcutAction::TranslateSelectedText | ShortcutAction::TranslateSelectedTextAndReplace => {
+            state == ShortcutState::Released
+        }
         ShortcutAction::Capture | ShortcutAction::TranslateCapture => {
             state == ShortcutState::Pressed
         }

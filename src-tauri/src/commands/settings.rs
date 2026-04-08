@@ -83,6 +83,15 @@ pub fn update_selected_translate_shortcut(
 }
 
 #[tauri::command]
+pub fn update_selected_translate_replace_shortcut(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    shortcut: String,
+) -> Result<AppSettings, FlickError> {
+    update_shortcut(app, state, shortcut, ShortcutKind::SelectedTranslateReplace)
+}
+
+#[tauri::command]
 pub fn update_max_screenshots(
     state: State<'_, AppState>,
     max_screenshots: u32,
@@ -253,6 +262,29 @@ pub fn update_ocr_target_language(
 }
 
 #[tauri::command]
+pub fn update_selected_replace_target_language(
+    state: State<'_, AppState>,
+    language: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = language.trim().to_lowercase();
+    if normalized.is_empty() {
+        return Err(FlickError::Message("目标替换语言不能为空".into()));
+    }
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.selected_replace_target_language = normalized;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
 pub fn get_available_tts_engines() -> Result<Vec<TtsEngineInfo>, FlickError> {
     Ok(available_tts_engines())
 }
@@ -291,6 +323,7 @@ enum ShortcutKind {
     Capture,
     Translate,
     SelectedTranslate,
+    SelectedTranslateReplace,
 }
 
 fn update_shortcut(
@@ -315,6 +348,9 @@ fn update_shortcut(
         ShortcutKind::Capture => current_settings.capture_shortcut.clone(),
         ShortcutKind::Translate => current_settings.translate_shortcut.clone(),
         ShortcutKind::SelectedTranslate => current_settings.selected_translate_shortcut.clone(),
+        ShortcutKind::SelectedTranslateReplace => {
+            current_settings.selected_translate_replace_shortcut.clone()
+        }
     };
     if current == normalized {
         return get_app_settings(state);
@@ -326,6 +362,9 @@ fn update_shortcut(
         ShortcutKind::Translate => next_settings.translate_shortcut = normalized.clone(),
         ShortcutKind::SelectedTranslate => {
             next_settings.selected_translate_shortcut = normalized.clone()
+        }
+        ShortcutKind::SelectedTranslateReplace => {
+            next_settings.selected_translate_replace_shortcut = normalized.clone()
         }
     }
 

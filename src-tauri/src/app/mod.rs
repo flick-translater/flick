@@ -69,6 +69,7 @@ pub enum ShortcutAction {
     Capture,
     TranslateCapture,
     TranslateSelectedText,
+    TranslateSelectedTextAndReplace,
 }
 
 const AUTOSTART_ARG: &str = "--autostart";
@@ -119,8 +120,10 @@ pub fn run() {
             commands::settings::update_screenshot_directory,
             commands::settings::update_translate_shortcut,
             commands::settings::update_selected_translate_shortcut,
+            commands::settings::update_selected_translate_replace_shortcut,
             commands::settings::update_ocr_auto_translate,
             commands::settings::update_ocr_target_language,
+            commands::settings::update_selected_replace_target_language,
             commands::settings::get_available_ocr_engines,
             commands::settings::update_ocr_provider,
             commands::settings::get_available_tts_engines,
@@ -186,6 +189,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         })
         .unwrap_or_else(|| data_dir.join("ocr/paddle_ocr_v5_mobile"));
     let mut settings = settings_store.load_settings()?;
+    settings.normalize();
     settings.ai.normalize();
     settings.ocr_provider = normalize_ocr_engine_id(&settings.ocr_provider);
     let available_engines = available_ocr_engines();
@@ -487,6 +491,10 @@ fn validate_shortcut_conflicts(settings: &AppSettings) -> anyhow::Result<()> {
         ("截图", settings.capture_shortcut.as_str()),
         ("截图翻译", settings.translate_shortcut.as_str()),
         ("选中翻译", settings.selected_translate_shortcut.as_str()),
+        (
+            "选中翻译替换",
+            settings.selected_translate_replace_shortcut.as_str(),
+        ),
     ];
 
     for (index, (left_label, left_shortcut)) in shortcuts.iter().enumerate() {

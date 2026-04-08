@@ -35,6 +35,7 @@ export default function OCRSettings() {
   const { t } = useTranslation();
   const [autoTranslate, setAutoTranslate] = useState(true);
   const [targetLanguage, setTargetLanguage] = useState(getDefaultLanguage);
+  const [replaceTargetLanguage, setReplaceTargetLanguage] = useState(getDefaultLanguage);
   const [ocrProvider, setOcrProvider] = useState('');
   const [ttsProvider, setTtsProvider] = useState('');
   const [availableEngines, setAvailableEngines] = useState<OcrEngineInfo[]>([]);
@@ -77,6 +78,7 @@ export default function OCRSettings() {
         setAvailableTtsEngines(ttsEngines);
         setAutoTranslate(settings.ocr_auto_translate);
         setTargetLanguage(settings.ocr_target_language || getDefaultLanguage());
+        setReplaceTargetLanguage(settings.selected_replace_target_language || getDefaultLanguage());
         setOcrProvider(settings.ocr_provider);
         setTtsProvider(settings.tts_provider);
       })
@@ -104,6 +106,17 @@ export default function OCRSettings() {
       })
       .catch(() => {
         setTargetLanguage(getDefaultLanguage());
+      });
+  };
+
+  const handleReplaceTargetLanguageChange = (language: string) => {
+    setReplaceTargetLanguage(language);
+    void invoke<AppSettings>('update_selected_replace_target_language', { language })
+      .then((settings) => {
+        setReplaceTargetLanguage(settings.selected_replace_target_language);
+      })
+      .catch(() => {
+        setReplaceTargetLanguage(getDefaultLanguage());
       });
   };
 
@@ -224,6 +237,23 @@ export default function OCRSettings() {
               </div>
             </div>
             <p className="mt-2 text-[11px] text-on-surface-variant italic">{t('ocr.targetLanguageHint')}</p>
+          </div>
+
+          <div className="max-w-md">
+            <label className="text-sm font-bold text-on-surface block mb-2">{t('ocr.replaceTargetLanguage')}</label>
+            <div className="relative group">
+              <select value={replaceTargetLanguage} onChange={(e) => handleReplaceTargetLanguageChange(e.target.value)} className="w-full appearance-none bg-surface-container-lowest border border-outline-variant/30 px-4 py-3.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none cursor-pointer shadow-sm transition-all text-on-surface">
+                {targetLanguages.map(lang => (
+                  <option key={lang.value} value={lang.value}>{lang.label}</option>
+                ))}
+              </select>
+              <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-on-surface-variant">
+                <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M1.41 0.589966L6 5.16997L10.59 0.589966L12 1.99997L6 7.99997L0 1.99997L1.41 0.589966Z" fill="currentColor"/>
+                </svg>
+              </div>
+            </div>
+            <p className="mt-2 text-[11px] text-on-surface-variant italic">{t('ocr.replaceTargetLanguageHint')}</p>
           </div>
         </div>
       </section>

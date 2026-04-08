@@ -9,7 +9,7 @@ use crate::{
     models::{
         AISettings, TranslateRequest, TranslateResponse, TranslateWindowState, TranslationHistory,
     },
-    services::{NewTranslationRecord, TranslationGateway, read_selected_text},
+    services::{NewTranslationRecord, TranslationGateway, read_selected_text, replace_selected_text},
 };
 
 #[derive(Debug, Clone)]
@@ -572,6 +572,72 @@ pub fn translate_selected_text_to_window(app: &AppHandle) -> Result<(), FlickErr
                     snapshot.is_translating = false;
                 }
             }
+        }
+    });
+
+    Ok(())
+}
+
+pub fn translate_selected_text_and_replace(app: &AppHandle) -> Result<(), FlickError> {
+    let selected_text = read_selected_text()
+        .map_err(|error| FlickError::Message(format!("读取选中文本失败: {error}")))?;
+
+    let (ai_settings, target_language) = {
+        let state = app.state::<AppState>();
+        let settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::LockError("settings".into()))?;
+        (
+            settings.ai.clone(),
+            settings.selected_replace_target_language.clone(),
+        )
+    };
+
+    if !has_active_ai_provider(&ai_settings) {
+        return Err(FlickError::Message("未配置可用的 AI 翻译引擎".into()));
+    }
+
+    let pipeline = TranslationPipeline::new(TranslateRequest {
+        text: selected_text,
+        source_language: None,
+        target_language,
+    })
+    .prepare();
+
+    let app_handle = app.clone();
+    thread::spawn(move || {
+        let run = || -> Result<(), FlickError> {
+            let runtime = Runtime::new().map_err(|error| {
+                FlickError::Message(format!("failed to create tokio runtime: {error}"))
+            })?;
+            let translation = runtime.block_on(async {
+                let state = app_handle.state::<AppState>();
+                let ai_settings = state
+                    .settings
+                    .lock()
+                    .map_err(|_| FlickError::LockError("settings".into()))?
+                    .ai
+                    .clone();
+                run_pipeline_with_ai_settings(&ai_settings, &pipeline).await
+            })?;
+
+            let state = app_handle.state::<AppState>();
+            save_pipeline_history(&state, &pipeline, &translation)?;
+
+            match replace_selected_text(&translation.translated_text) {
+                Ok(true) | Ok(false) => Ok(()),
+                Err(error) => Err(FlickError::Message(format!(
+                    "写回选中文本失败: {error}"
+                ))),
+            }?;
+
+            let _ = app_handle.emit("translation-history-updated", ());
+            Ok(())
+        };
+
+        if let Err(error) = run() {
+            eprintln!("selected text replace translation failed: {error:#}");
         }
     });
 

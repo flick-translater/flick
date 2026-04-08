@@ -191,12 +191,41 @@ impl AISettings {
     }
 }
 
+fn default_capture_shortcut() -> String {
+    "CommandOrControl+Alt+A".into()
+}
+
+fn default_translate_shortcut() -> String {
+    "CommandOrControl+Alt+S".into()
+}
+
+fn default_selected_translate_shortcut() -> String {
+    "CommandOrControl+Alt+D".into()
+}
+
+fn default_selected_translate_replace_shortcut() -> String {
+    "CommandOrControl+Alt+Q".into()
+}
+
+fn default_interface_language() -> String {
+    "en".into()
+}
+
+fn default_ocr_target_language() -> String {
+    "zh".into()
+}
+
+fn default_selected_replace_target_language() -> String {
+    "zh".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
     pub capture_shortcut: String,
     pub translate_shortcut: String,
     pub selected_translate_shortcut: String,
+    pub selected_translate_replace_shortcut: String,
     pub autostart_enabled: bool,
     pub autostart_configured: bool,
     pub max_screenshots: u32,
@@ -205,6 +234,7 @@ pub struct AppSettings {
     pub screenshot_directory: String,
     pub ocr_auto_translate: bool,
     pub ocr_target_language: String,
+    pub selected_replace_target_language: String,
     pub ocr_provider: String,
     pub tts_provider: String,
     pub ai: AISettings,
@@ -213,20 +243,48 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            capture_shortcut: "CommandOrControl+Alt+A".into(),
-            translate_shortcut: "CommandOrControl+Alt+S".into(),
-            selected_translate_shortcut: "CommandOrControl+Alt+D".into(),
+            capture_shortcut: default_capture_shortcut(),
+            translate_shortcut: default_translate_shortcut(),
+            selected_translate_shortcut: default_selected_translate_shortcut(),
+            selected_translate_replace_shortcut: default_selected_translate_replace_shortcut(),
             autostart_enabled: false,
             autostart_configured: false,
             max_screenshots: 500,
-            interface_language: "en".into(),
+            interface_language: default_interface_language(),
             interface_language_set: false,
             screenshot_directory: String::new(),
             ocr_auto_translate: true,
-            ocr_target_language: "zh".into(),
+            ocr_target_language: default_ocr_target_language(),
+            selected_replace_target_language: default_selected_replace_target_language(),
             ocr_provider: default_ocr_provider().into(),
             tts_provider: default_tts_provider().into(),
             ai: AISettings::default(),
+        }
+    }
+}
+
+impl AppSettings {
+    pub fn normalize(&mut self) {
+        if self.capture_shortcut.trim().is_empty() {
+            self.capture_shortcut = default_capture_shortcut();
+        }
+        if self.translate_shortcut.trim().is_empty() {
+            self.translate_shortcut = default_translate_shortcut();
+        }
+        if self.selected_translate_shortcut.trim().is_empty() {
+            self.selected_translate_shortcut = default_selected_translate_shortcut();
+        }
+        if self.selected_translate_replace_shortcut.trim().is_empty() {
+            self.selected_translate_replace_shortcut = default_selected_translate_replace_shortcut();
+        }
+        if self.interface_language.trim().is_empty() {
+            self.interface_language = default_interface_language();
+        }
+        if self.ocr_target_language.trim().is_empty() {
+            self.ocr_target_language = default_ocr_target_language();
+        }
+        if self.selected_replace_target_language.trim().is_empty() {
+            self.selected_replace_target_language = default_selected_replace_target_language();
         }
     }
 }

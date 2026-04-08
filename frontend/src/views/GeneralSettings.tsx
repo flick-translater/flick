@@ -5,12 +5,19 @@ import { useTranslation } from 'react-i18next';
 import Toggle from '../components/Toggle';
 import { AppSettings, AutostartStatus, StorageInfo } from '../types';
 
-type ShortcutField = keyof Pick<AppSettings, 'capture_shortcut' | 'translate_shortcut' | 'selected_translate_shortcut'>;
+type ShortcutField = keyof Pick<
+  AppSettings,
+  'capture_shortcut' | 'translate_shortcut' | 'selected_translate_shortcut' | 'selected_translate_replace_shortcut'
+>;
 
-const shortcutCommandMap: Record<ShortcutField, 'update_capture_shortcut' | 'update_translate_shortcut' | 'update_selected_translate_shortcut'> = {
+const shortcutCommandMap: Record<
+  ShortcutField,
+  'update_capture_shortcut' | 'update_translate_shortcut' | 'update_selected_translate_shortcut' | 'update_selected_translate_replace_shortcut'
+> = {
   capture_shortcut: 'update_capture_shortcut',
   translate_shortcut: 'update_translate_shortcut',
   selected_translate_shortcut: 'update_selected_translate_shortcut',
+  selected_translate_replace_shortcut: 'update_selected_translate_replace_shortcut',
 };
 
 const defaultStorageInfo: StorageInfo = {
@@ -336,6 +343,19 @@ export default function GeneralSettings() {
               onEdit={() => {
                 setShortcutError('');
                 setRecordingField('selected_translate_shortcut');
+              }}
+              formatShortcut={(shortcut) => formatShortcut(shortcut, isMac, isWindows)}
+              recordingText={t('general.recordingShortcut')}
+            />
+            <ShortcutCard
+              label={t('general.action')}
+              actionLabel={t('general.selectedTextTranslateReplace')}
+              shortcut={settings?.selected_translate_replace_shortcut}
+              isRecording={recordingField === 'selected_translate_replace_shortcut'}
+              isSaving={savingField === 'selected_translate_replace_shortcut'}
+              onEdit={() => {
+                setShortcutError('');
+                setRecordingField('selected_translate_replace_shortcut');
               }}
               formatShortcut={(shortcut) => formatShortcut(shortcut, isMac, isWindows)}
               recordingText={t('general.recordingShortcut')}
