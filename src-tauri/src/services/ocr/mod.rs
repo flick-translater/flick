@@ -41,7 +41,7 @@ pub fn normalize_ocr_engine_id(engine_id: &str) -> String {
     }
 }
 
-pub fn create_ocr_service(engine_id: &str, model_dir: &Path) -> Arc<dyn OcrService> {
+pub fn create_ocr_service(engine_id: &str, _model_dir: &Path) -> Arc<dyn OcrService> {
     let engine_id = normalize_ocr_engine_id(engine_id);
 
     #[cfg(target_os = "macos")]
@@ -49,7 +49,7 @@ pub fn create_ocr_service(engine_id: &str, model_dir: &Path) -> Arc<dyn OcrServi
         match engine_id.as_str() {
             "mock" => Arc::new(MockOcrService),
             #[cfg(target_arch = "aarch64")]
-            PADDLE_OCR_V5_MOBILE_ID => Arc::new(PaddleOcrV5MobileOcrService::new(model_dir)),
+            PADDLE_OCR_V5_MOBILE_ID => Arc::new(PaddleOcrV5MobileOcrService::new(_model_dir)),
             _ => Arc::new(MacosVisionOcrService),
         }
     }
@@ -58,7 +58,7 @@ pub fn create_ocr_service(engine_id: &str, model_dir: &Path) -> Arc<dyn OcrServi
     {
         match engine_id.as_str() {
             "mock" => Arc::new(MockOcrService),
-            _ => Arc::new(PaddleOcrV5MobileOcrService::new(model_dir)),
+            _ => Arc::new(PaddleOcrV5MobileOcrService::new(_model_dir)),
         }
     }
 
@@ -67,7 +67,7 @@ pub fn create_ocr_service(engine_id: &str, model_dir: &Path) -> Arc<dyn OcrServi
         match engine_id.as_str() {
             "mock" => Arc::new(MockOcrService),
             "windows" => Arc::new(WindowsBuiltinOcrService),
-            _ => Arc::new(PaddleOcrV5MobileOcrService::new(model_dir)),
+            _ => Arc::new(PaddleOcrV5MobileOcrService::new(_model_dir)),
         }
     }
 }
