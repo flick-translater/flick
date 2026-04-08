@@ -37,7 +37,9 @@ pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             .focused(false)
             .center();
 
-    platform::configure_main_window_builder(builder).build()
+    let window = platform::configure_main_window_builder(builder).build()?;
+    platform::configure_built_window(&window);
+    Ok(window)
 }
 
 pub fn ensure_translate_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
@@ -45,7 +47,7 @@ pub fn ensure_translate_window(app: &AppHandle) -> tauri::Result<WebviewWindow> 
         return Ok(window);
     }
 
-    WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         app,
         TRANSLATE_WINDOW_LABEL,
         WebviewUrl::App("translation-window.html".into()),
@@ -62,7 +64,9 @@ pub fn ensure_translate_window(app: &AppHandle) -> tauri::Result<WebviewWindow> 
     .transparent(true)
     .decorations(false)
     .shadow(true)
-    .build()
+    .build()?;
+    platform::configure_built_window(&window);
+    Ok(window)
 }
 
 pub fn show_translate_window(app: &AppHandle) -> tauri::Result<()> {

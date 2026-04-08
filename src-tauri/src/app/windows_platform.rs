@@ -1,5 +1,10 @@
-use tauri::{App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindowBuilder};
+use tauri::{App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
+use tauri::path::BaseDirectory;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_LOADFROMFILE, LoadImageW, SendMessageW,
+    WM_SETICON,
+};
 
 use crate::{
     app::{AppState, ShortcutAction},
@@ -116,6 +121,12 @@ pub fn show_translate_window_before_focus(_app: &AppHandle) {}
 
 pub fn show_translate_window_after_show(_app: &AppHandle) {}
 
+pub fn configure_built_window(window: &WebviewWindow) {
+    if let Err(error) = set_window_icons(window) {
+        eprintln!("failed to set explicit Windows window icons: {error}");
+    }
+}
+
 pub fn refresh_previous_frontmost_app(_app: &AppHandle) {}
 
 pub fn hide_translate_window_before_hide(_app: &AppHandle) {}
@@ -135,4 +146,53 @@ fn register_shortcut_handler(
         })?;
 
     Ok(())
+}
+
+fn set_window_icons(window: &WebviewWindow) -> anyhow::Result<()> {
+    let icon_path = resolve_windows_icon_path(window)?;
+    let wide_path = icon_path
+        .as_os_str()
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+
+    let big_icon = unsafe {
+        LoadImageW(
+            std::ptr::null_mut(),
+            wide_path.as_ptr(),
+            IMAGE_ICON,
+            0,
+            0,
+            LR_LOADFROMFILE | LR_DEFAULTCOLOR,
+        )
+    };
+    if big_icon.is_null() {
+        anyhow::bail!("LoadImageW failed for {}", icon_path.display());
+    }
+
+    let hwnd = window.hwnd()?.0 as *mut std::ffi::c_void;
+    unsafe {
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, big_icon as isize);
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, big_icon as isize);
+    }
+
+    Ok(())
+}
+
+fn resolve_windows_icon_path(window: &WebviewWindow) -> anyhow::Result<std::path::PathBuf> {
+    let app = window.app_handle();
+    if let Ok(path) = app.path().resolve("icons/icon.ico", BaseDirectory::Resource) {
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dev_path = manifest_dir.join("icons/icon.ico");
+    if dev_path.is_file() {
+        return Ok(dev_path);
+    }
+
+    anyhow::bail!("could not resolve icons/icon.ico for Windows window icon")
 }

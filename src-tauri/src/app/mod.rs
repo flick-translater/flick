@@ -12,6 +12,8 @@ use tauri::{
     path::BaseDirectory,
     tray::TrayIconBuilder,
 };
+#[cfg(target_os = "windows")]
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 
 use crate::{
@@ -316,16 +318,55 @@ fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        tray = tray
+            .show_menu_on_left_click(false)
+            .on_tray_icon_event(|tray, event| handle_windows_tray_event(&tray.app_handle(), event));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        tray = tray.show_menu_on_left_click(true);
+    }
+
     tray.menu(&menu)
-        .show_menu_on_left_click(true)
         .on_menu_event(|app, event| handle_menu_event(app, event))
         .build(app)?;
 
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn handle_windows_tray_event(app: &AppHandle, event: TrayIconEvent) {
+    if let TrayIconEvent::Click {
+        button: MouseButton::Left,
+        button_state: MouseButtonState::Up,
+        ..
+    } = event
+    {
+        let _ = windows::show_main_window(app);
+    }
+}
+
 fn load_tray_icon(app: &AppHandle) -> Option<tauri::image::Image<'static>> {
+    #[cfg(target_os = "macos")]
     let resource_icon = ["icons/trayTemplate@2x.png", "icons/trayTemplate.png"]
+        .into_iter()
+        .find_map(|relative_path| {
+            app.path()
+                .resolve(relative_path, BaseDirectory::Resource)
+                .ok()
+                .filter(|path| path.exists())
+                .and_then(|path| std::fs::read(path).ok())
+                .and_then(|bytes| decode_tray_icon(&bytes))
+        });
+
+    #[cfg(not(target_os = "macos"))]
+    let resource_icon: Option<tauri::image::Image<'static>> = None;
+
+    #[cfg(target_os = "linux")]
+    let resource_icon = ["icons/icon_256x256.png", "icons/icon_128x128.png", "icons/icon_32x32.png"]
         .into_iter()
         .find_map(|relative_path| {
             app.path()
@@ -343,6 +384,7 @@ fn load_tray_icon(app: &AppHandle) -> Option<tauri::image::Image<'static>> {
     })
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn decode_tray_icon(bytes: &[u8]) -> Option<tauri::image::Image<'static>> {
     let image = image::load_from_memory(bytes).ok()?.into_rgba8();
     let (width, height) = image.dimensions();

@@ -10,7 +10,7 @@ mod macos_platform;
 #[path = "windows_platform.rs"]
 mod windows_platform;
 
-use tauri::{App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindowBuilder};
+use tauri::{App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindow, WebviewWindowBuilder};
 
 use crate::{
     app::{AppState, ShortcutAction},
@@ -167,6 +167,17 @@ pub fn show_translate_window_after_show(app: &AppHandle) {
 
     #[cfg(target_os = "linux")]
     linux_platform::show_translate_window_after_show(app);
+}
+
+pub fn configure_built_window(window: &WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    windows_platform::configure_built_window(window);
+
+    #[cfg(target_os = "macos")]
+    let _ = window;
+
+    #[cfg(target_os = "linux")]
+    let _ = window;
 }
 
 pub fn refresh_previous_frontmost_app(app: &AppHandle) {
