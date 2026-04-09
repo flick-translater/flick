@@ -10,7 +10,8 @@
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "lint": "tsc --noEmit",
     "tauri:dev": "cd .. && node frontend/node_modules/@tauri-apps/cli/tauri.js dev --config src-tauri/tauri.conf.json",
-    "tauri:build": "cd .. && node frontend/node_modules/@tauri-apps/cli/tauri.js build --config src-tauri/tauri.conf.json"
+    "tauri:build": "cd .. && node frontend/node_modules/@tauri-apps/cli/tauri.js build --config src-tauri/tauri.conf.json",
+    "tauri:build:macos-signed": "cd .. && ./scripts/build_macos_signed.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
