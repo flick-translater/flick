@@ -14,15 +14,24 @@ mod macos_screen_capture_kit_platform;
 #[cfg(target_os = "windows")]
 mod windows_platform;
 
-use std::{borrow::Cow, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use anyhow::Context;
+#[cfg(not(target_os = "macos"))]
 use arboard::{Clipboard, ImageData};
 #[cfg(target_os = "linux")]
 use arboard::{LinuxClipboardKind, SetExtLinux};
+#[cfg(target_os = "linux")]
+use std::borrow::Cow;
 #[cfg(target_os = "macos")]
 use core_graphics::image::CGImage;
 use image::{ImageBuffer, Rgba};
+#[cfg(target_os = "macos")]
+use image::ImageEncoder;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSData;
 
 use crate::models::SelectionRect;
 
@@ -181,7 +190,12 @@ impl ScreenCaptureService {
             return copy_to_clipboard_linux(image);
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        {
+            return copy_to_clipboard_macos(image);
+        }
+
+        #[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
         {
             let mut clipboard = Clipboard::new().context("failed to access clipboard")?;
             let width = usize::try_from(image.width()).context("invalid image width")?;
@@ -235,4 +249,33 @@ fn copy_to_clipboard_linux(image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> anyhow::Re
         }
     });
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn copy_to_clipboard_macos(image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> anyhow::Result<()> {
+    let mut png_bytes = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png_bytes)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ColorType::Rgba8.into(),
+        )
+        .context("failed to encode screenshot as PNG")?;
+
+    let data = NSData::with_bytes(&png_bytes);
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let mut last_error = None;
+
+    for _ in 0..3 {
+        pasteboard.clearContents();
+        if pasteboard.setData_forType(Some(&data), unsafe { NSPasteboardTypePNG }) {
+            return Ok(());
+        }
+
+        last_error = Some(anyhow::anyhow!("NSPasteboard rejected PNG payload"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("failed to write screenshot to clipboard")))
 }
