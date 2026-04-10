@@ -9,7 +9,9 @@ use crate::{
     models::{
         AISettings, TranslateRequest, TranslateResponse, TranslateWindowState, TranslationHistory,
     },
-    services::{NewTranslationRecord, TranslationGateway, read_selected_text, replace_selected_text},
+    services::{
+        NewTranslationRecord, TranslationGateway, read_selected_text, replace_selected_text,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -627,9 +629,7 @@ pub fn translate_selected_text_and_replace(app: &AppHandle) -> Result<(), FlickE
 
             match replace_selected_text(&translation.translated_text) {
                 Ok(true) | Ok(false) => Ok(()),
-                Err(error) => Err(FlickError::Message(format!(
-                    "写回选中文本失败: {error}"
-                ))),
+                Err(error) => Err(FlickError::Message(format!("写回选中文本失败: {error}"))),
             }?;
 
             let _ = app_handle.emit("translation-history-updated", ());

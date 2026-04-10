@@ -21,17 +21,17 @@ use anyhow::Context;
 use arboard::{Clipboard, ImageData};
 #[cfg(target_os = "linux")]
 use arboard::{LinuxClipboardKind, SetExtLinux};
-#[cfg(target_os = "linux")]
-use std::borrow::Cow;
 #[cfg(target_os = "macos")]
 use core_graphics::image::CGImage;
-use image::{ImageBuffer, Rgba};
 #[cfg(target_os = "macos")]
 use image::ImageEncoder;
+use image::{ImageBuffer, Rgba};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSData;
+#[cfg(not(target_os = "macos"))]
+use std::borrow::Cow;
 
 use crate::models::SelectionRect;
 

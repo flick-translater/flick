@@ -6,17 +6,17 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(target_os = "windows")]
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::{
     AppHandle, Manager, WebviewWindow,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuId, MenuItemBuilder},
     path::BaseDirectory,
     tray::TrayIconBuilder,
 };
-#[cfg(target_os = "windows")]
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-use tauri_plugin_autostart::{Builder as AutostartBuilder, ManagerExt as _};
 #[cfg(target_os = "macos")]
 use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_autostart::{Builder as AutostartBuilder, ManagerExt as _};
 
 use crate::{
     commands,
@@ -435,16 +435,20 @@ fn load_tray_icon(app: &AppHandle) -> Option<tauri::image::Image<'static>> {
     let resource_icon: Option<tauri::image::Image<'static>> = None;
 
     #[cfg(target_os = "linux")]
-    let resource_icon = ["icons/icon_256x256.png", "icons/icon_128x128.png", "icons/icon_32x32.png"]
-        .into_iter()
-        .find_map(|relative_path| {
-            app.path()
-                .resolve(relative_path, BaseDirectory::Resource)
-                .ok()
-                .filter(|path| path.exists())
-                .and_then(|path| std::fs::read(path).ok())
-                .and_then(|bytes| decode_tray_icon(&bytes))
-        });
+    let resource_icon = [
+        "icons/icon_256x256.png",
+        "icons/icon_128x128.png",
+        "icons/icon_32x32.png",
+    ]
+    .into_iter()
+    .find_map(|relative_path| {
+        app.path()
+            .resolve(relative_path, BaseDirectory::Resource)
+            .ok()
+            .filter(|path| path.exists())
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| decode_tray_icon(&bytes))
+    });
 
     resource_icon.or_else(|| {
         app.default_window_icon()

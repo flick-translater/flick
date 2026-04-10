@@ -62,7 +62,11 @@ pub(super) fn capture_desktop_snapshot(
     let height_i32 = i32::try_from(bounds.height).context("invalid monitor height")?;
     let pixels_len = usize::try_from(bounds.width)
         .ok()
-        .and_then(|width| usize::try_from(bounds.height).ok().map(|height| width * height * 4))
+        .and_then(|width| {
+            usize::try_from(bounds.height)
+                .ok()
+                .map(|height| width * height * 4)
+        })
         .context("invalid monitor pixel size")?;
 
     let screen_dc = unsafe { GetDC(null_mut()) };
@@ -170,8 +174,9 @@ pub(super) fn show_native_overlay(
     state.visuals = Some(visuals);
 
     while state.windows.len() < snapshots.len() {
+        let hwnd = create_overlay_window()?;
         state.windows.push(WindowHandle {
-            hwnd: create_overlay_window()? as usize,
+            hwnd: hwnd as usize,
         });
     }
 
@@ -181,8 +186,9 @@ pub(super) fn show_native_overlay(
         paint_overlay_frame(&mut data, &state.draw_state, visuals);
         attach_window_data(window.hwnd as HWND, data);
         show_overlay_window(window.hwnd as HWND, &snapshot.bounds)?;
-        let data_ptr =
-            unsafe { GetWindowLongPtrW(window.hwnd as HWND, GWLP_USERDATA) as *mut OverlayWindowData };
+        let data_ptr = unsafe {
+            GetWindowLongPtrW(window.hwnd as HWND, GWLP_USERDATA) as *mut OverlayWindowData
+        };
         if !data_ptr.is_null() {
             let data = unsafe { &mut *data_ptr };
             render_overlay_window(window.hwnd as HWND, data)?;
@@ -226,7 +232,10 @@ pub(super) fn update_highlight(
         selection,
         cursor: state.draw_state.cursor,
     };
-    if selections_equal(state.draw_state.selection.as_ref(), new_draw_state.selection.as_ref()) {
+    if selections_equal(
+        state.draw_state.selection.as_ref(),
+        new_draw_state.selection.as_ref(),
+    ) {
         return Ok(());
     }
     state.draw_state = new_draw_state.clone();
@@ -235,8 +244,9 @@ pub(super) fn update_highlight(
         .ok_or_else(|| FlickError::Message("missing windows overlay visuals".into()))?;
 
     for window in &state.windows {
-        let data_ptr =
-            unsafe { GetWindowLongPtrW(window.hwnd as HWND, GWLP_USERDATA) as *mut OverlayWindowData };
+        let data_ptr = unsafe {
+            GetWindowLongPtrW(window.hwnd as HWND, GWLP_USERDATA) as *mut OverlayWindowData
+        };
         if data_ptr.is_null() {
             continue;
         }
@@ -269,8 +279,9 @@ pub(super) fn update_crosshair(
         .ok_or_else(|| FlickError::Message("missing windows overlay visuals".into()))?;
 
     for window in &state.windows {
-        let data_ptr =
-            unsafe { GetWindowLongPtrW(window.hwnd as HWND, GWLP_USERDATA) as *mut OverlayWindowData };
+        let data_ptr = unsafe {
+            GetWindowLongPtrW(window.hwnd as HWND, GWLP_USERDATA) as *mut OverlayWindowData
+        };
         if data_ptr.is_null() {
             continue;
         }
@@ -309,7 +320,10 @@ pub(super) fn pump_native_overlay_messages() {
     }
 }
 
-fn create_window_data(snapshot: &CachedScreenCapture, visuals: OverlayVisuals) -> Box<OverlayWindowData> {
+fn create_window_data(
+    snapshot: &CachedScreenCapture,
+    visuals: OverlayVisuals,
+) -> Box<OverlayWindowData> {
     let background_bgra = rgba_to_bgra(snapshot.image.as_raw());
     let dimmed_bgra = build_dimmed_background(&background_bgra, visuals.dim_alpha);
     let frame_bgra = dimmed_bgra.clone();
@@ -377,7 +391,12 @@ fn paint_overlay_frame(
     if let Some(selection) = draw_state.selection.as_ref() {
         let local = intersect_local_rect(selection, &data.bounds);
         if let Some(local) = local {
-            restore_selection(&mut data.frame_bgra, &data.background_bgra, &data.bounds, &local);
+            restore_selection(
+                &mut data.frame_bgra,
+                &data.background_bgra,
+                &data.bounds,
+                &local,
+            );
             for border in border_rects(local, visuals.border_thickness) {
                 draw_filled_rect(
                     &mut data.frame_bgra,
@@ -390,11 +409,20 @@ fn paint_overlay_frame(
     }
 
     if let Some((cursor_x, cursor_y)) = draw_state.cursor {
-        draw_crosshair(&mut data.frame_bgra, &data.bounds, cursor_x, cursor_y, visuals);
+        draw_crosshair(
+            &mut data.frame_bgra,
+            &data.bounds,
+            cursor_x,
+            cursor_y,
+            visuals,
+        );
     }
 }
 
-fn intersect_local_rect(selection: &SelectionRect, bounds: &SelectionRect) -> Option<SelectionRect> {
+fn intersect_local_rect(
+    selection: &SelectionRect,
+    bounds: &SelectionRect,
+) -> Option<SelectionRect> {
     let left = selection.x.max(bounds.x);
     let top = selection.y.max(bounds.y);
     let right = (selection.x + selection.width as i32).min(bounds.x + bounds.width as i32);
@@ -532,7 +560,9 @@ fn create_overlay_window() -> Result<HWND, FlickError> {
     };
 
     if hwnd.is_null() {
-        return Err(FlickError::Message("failed to create overlay window".into()));
+        return Err(FlickError::Message(
+            "failed to create overlay window".into(),
+        ));
     }
 
     Ok(hwnd)

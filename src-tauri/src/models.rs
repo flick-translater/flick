@@ -275,7 +275,8 @@ impl AppSettings {
             self.selected_translate_shortcut = default_selected_translate_shortcut();
         }
         if self.selected_translate_replace_shortcut.trim().is_empty() {
-            self.selected_translate_replace_shortcut = default_selected_translate_replace_shortcut();
+            self.selected_translate_replace_shortcut =
+                default_selected_translate_replace_shortcut();
         }
         if self.interface_language.trim().is_empty() {
             self.interface_language = default_interface_language();

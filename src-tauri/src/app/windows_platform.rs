@@ -1,6 +1,8 @@
-use tauri::{App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindow, WebviewWindowBuilder};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 use tauri::path::BaseDirectory;
+use tauri::{
+    App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindow, WebviewWindowBuilder,
+};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_LOADFROMFILE, LoadImageW, SendMessageW,
     WM_SETICON,
@@ -205,7 +207,10 @@ fn set_window_icons(window: &WebviewWindow) -> anyhow::Result<()> {
 
 fn resolve_windows_icon_path(window: &WebviewWindow) -> anyhow::Result<std::path::PathBuf> {
     let app = window.app_handle();
-    if let Ok(path) = app.path().resolve("icons/icon.ico", BaseDirectory::Resource) {
+    if let Ok(path) = app
+        .path()
+        .resolve("icons/icon.ico", BaseDirectory::Resource)
+    {
         if path.is_file() {
             return Ok(path);
         }

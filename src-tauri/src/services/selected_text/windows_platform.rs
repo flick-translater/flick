@@ -34,7 +34,7 @@ pub fn read_selected_text() -> anyhow::Result<String> {
         previous_text.as_deref(),
         &sentinel,
     )
-        .context("clipboard does not contain newly copied text")?;
+    .context("clipboard does not contain newly copied text")?;
     let normalized = sanitize_selected_text(&text);
 
     if let Some(previous_text) = previous_text {

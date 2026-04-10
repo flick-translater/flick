@@ -34,9 +34,7 @@ pub trait OcrService: Send + Sync {
 
 pub fn normalize_ocr_engine_id(engine_id: &str) -> String {
     match engine_id.trim().to_lowercase().as_str() {
-        "onnx" | "paddle-ocr-v5-mobile" | "paddle_ocr_v5_mobile" => {
-            PADDLE_OCR_V5_MOBILE_ID.into()
-        }
+        "onnx" | "paddle-ocr-v5-mobile" | "paddle_ocr_v5_mobile" => PADDLE_OCR_V5_MOBILE_ID.into(),
         other => other.to_string(),
     }
 }

@@ -89,7 +89,9 @@ pub fn copy_capture_image(path: &str) -> Result<(), FlickError> {
         .into_rgba8();
     ScreenCaptureService
         .copy_to_clipboard(&image)
-        .map_err(|error| FlickError::Message(format!("failed to copy screenshot image: {error}")))?;
+        .map_err(|error| {
+            FlickError::Message(format!("failed to copy screenshot image: {error}"))
+        })?;
 
     Ok(())
 }

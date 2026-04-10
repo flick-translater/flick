@@ -21,8 +21,8 @@ use x11rb::{
         shape::{ConnectionExt as ShapeExt, SK, SO},
         xproto::{
             AtomEnum, ButtonIndex, ClipOrdering, ConfigureWindowAux, ConnectionExt, CreateGCAux,
-            CreateWindowAux, EventMask, GrabMode, GrabStatus, Gx, KeyButMask, LineStyle,
-            Rectangle, StackMode, Window, WindowClass,
+            CreateWindowAux, EventMask, GrabMode, GrabStatus, Gx, KeyButMask, LineStyle, Rectangle,
+            StackMode, Window, WindowClass,
         },
     },
     rust_connection::RustConnection,

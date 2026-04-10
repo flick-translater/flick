@@ -108,8 +108,7 @@ fn replace_selected_text_via_paste(text: &str) -> anyhow::Result<()> {
         .set_text(text.to_string())
         .context("无法写入剪贴板")?;
     thread::sleep(Duration::from_millis(40));
-    simulate_shortcut(0x09, CGEventFlags::CGEventFlagCommand)
-        .context("无法触发系统粘贴快捷键")?;
+    simulate_shortcut(0x09, CGEventFlags::CGEventFlagCommand).context("无法触发系统粘贴快捷键")?;
     thread::sleep(Duration::from_millis(120));
 
     if let Some(previous_text) = previous_text {
@@ -149,8 +148,8 @@ fn focused_ui_element() -> anyhow::Result<AXUIElementRef> {
 }
 
 fn is_focused_element_editable(element: AXUIElementRef) -> anyhow::Result<bool> {
-    let editable = copy_attribute_value(element, "AXEditable")
-        .context("无法判断当前选区是否可编辑")?;
+    let editable =
+        copy_attribute_value(element, "AXEditable").context("无法判断当前选区是否可编辑")?;
     let result = unsafe {
         let editable_ref = editable.cast::<std::ffi::c_void>();
         CFBoolean::wrap_under_get_rule(editable_ref.cast()).into()

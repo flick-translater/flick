@@ -63,7 +63,16 @@ fn trigger_paste_shortcut() -> anyhow::Result<()> {
         || std::env::var_os("WAYLAND_DISPLAY").is_some();
 
     if is_wayland {
-        if Command::new("wtype").arg("-M").arg("ctrl").arg("-k").arg("v").arg("-m").arg("ctrl").status().is_ok_and(|status| status.success()) {
+        if Command::new("wtype")
+            .arg("-M")
+            .arg("ctrl")
+            .arg("-k")
+            .arg("v")
+            .arg("-m")
+            .arg("ctrl")
+            .status()
+            .is_ok_and(|status| status.success())
+        {
             return Ok(());
         }
 

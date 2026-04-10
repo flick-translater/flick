@@ -10,7 +10,9 @@ mod macos_platform;
 #[path = "windows_platform.rs"]
 mod windows_platform;
 
-use tauri::{App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindow, WebviewWindowBuilder,
+};
 
 use crate::{
     app::{AppState, ShortcutAction},
