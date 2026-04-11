@@ -31,7 +31,7 @@ use crate::{
 #[cfg(target_os = "macos")]
 pub(crate) mod macos_hotkeys;
 #[cfg(target_os = "macos")]
-mod macos_permissions;
+pub(crate) mod macos_permissions;
 pub(crate) mod platform;
 pub mod windows;
 

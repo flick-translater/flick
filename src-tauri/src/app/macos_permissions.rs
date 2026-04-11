@@ -1,4 +1,4 @@
-use std::{thread, time::Duration};
+use std::{process::Command, thread, time::Duration};
 
 use core_foundation::{
     base::{Boolean, TCFType},
@@ -9,6 +9,8 @@ use core_foundation::{
 use core_graphics::event::{
     CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
 };
+use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+use tauri::{ActivationPolicy, AppHandle, Manager};
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -16,7 +18,6 @@ unsafe extern "C" {
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> Boolean;
     static kAXTrustedCheckOptionPrompt: CFStringRef;
     fn CGPreflightScreenCaptureAccess() -> bool;
-    fn CGRequestScreenCaptureAccess() -> bool;
     fn CGPreflightListenEventAccess() -> bool;
     fn CGRequestListenEventAccess() -> bool;
     fn CGPreflightPostEventAccess() -> bool;
@@ -27,15 +28,19 @@ pub fn current_permission_status() -> PermissionStatus {
     PermissionStatus::detect()
 }
 
+pub fn ensure_screen_recording_permission(app: &AppHandle) -> bool {
+    if unsafe { CGPreflightScreenCaptureAccess() } {
+        return true;
+    }
+
+    show_screen_recording_permission_prompt(app);
+    false
+}
+
 pub fn request_startup_permissions() -> PermissionStatus {
     let status = PermissionStatus::detect();
     if status.is_ready() {
         return status;
-    }
-
-    if !status.screen_recording {
-        let _ = unsafe { CGRequestScreenCaptureAccess() };
-        thread::sleep(Duration::from_millis(200));
     }
 
     if !status.accessibility {
@@ -93,6 +98,45 @@ fn request_accessibility_permission() -> bool {
     let options: CFDictionary<CFString, CFBoolean> =
         CFDictionary::from_CFType_pairs(&[(option_key, CFBoolean::true_value())]);
     unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) != 0 }
+}
+
+fn show_screen_recording_permission_prompt(app: &AppHandle) {
+    let should_restore_accessory = app
+        .get_webview_window("main")
+        .map(|window| !window.is_visible().unwrap_or(false))
+        .unwrap_or(true);
+
+    let _ = app.set_activation_policy(ActivationPolicy::Regular);
+    let _ = app.show();
+    let _ = app.set_dock_visibility(true);
+
+    let result = MessageDialog::new()
+        .set_level(MessageLevel::Warning)
+        .set_title("需要录屏权限")
+        .set_description(
+            "Flick 需要录屏权限才能截图。请在系统设置中为 Flick 开启“屏幕与系统音频录制”权限，然后重新开始截图。",
+        )
+        .set_buttons(MessageButtons::OkCancelCustom(
+            "前往设置".into(),
+            "拒绝".into(),
+        ))
+        .show();
+
+    if matches!(result, MessageDialogResult::Custom(label) if label == "前往设置") {
+        open_screen_recording_settings();
+    }
+
+    if should_restore_accessory {
+        let _ = app.hide();
+        let _ = app.set_dock_visibility(false);
+        let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+    }
+}
+
+fn open_screen_recording_settings() {
+    let _ = Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        .spawn();
 }
 
 fn probe_input_monitoring() -> bool {

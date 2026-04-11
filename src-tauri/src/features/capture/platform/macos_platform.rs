@@ -69,6 +69,10 @@ pub fn begin_interactive_capture_session(
     app: &AppHandle,
     state: &State<'_, AppState>,
 ) -> Result<(), FlickError> {
+    if !crate::app::macos_permissions::ensure_screen_recording_permission(app) {
+        return Ok(());
+    }
+
     let session_id = {
         let mut runtime = native_runtime()
             .lock()
