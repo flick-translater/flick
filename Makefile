@@ -8,8 +8,9 @@ WINDOWS_MSI_DIR := $(WINDOWS_BUNDLE_DIR)\msi
 WINDOWS_NSIS_DIR := $(WINDOWS_BUNDLE_DIR)\nsis
 else
 SHELL := /bin/bash
+UNAME_S := $(shell uname -s)
 TAURI_CLI := ./frontend/node_modules/.bin/tauri
-BUNDLE_DIR := src-tauri/target/release/bundle
+BUNDLE_DIR := target/release/bundle
 APP_DIR := $(BUNDLE_DIR)/macos
 DMG_DIR := $(BUNDLE_DIR)/dmg
 endif
@@ -35,7 +36,11 @@ build-release:
 		echo "Missing local Tauri CLI at $(TAURI_CLI). Run 'cd frontend && npm install' first."; \
 		exit 1; \
 	fi
-	$(TAURI_CLI) build --config src-tauri/tauri.conf.json
+	@if [ "$(UNAME_S)" = "Darwin" ]; then \
+		./scripts/build_macos_signed.sh; \
+	else \
+		$(TAURI_CLI) build --config src-tauri/tauri.conf.json; \
+	fi
 
 open-release:
 	@DMG_PATH="$$(find "$(DMG_DIR)" -maxdepth 1 -name '*.dmg' | head -n 1)"; \
