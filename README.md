@@ -128,10 +128,10 @@ The bundled Paddle OCR v5 mobile ONNX assets are derived from the official [Padd
 
 ## Contributors
 
-<a href="https://github.com/zhy2006/flick/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=zhy2006/flick" alt="Flick contributors" />
+<a href="https://github.com/flick-translater/flick/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=flick-translater/flick" alt="Flick contributors" />
 </a>
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=zhy2006/flick&type=Date)](https://www.star-history.com/#zhy2006/flick&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=flick-translater/flick&type=Date)](https://www.star-history.com/#flick-translater/flick&Date)

@@ -1,7 +1,7 @@
 {
   "$schema": "../frontend/node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Flick",
-  "identifier": "io.github.zhy2006.flick",
+  "identifier": "io.github.flick-translater.flick",
   "build": {
     "beforeDevCommand": "npm run dev -- --port 1420 --strictPort",
     "beforeBuildCommand": "npm run build",
