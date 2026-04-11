@@ -59,7 +59,7 @@ open-release:
 
 check-linux-deps:
 	@missing=0; \
-	for pkg in glib-2.0 gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1 librsvg-2.0 xdo openssl; do \
+	for pkg in glib-2.0 gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1 librsvg-2.0 xdo openssl alsa; do \
 		if ! pkg-config --exists "$$pkg"; then \
 			echo "Missing pkg-config package: $$pkg"; \
 			missing=1; \
@@ -86,7 +86,8 @@ setup-linux-deps-ubuntu:
 		libayatana-appindicator3-dev \
 		librsvg2-dev \
 		libxdo-dev \
-		libssl-dev
+		libssl-dev \
+		libasound2-dev
 endif
 
 clean:
