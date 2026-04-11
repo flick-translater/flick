@@ -40,7 +40,9 @@ Flick is a desktop screenshot, OCR, and AI translation tool built with Tauri, Ru
 
 Platform notes:
 
-- macOS: install Xcode Command Line Tools. For signed local macOS builds, run `./scripts/create_macos_self_signed_cert.sh` once, then use the signed build script.
+- macOS: install Xcode Command Line Tools. For signed local macOS builds, run `./scripts/create_macos_self_signed_cert.sh` once, then use the signed build script. Flick may also require the following permissions in System Settings depending on the features you use:
+  - Screen Recording: required for screenshot capture and screenshot OCR.
+  - Accessibility: required for selected-text translation, translate-and-replace, and other workflows that interact with the active app.
 - Windows: install Microsoft Visual Studio Build Tools with the C++ desktop workload. WebView2 Runtime is required by Tauri apps and is normally already present on current Windows systems.
 - Linux: install the GTK/WebKit and related desktop libraries. Due to Wayland's security model, global hotkeys and screenshot capture are not available in Wayland sessions; use an X11 session for those features. On Ubuntu/Debian-based systems, this repository includes a helper target:
 
@@ -109,6 +111,8 @@ Build the app first, then install the artifact generated for your platform from 
 - macOS: open the generated `.dmg` and drag Flick into Applications.
 - Windows: run the generated `.msi` or `.exe` installer.
 - Linux: install the generated Linux package for your distribution, or run the generated binary if you are using an unpacked build.
+
+macOS Gatekeeper note: current macOS builds are signed with a local self-signed certificate and are not Apple-notarized. This is enough for local signing, but it does not pass macOS Gatekeeper for downloaded builds. If macOS blocks the app, only open it if you trust the build source; you may need to open it from Finder with right-click > Open, or remove the quarantine attribute for your local build.
 
 ## Versioning
 
