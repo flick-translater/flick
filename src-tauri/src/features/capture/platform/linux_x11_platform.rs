@@ -21,7 +21,7 @@ use x11rb::{
         shape::{ConnectionExt as ShapeExt, SK, SO},
         xproto::{
             AtomEnum, ButtonIndex, ClipOrdering, ConfigureWindowAux, ConnectionExt, CreateGCAux,
-            CreateWindowAux, EventMask, GrabMode, GrabStatus, Gx, KeyButMask, LineStyle, Rectangle,
+            CreateWindowAux, EventMask, GrabMode, GrabStatus, GX, KeyButMask, LineStyle, Rectangle,
             StackMode, Window, WindowClass,
         },
     },
@@ -199,7 +199,6 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
         let mut dragging = false;
         let mut last_drawn_selection: Option<SelectionRect> = None;
         let mut last_overlay_update: Option<Instant> = None;
-        let mut last_cursor = CursorPosition::default();
 
         while !stop.load(Ordering::Relaxed) {
             if !is_active_session(session_id) {
@@ -216,7 +215,6 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                             x: event.root_x.into(),
                             y: event.root_y.into(),
                         };
-                        last_cursor = cursor.clone();
                         if event.state.contains(KeyButMask::BUTTON1) {
                             if let Some(anchor) = drag_anchor.as_ref() {
                                 let next_selection = {
@@ -257,14 +255,11 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                     }
                     Event::ButtonPress(event) => match event.detail {
                         detail if detail == u8::from(ButtonIndex::M1) => {
-                            drag_anchor = Some(CursorPosition {
-                                x: event.root_x.into(),
-                                y: event.root_y.into(),
-                            });
-                            last_cursor = CursorPosition {
+                            let cursor = CursorPosition {
                                 x: event.root_x.into(),
                                 y: event.root_y.into(),
                             };
+                            drag_anchor = Some(cursor.clone());
                             dragging = false;
                             if last_drawn_selection.is_some() {
                                 update_overlay_selection(&conn, &_cleanup.overlay, &overlay, None)?;
@@ -275,7 +270,7 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                                 &conn,
                                 &_cleanup.overlay,
                                 &overlay,
-                                &last_cursor,
+                                &cursor,
                                 true,
                             )?;
                         }
@@ -292,7 +287,6 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                                 x: event.root_x.into(),
                                 y: event.root_y.into(),
                             };
-                            last_cursor = cursor.clone();
                             let final_selection = if dragging {
                                 drag_anchor
                                     .as_ref()
@@ -311,7 +305,7 @@ fn run_native_capture_session(app: AppHandle, overlay: OverlaySetup, session_id:
                                 &conn,
                                 &_cleanup.overlay,
                                 &overlay,
-                                &last_cursor,
+                                &cursor,
                                 false,
                             )?;
                             if let Some(selection) = final_selection {
@@ -405,7 +399,7 @@ fn create_overlay(
             .graphics_exposures(0)
             .line_style(LineStyle::ON_OFF_DASH)
             .line_width(CROSSHAIR_THICKNESS)
-            .function(Gx::COPY),
+            .function(GX::COPY),
     )
     .map_err(|error| FlickError::Message(error.to_string()))?;
     conn.set_dashes(crosshair_gc, 0, &[CROSSHAIR_DASH, CROSSHAIR_GAP])

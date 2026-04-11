@@ -72,11 +72,13 @@ pub fn ensure_translate_window(app: &AppHandle) -> tauri::Result<WebviewWindow> 
 pub fn show_translate_window(app: &AppHandle) -> tauri::Result<()> {
     platform::show_translate_window_before_focus(app);
     let window = ensure_translate_window(app)?;
-    let pinned = window.is_always_on_top().unwrap_or(false);
 
     #[cfg(not(target_os = "linux"))]
-    if !pinned {
-        let _ = window.center();
+    {
+        let pinned = window.is_always_on_top().unwrap_or(false);
+        if !pinned {
+            let _ = window.center();
+        }
     }
 
     let _ = window.set_visible_on_all_workspaces(true);
