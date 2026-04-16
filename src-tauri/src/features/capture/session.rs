@@ -198,12 +198,14 @@ pub fn complete_capture(
                             }
                             Err(e) => {
                                 eprintln!("translation failed: {}", e);
+                                translation::mark_window_translation_failed(&app_handle, &e);
                                 return Err(e);
                             }
                         }
                     }
                     Err(e) => {
                         eprintln!("OCR failed: {}", e);
+                        translation::mark_window_translation_failed(&app_handle, &e);
                         return Err(e.into());
                     }
                 }

@@ -76,6 +76,7 @@ export type TranslationPayload = {
   detectedSourceLanguage?: string | null;
   ocrDetectedSourceLanguage?: string | null;
   targetLanguage: string;
+  translationError?: string | null;
 };
 
 export type TranslateResponse = {
@@ -94,6 +95,7 @@ export type TranslateWindowState = {
   target_language: string;
   is_loading: boolean;
   is_translating: boolean;
+  translation_error?: string | null;
 };
 
 export type CaptureRecord = {

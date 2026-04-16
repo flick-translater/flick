@@ -370,6 +370,7 @@ pub fn show_window_immediately(app: &AppHandle, image_path: &str) -> Result<(), 
                 target_language: "zh".into(),
                 is_loading: true,
                 is_translating: false,
+                translation_error: None,
             };
         }
     }
@@ -411,6 +412,7 @@ pub fn emit_ocr_ready(
             snapshot.target_language = target_language.to_string();
             snapshot.is_loading = false;
             snapshot.is_translating = auto_translate_enabled;
+            snapshot.translation_error = None;
         }
     }
 
@@ -448,6 +450,7 @@ pub fn emit_translation_ready(
             snapshot.target_language = target_language.to_string();
             snapshot.is_loading = false;
             snapshot.is_translating = false;
+            snapshot.translation_error = None;
         }
     }
 
@@ -487,6 +490,7 @@ pub fn show_text_translation_loading(
                 target_language: target_language.to_string(),
                 is_loading: false,
                 is_translating: true,
+                translation_error: None,
             };
         }
     }
@@ -494,6 +498,16 @@ pub fn show_text_translation_loading(
     windows::ensure_translate_window(app)?;
     windows::show_translate_window(app)?;
     Ok(())
+}
+
+pub fn mark_window_translation_failed(app: &AppHandle, error: impl std::fmt::Display) {
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut snapshot) = state.translate_window_state.lock() {
+            snapshot.is_loading = false;
+            snapshot.is_translating = false;
+            snapshot.translation_error = Some(error.to_string());
+        }
+    }
 }
 
 pub fn translate_selected_text_to_window(app: &AppHandle) -> Result<(), FlickError> {
@@ -567,13 +581,7 @@ pub fn translate_selected_text_to_window(app: &AppHandle) -> Result<(), FlickErr
 
         if let Err(error) = run() {
             eprintln!("selected text translation failed: {error:#}");
-
-            if let Some(state) = app_handle.try_state::<AppState>() {
-                if let Ok(mut snapshot) = state.translate_window_state.lock() {
-                    snapshot.is_loading = false;
-                    snapshot.is_translating = false;
-                }
-            }
+            mark_window_translation_failed(&app_handle, error);
         }
     });
 

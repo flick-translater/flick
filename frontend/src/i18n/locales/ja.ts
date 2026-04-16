@@ -103,7 +103,7 @@ export default {
       apiKeyPlaceholder: "sk-proj-************************",
       testConnection: "テスト",
       defaultPrompt: "ユーザープロンプトテンプレート",
-      defaultPromptPlaceholder: "空欄なら内蔵テンプレートを使います。${source}、${source.lang}、${target.lang} などの変数を使えます...",
+      defaultPromptPlaceholder: "空欄なら内蔵テンプレートを使います。${source}、${source.raw}、${source.lang}、${target.lang} などの変数を使えます...",
       advancedParameters: "詳細パラメーター",
       maxTokens: "最大トークン数",
       maxTokensDesc: "生成される応答の最大長を制御します。",

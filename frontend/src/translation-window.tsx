@@ -28,6 +28,7 @@ const placeholderPayload: TranslationPayload = {
   detectedSourceLanguage: null,
   ocrDetectedSourceLanguage: null,
   targetLanguage: 'zh',
+  translationError: null,
 };
 
 function buildPayloadFromSnapshot(snapshot: TranslateWindowState): TranslationPayload {
@@ -39,6 +40,7 @@ function buildPayloadFromSnapshot(snapshot: TranslateWindowState): TranslationPa
     detectedSourceLanguage: snapshot.detected_source_language ?? null,
     ocrDetectedSourceLanguage: snapshot.ocr_detected_source_language ?? null,
     targetLanguage: snapshot.target_language || placeholderPayload.targetLanguage,
+    translationError: snapshot.translation_error ?? null,
   };
 }
 
@@ -100,6 +102,7 @@ function TranslateWindowApp() {
     setPayload((prev) => ({
       ...prev,
       translatedText: '',
+      translationError: null,
     }));
 
     try {
@@ -117,9 +120,14 @@ function TranslateWindowApp() {
         provider: response.provider,
         detectedSourceLanguage: response.detected_source_language ?? prev.detectedSourceLanguage,
         targetLanguage,
+        translationError: null,
       }));
     } catch (error) {
       console.error('[TRANSLATE] manual translate failed', error);
+      setPayload((prev) => ({
+        ...prev,
+        translationError: String(error),
+      }));
     } finally {
       setIsTranslating(false);
     }

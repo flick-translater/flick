@@ -492,6 +492,10 @@ export default function TranslationWindow({
                 <Loader2 size={16} className="animate-spin" />
                 <span className="text-sm">{t('widget.translating', { defaultValue: '翻译中...' })}</span>
               </div>
+            ) : payload.translationError ? (
+              <div className="rounded-lg border border-error/20 bg-error-container/40 px-3 py-2 text-sm font-medium leading-relaxed text-error">
+                {t('widget.translationFailed', { defaultValue: '翻译失败' })}: {payload.translationError}
+              </div>
             ) : (
               <p className="whitespace-pre-wrap break-words font-body text-sm leading-relaxed text-primary-container font-medium">
                 {standalone ? displayedTranslation : normalizedTranslatedText}

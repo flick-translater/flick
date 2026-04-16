@@ -103,7 +103,7 @@ export default {
       apiKeyPlaceholder: "sk-proj-************************",
       testConnection: "测试连接",
       defaultPrompt: "用户模版提示词",
-      defaultPromptPlaceholder: "留空时使用内置模版；可使用 ${source}、${source.lang}、${target.lang} 等变量...",
+      defaultPromptPlaceholder: "留空时使用内置模版；可使用 ${source}、${source.raw}、${source.lang}、${target.lang} 等变量...",
       advancedParameters: "高级参数",
       maxTokens: "最大 Token 数",
       maxTokensDesc: "控制生成响应的最大长度。",

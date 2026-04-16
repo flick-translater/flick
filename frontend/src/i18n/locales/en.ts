@@ -103,7 +103,7 @@ export default {
       apiKeyPlaceholder: "sk-proj-************************",
       testConnection: "Test",
       defaultPrompt: "User Prompt Template",
-      defaultPromptPlaceholder: "Leave empty to use the built-in template. You can use ${source}, ${source.lang}, and ${target.lang}...",
+      defaultPromptPlaceholder: "Leave empty to use the built-in template. You can use ${source}, ${source.raw}, ${source.lang}, and ${target.lang}...",
       advancedParameters: "Advanced Parameters",
       maxTokens: "Max Tokens",
       maxTokensDesc: "Controls the maximum length of the generated response.",
