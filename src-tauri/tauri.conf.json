@@ -18,11 +18,13 @@
   },
   "bundle": {
     "active": true,
-    "resources": [
-      "resources/ocr/paddle_ocr_v5_mobile/**/*",
-      "icons/trayTemplate.png",
-      "icons/trayTemplate@2x.png"
-    ],
+    "resources": {
+      "resources/ocr/paddle_ocr_v5_mobile/paddle_ocr_v5_mobile_characters.txt": "ocr/paddle_ocr_v5_mobile/paddle_ocr_v5_mobile_characters.txt",
+      "resources/ocr/paddle_ocr_v5_mobile/paddle_ocr_v5_mobile_text_detection.onnx": "ocr/paddle_ocr_v5_mobile/paddle_ocr_v5_mobile_text_detection.onnx",
+      "resources/ocr/paddle_ocr_v5_mobile/paddle_ocr_v5_mobile_text_recognition.onnx": "ocr/paddle_ocr_v5_mobile/paddle_ocr_v5_mobile_text_recognition.onnx",
+      "icons/trayTemplate.png": "icons/trayTemplate.png",
+      "icons/trayTemplate@2x.png": "icons/trayTemplate@2x.png"
+    },
     "icon": [
       "icons/icon.icns",
       "icons/icon.ico",
