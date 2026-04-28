@@ -108,6 +108,20 @@ jobs:
             npm install
           fi
 
+      - name: Set app version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          release_version="${GITHUB_REF_NAME#v}"
+          app_version="${release_version%%-*}"
+
+          sed -i.bak -E "s/^version = \".*\"/version = \"$app_version\"/" src-tauri/Cargo.toml
+          rm src-tauri/Cargo.toml.bak
+
+          echo "Release tag version: $release_version"
+          echo "App package version: $app_version"
+          grep '^version =' src-tauri/Cargo.toml
+
       - name: Import macOS signing certificate
         if: runner.os == 'macOS'
         shell: bash
