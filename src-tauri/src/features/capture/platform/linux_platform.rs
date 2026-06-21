@@ -105,7 +105,7 @@ pub fn editor_escape_key_pressed() -> bool {
 }
 
 pub fn supports_screenshot_editor_toolbar() -> bool {
-    current_desktop_backend() != LinuxDesktopBackend::Wayland
+    false
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

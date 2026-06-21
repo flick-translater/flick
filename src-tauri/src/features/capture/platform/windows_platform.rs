@@ -124,14 +124,13 @@ pub fn prepare_for_capture_session(
 }
 
 pub fn complete_ui_before_capture_processing(
-    app: &AppHandle,
+    _app: &AppHandle,
     state: &State<'_, AppState>,
     hide_overlay_now: bool,
 ) -> Result<Vec<CachedScreenCapture>, FlickError> {
     uninstall_input_hooks();
-    clear_active_session();
     if hide_overlay_now {
-        frozen_overlay::hide_native_overlay(app)?;
+        clear_active_session();
     }
     let mut snapshots = state
         .capture_snapshots
@@ -145,8 +144,9 @@ pub fn finalize_capture_session(
     _state: &State<'_, AppState>,
     _restore_previous_frontmost: bool,
 ) {
+    let _ = app;
     uninstall_input_hooks();
-    let _ = frozen_overlay::hide_native_overlay(app);
+    clear_active_session();
 }
 
 pub fn restore_after_failed_capture(
@@ -158,9 +158,9 @@ pub fn restore_after_failed_capture(
 }
 
 pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
+    let _ = app;
     uninstall_input_hooks();
     clear_active_session();
-    let _ = frozen_overlay::hide_native_overlay(app);
     if let Ok(mut snapshots) = state.capture_snapshots.lock() {
         snapshots.clear();
     }
@@ -271,7 +271,6 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
         }
 
         if !left_down && left_was_down {
-            clear_active_session();
             let final_selection = if dragging {
                 drag_anchor
                     .as_ref()
@@ -287,7 +286,9 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
                     crate::features::capture::complete_capture(&app, &state, selection)
                 {
                     emit_capture_status(&app, "capture-error", error.to_string());
+                    break;
                 }
+                run_editor_overlay_hold_loop(session_id);
             } else {
                 let _ = crate::features::capture::cancel_capture(&app);
             }
@@ -298,6 +299,24 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
         right_was_down = right_down;
         thread::sleep(POLL_INTERVAL);
     }
+    crate::features::capture::capture_editor_log(
+        "windows overlay: owner thread hiding native overlay",
+    );
+    let _ = frozen_overlay::hide_native_overlay(&app);
+}
+
+fn run_editor_overlay_hold_loop(session_id: u64) {
+    crate::features::capture::capture_editor_log(
+        "windows overlay: hold loop start after selection",
+    );
+    while is_active_session(session_id) {
+        frozen_overlay::pump_native_overlay_messages();
+        thread::sleep(POLL_INTERVAL);
+    }
+    frozen_overlay::pump_native_overlay_messages();
+    crate::features::capture::capture_editor_log(
+        "windows overlay: hold loop complete after editor finish",
+    );
 }
 
 fn current_global_cursor_position() -> Result<CursorPosition, FlickError> {

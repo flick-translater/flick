@@ -193,6 +193,20 @@ pub fn configure_screenshot_editor_window(window: &WebviewWindow) {
     let _ = window;
 }
 
+pub fn configure_screenshot_editor_window_shape(
+    window: &WebviewWindow,
+    regions: &[crate::models::SelectionRect],
+) {
+    #[cfg(target_os = "windows")]
+    windows_platform::configure_screenshot_editor_window_shape(window, regions);
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        let _ = regions;
+    }
+}
+
 pub fn refresh_previous_frontmost_app(app: &AppHandle) {
     #[cfg(target_os = "macos")]
     macos_platform::refresh_previous_frontmost_app(app);

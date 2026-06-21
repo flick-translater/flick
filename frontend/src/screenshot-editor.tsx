@@ -8,8 +8,8 @@ import {
   Check,
   Circle,
   Grid2X2,
-  Minus,
   Redo2,
+  Slash,
   Square,
   Trash2,
   Type,
@@ -40,10 +40,11 @@ type TextDraft = {
 
 const defaultEditorColor = '#ef4444';
 const toolbarButtonClass = 'flex h-8 w-8 items-center justify-center rounded-md border border-outline-variant/30 bg-surface-container text-on-surface transition-colors hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-40';
+const toolOptionPanelClass = 'absolute left-0 top-[calc(100%+8px)] z-50 w-40 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl';
 const imageSizeFallback = { width: 1, height: 1 };
 const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?: number }> }> = [
   { id: 'pen', label: 'Brush', icon: Brush },
-  { id: 'line', label: 'Line', icon: Minus },
+  { id: 'line', label: 'Line', icon: Slash },
   { id: 'arrow', label: 'Arrow', icon: ArrowUpRight },
   { id: 'ellipse', label: 'Circle', icon: Circle },
   { id: 'rect', label: 'Rectangle', icon: Square },
@@ -83,7 +84,7 @@ function ScreenshotEditor() {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [undoStack, setUndoStack] = useState<Annotation[][]>([]);
   const [redoStack, setRedoStack] = useState<Annotation[][]>([]);
-  const [tool, setTool] = useState<Tool>('pen');
+  const [tool, setTool] = useState<Tool | null>(null);
   const [color, setColor] = useState(initialColor);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [hexInput, setHexInput] = useState(initialColor);
@@ -412,11 +413,19 @@ function ScreenshotEditor() {
     return { kind: 'rect', rect: rectFromPoints(from, adjustedTo, constrain), color, width: lineWidth };
   }
 
+  function handleToolClick(nextTool: Tool) {
+    setColorPickerOpen(false);
+    setTool((currentTool) => currentTool === nextTool ? null : nextTool);
+  }
+
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     if (!imageRef.current) {
       return;
     }
     setColorPickerOpen(false);
+    if (!tool) {
+      return;
+    }
 
     const point = getCanvasPoint(event);
     if (tool === 'text') {
@@ -588,7 +597,10 @@ function ScreenshotEditor() {
   }
 
   return (
-    <div className="relative h-screen overflow-hidden bg-transparent text-on-surface">
+    <div
+      className="relative h-screen overflow-hidden text-on-surface"
+      style={{ backgroundColor: 'transparent' }}
+    >
       {!isPreload && (
         <>
       <div
@@ -661,7 +673,7 @@ function ScreenshotEditor() {
 
       <div
         ref={toolbarRef}
-        className="absolute z-40 flex max-w-[calc(100vw-16px)] flex-wrap items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/95 p-1.5 shadow-xl backdrop-blur"
+        className="absolute z-40 flex max-w-[calc(100vw-16px)] items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/95 p-1.5 shadow-xl backdrop-blur"
         style={{
           left: toolbarPosition.left,
           top: toolbarPosition.top,
@@ -672,23 +684,67 @@ function ScreenshotEditor() {
         <div className="flex items-center gap-1">
           {tools.map((item) => {
             const Icon = item.icon;
+            const isActive = tool === item.id;
             return (
-              <button
-                key={item.id}
-                type="button"
-                title={item.label}
-                onClick={() => {
-                  setColorPickerOpen(false);
-                  setTool(item.id);
-                }}
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
-                  tool === item.id
-                    ? 'border-primary bg-primary text-white'
-                    : 'border-outline-variant/30 bg-surface-container text-on-surface hover:bg-surface-container-high'
-                }`}
-              >
-                <Icon size={18} />
-              </button>
+              <div key={item.id} className="relative shrink-0">
+                <button
+                  type="button"
+                  title={item.label}
+                  onClick={() => handleToolClick(item.id)}
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
+                    isActive
+                      ? 'border-primary bg-primary text-white'
+                      : 'border-outline-variant/30 bg-surface-container text-on-surface hover:bg-surface-container-high'
+                  }`}
+                >
+                  <Icon size={18} />
+                </button>
+                {isActive && item.id !== 'mosaic' && item.id !== 'text' && (
+                  <ToolOptionPanel label="Size">
+                    <input
+                      type="range"
+                      min="2"
+                      max="18"
+                      value={lineWidth}
+                      onChange={(event) => setLineWidth(Number(event.target.value))}
+                      className="w-full accent-primary"
+                    />
+                  </ToolOptionPanel>
+                )}
+                {isActive && item.id === 'mosaic' && (
+                  <ToolOptionPanel label="Brush">
+                    <input
+                      type="range"
+                      min="12"
+                      max="80"
+                      value={mosaicWidth}
+                      onChange={(event) => setMosaicWidth(Number(event.target.value))}
+                      className="w-full accent-primary"
+                    />
+                    <div className="mt-3 text-xs font-semibold text-on-surface-variant">Block</div>
+                    <input
+                      type="range"
+                      min="6"
+                      max="32"
+                      value={mosaicSize}
+                      onChange={(event) => setMosaicSize(Number(event.target.value))}
+                      className="mt-1 w-full accent-primary"
+                    />
+                  </ToolOptionPanel>
+                )}
+                {isActive && item.id === 'text' && (
+                  <ToolOptionPanel label="Text">
+                    <input
+                      type="range"
+                      min="14"
+                      max="64"
+                      value={fontSize}
+                      onChange={(event) => setFontSize(Number(event.target.value))}
+                      className="w-full accent-primary"
+                    />
+                  </ToolOptionPanel>
+                )}
+              </div>
             );
           })}
         </div>
@@ -765,61 +821,6 @@ function ScreenshotEditor() {
           )}
         </div>
 
-        {tool !== 'mosaic' && (
-          <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-on-surface-variant">
-            Size
-            <input
-              type="range"
-              min="2"
-              max="18"
-              value={lineWidth}
-              onChange={(event) => setLineWidth(Number(event.target.value))}
-              className="w-16 accent-primary"
-            />
-          </label>
-        )}
-
-        {tool === 'mosaic' && (
-          <>
-            <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-on-surface-variant">
-              Brush
-              <input
-                type="range"
-                min="12"
-                max="80"
-                value={mosaicWidth}
-                onChange={(event) => setMosaicWidth(Number(event.target.value))}
-                className="w-16 accent-primary"
-              />
-            </label>
-            <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-on-surface-variant">
-              Block
-              <input
-                type="range"
-                min="6"
-                max="32"
-                value={mosaicSize}
-                onChange={(event) => setMosaicSize(Number(event.target.value))}
-                className="w-16 accent-primary"
-              />
-            </label>
-          </>
-        )}
-
-        {tool === 'text' && (
-          <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-on-surface-variant">
-            Text
-            <input
-              type="range"
-              min="14"
-              max="64"
-              value={fontSize}
-              onChange={(event) => setFontSize(Number(event.target.value))}
-              className="w-16 accent-primary"
-            />
-          </label>
-        )}
-
         <div className="flex items-center gap-1">
           <button type="button" title="Undo" onClick={undo} disabled={undoStack.length === 0} className={toolbarButtonClass}>
             <Undo2 size={18} />
@@ -853,6 +854,15 @@ function ScreenshotEditor() {
       {error && <div className="fixed bottom-16 left-2 right-2 rounded bg-error/90 px-3 py-2 text-sm text-white">{error}</div>}
         </>
       )}
+    </div>
+  );
+}
+
+function ToolOptionPanel({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className={toolOptionPanelClass} onPointerDown={(event) => event.stopPropagation()}>
+      <div className="mb-1 text-xs font-semibold text-on-surface-variant">{label}</div>
+      {children}
     </div>
   );
 }
@@ -972,16 +982,32 @@ function drawMosaicRect(context: CanvasRenderingContext2D, rect: Rect, blockSize
   const data = context.getImageData(x, y, width, height);
   for (let blockY = 0; blockY < height; blockY += blockSize) {
     for (let blockX = 0; blockX < width; blockX += blockSize) {
-      const sampleX = Math.min(width - 1, blockX + Math.floor(blockSize / 2));
-      const sampleY = Math.min(height - 1, blockY + Math.floor(blockSize / 2));
-      const sampleIndex = (sampleY * width + sampleX) * 4;
-      const red = data.data[sampleIndex];
-      const green = data.data[sampleIndex + 1];
-      const blue = data.data[sampleIndex + 2];
-      const alpha = data.data[sampleIndex + 3];
+      const endX = Math.min(blockX + blockSize, width);
+      const endY = Math.min(blockY + blockSize, height);
+      let redSum = 0;
+      let greenSum = 0;
+      let blueSum = 0;
+      let alphaSum = 0;
+      let count = 0;
 
-      for (let py = blockY; py < Math.min(blockY + blockSize, height); py += 1) {
-        for (let px = blockX; px < Math.min(blockX + blockSize, width); px += 1) {
+      for (let py = blockY; py < endY; py += 1) {
+        for (let px = blockX; px < endX; px += 1) {
+          const index = (py * width + px) * 4;
+          redSum += data.data[index];
+          greenSum += data.data[index + 1];
+          blueSum += data.data[index + 2];
+          alphaSum += data.data[index + 3];
+          count += 1;
+        }
+      }
+
+      const red = Math.round(redSum / count);
+      const green = Math.round(greenSum / count);
+      const blue = Math.round(blueSum / count);
+      const alpha = Math.round(alphaSum / count);
+
+      for (let py = blockY; py < endY; py += 1) {
+        for (let px = blockX; px < endX; px += 1) {
           const index = (py * width + px) * 4;
           data.data[index] = red;
           data.data[index + 1] = green;

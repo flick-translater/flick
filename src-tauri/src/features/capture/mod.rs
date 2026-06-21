@@ -5,7 +5,7 @@
 
 mod history;
 mod io;
-mod platform;
+pub(crate) mod platform;
 mod session;
 
 pub use history::{
@@ -13,6 +13,7 @@ pub use history::{
     get_storage_info, list_capture_history, prune_capture_history,
 };
 pub use io::{open_file_in_default_app, pick_screenshot_directory, read_image_as_data_url};
+pub(crate) use session::capture_editor_log;
 pub use session::{
     begin_capture_session, begin_capture_session_with_intent, cancel_capture,
     cancel_capture_edit_command, capture_editor_frontend_log, capture_editor_ready,

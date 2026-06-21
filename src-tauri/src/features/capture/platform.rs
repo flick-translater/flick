@@ -206,3 +206,15 @@ pub fn supports_screenshot_editor_toolbar() -> bool {
         true
     }
 }
+
+pub fn keep_native_overlay_until_editor_finish() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        return linux_platform::supports_screenshot_editor_toolbar();
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}

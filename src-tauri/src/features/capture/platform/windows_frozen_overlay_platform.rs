@@ -8,18 +8,18 @@ use anyhow::{Context, anyhow};
 use image::ImageBuffer;
 use tauri::AppHandle;
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM},
+    Foundation::{GetLastError, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM},
     Graphics::Gdi::{
         AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
         CreateCompatibleBitmap, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC,
         DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC, SRCCOPY, SelectObject,
     },
     UI::WindowsAndMessaging::{
-        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
-        GetWindowLongPtrW, IDC_CROSS, LoadCursorW, RegisterClassW, SW_HIDE, SW_SHOWNA,
-        SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, ShowWindow, ULW_ALPHA,
-        UpdateLayeredWindow, WM_DESTROY, WM_ERASEBKGND, WM_NCCREATE, WNDCLASSW, WS_EX_LAYERED,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, IDC_CROSS,
+        LoadCursorW, RegisterClassW, SW_HIDE, SW_SHOWNA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+        SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WM_DESTROY, WM_ERASEBKGND,
+        WM_NCCREATE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+        WS_POPUP,
     },
 };
 
@@ -35,9 +35,9 @@ struct FrozenOverlayState {
     windows: Vec<WindowHandle>,
 }
 
-#[derive(Clone, Copy, Debug)]
 struct WindowHandle {
     hwnd: usize,
+    data: Option<Box<OverlayWindowData>>,
 }
 
 struct OverlayWindowData {
@@ -48,6 +48,12 @@ struct OverlayWindowData {
     memory_dc: usize,
     bitmap: usize,
     bitmap_bits: usize,
+}
+
+impl Drop for OverlayWindowData {
+    fn drop(&mut self) {
+        release_layered_surface(self);
+    }
 }
 
 fn overlay_state() -> &'static Mutex<FrozenOverlayState> {
@@ -163,6 +169,10 @@ pub(super) fn show_native_overlay(
     snapshots: &[CachedScreenCapture],
     visuals: OverlayVisuals,
 ) -> Result<(), FlickError> {
+    crate::features::capture::capture_editor_log(&format!(
+        "windows overlay: show_native_overlay snapshots={}",
+        snapshots.len()
+    ));
     register_overlay_window_class()?;
 
     let mut state = overlay_state()
@@ -177,22 +187,26 @@ pub(super) fn show_native_overlay(
         let hwnd = create_overlay_window()?;
         state.windows.push(WindowHandle {
             hwnd: hwnd as usize,
+            data: None,
         });
     }
 
-    for (window, snapshot) in state.windows.iter().zip(snapshots.iter()) {
+    let draw_state = state.draw_state.clone();
+    for (window, snapshot) in state.windows.iter_mut().zip(snapshots.iter()) {
         let mut data = create_window_data(snapshot, visuals);
         initialize_layered_surface(&mut data)?;
-        paint_overlay_frame(&mut data, &state.draw_state, visuals);
-        attach_window_data(window.hwnd as HWND, data);
+        paint_overlay_frame(&mut data, &draw_state, visuals);
         show_overlay_window(window.hwnd as HWND, &snapshot.bounds)?;
-        let data_ptr = unsafe {
-            GetWindowLongPtrW(window.hwnd as HWND, GWLP_USERDATA) as *mut OverlayWindowData
-        };
-        if !data_ptr.is_null() {
-            let data = unsafe { &mut *data_ptr };
-            render_overlay_window(window.hwnd as HWND, data)?;
-        }
+        render_overlay_window(window.hwnd as HWND, &mut data)?;
+        window.data = Some(data);
+        crate::features::capture::capture_editor_log(&format!(
+            "windows overlay: initial render hwnd={:#x} bounds=({}, {}, {}x{})",
+            window.hwnd,
+            snapshot.bounds.x,
+            snapshot.bounds.y,
+            snapshot.bounds.width,
+            snapshot.bounds.height
+        ));
     }
 
     for window in state.windows.iter().skip(snapshots.len()) {
@@ -203,9 +217,15 @@ pub(super) fn show_native_overlay(
 }
 
 pub(super) fn hide_native_overlay(_app: &AppHandle) -> Result<(), FlickError> {
+    crate::features::capture::capture_editor_log("windows overlay: hide_native_overlay start");
     let mut state = overlay_state()
         .lock()
         .map_err(|_| FlickError::Message("windows overlay state mutex poisoned".into()))?;
+    crate::features::capture::capture_editor_log(&format!(
+        "windows overlay: hide_native_overlay visible={} windows={}",
+        state.overlay_visible,
+        state.windows.len()
+    ));
     state.overlay_visible = false;
     state.draw_state = OverlayDrawState::default();
     state.visuals = None;
@@ -243,14 +263,10 @@ pub(super) fn update_highlight(
         .visuals
         .ok_or_else(|| FlickError::Message("missing windows overlay visuals".into()))?;
 
-    for window in &state.windows {
-        let data_ptr = unsafe {
-            GetWindowLongPtrW(window.hwnd as HWND, GWLP_USERDATA) as *mut OverlayWindowData
-        };
-        if data_ptr.is_null() {
+    for window in &mut state.windows {
+        let Some(data) = window.data.as_mut() else {
             continue;
-        }
-        let data = unsafe { &mut *data_ptr };
+        };
         paint_overlay_frame(data, &new_draw_state, visuals);
         render_overlay_window(window.hwnd as HWND, data)?;
     }
@@ -274,19 +290,16 @@ pub(super) fn update_crosshair(
     }
 
     state.draw_state.cursor = cursor;
+    let draw_state = state.draw_state.clone();
     let visuals = state
         .visuals
         .ok_or_else(|| FlickError::Message("missing windows overlay visuals".into()))?;
 
-    for window in &state.windows {
-        let data_ptr = unsafe {
-            GetWindowLongPtrW(window.hwnd as HWND, GWLP_USERDATA) as *mut OverlayWindowData
-        };
-        if data_ptr.is_null() {
+    for window in &mut state.windows {
+        let Some(data) = window.data.as_mut() else {
             continue;
-        }
-        let data = unsafe { &mut *data_ptr };
-        paint_overlay_frame(data, &state.draw_state, visuals);
+        };
+        paint_overlay_frame(data, &draw_state, visuals);
         render_overlay_window(window.hwnd as HWND, data)?;
     }
 
@@ -417,6 +430,7 @@ fn paint_overlay_frame(
             visuals,
         );
     }
+
 }
 
 fn intersect_local_rect(
@@ -568,25 +582,6 @@ fn create_overlay_window() -> Result<HWND, FlickError> {
     Ok(hwnd)
 }
 
-fn attach_window_data(hwnd: HWND, data: Box<OverlayWindowData>) {
-    clear_window_data(hwnd);
-    let ptr = Box::into_raw(data);
-    unsafe {
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
-    }
-}
-
-fn clear_window_data(hwnd: HWND) {
-    let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut OverlayWindowData };
-    if !ptr.is_null() {
-        unsafe {
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-            let mut data = Box::from_raw(ptr);
-            release_layered_surface(&mut data);
-        }
-    }
-}
-
 fn show_overlay_window(hwnd: HWND, bounds: &SelectionRect) -> Result<(), FlickError> {
     let width = i32::try_from(bounds.width)
         .map_err(|_| FlickError::Message("invalid overlay width".into()))?;
@@ -614,7 +609,6 @@ fn hide_overlay_window(hwnd: HWND) {
 }
 
 fn destroy_overlay_window(hwnd: HWND) {
-    clear_window_data(hwnd);
     unsafe {
         DestroyWindow(hwnd);
     }
@@ -659,10 +653,7 @@ unsafe extern "system" fn overlay_window_proc(
     match message {
         WM_NCCREATE => 1,
         WM_ERASEBKGND => 1,
-        WM_DESTROY => {
-            clear_window_data(hwnd);
-            0
-        }
+        WM_DESTROY => 0,
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
     }
 }
@@ -814,9 +805,10 @@ fn render_overlay_window(hwnd: HWND, data: &mut OverlayWindowData) -> Result<(),
     unsafe { ReleaseDC(null_mut(), screen_dc) };
 
     if updated == 0 {
-        return Err(FlickError::Message(
-            "UpdateLayeredWindow failed for capture overlay".into(),
-        ));
+        let last_error = unsafe { GetLastError() };
+        return Err(FlickError::Message(format!(
+            "UpdateLayeredWindow failed for capture overlay last_error={last_error}"
+        )));
     }
 
     Ok(())

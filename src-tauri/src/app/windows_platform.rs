@@ -3,9 +3,12 @@ use tauri::{
     App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_LOADFROMFILE,
-    WM_SETICON,
+use windows_sys::Win32::{
+    Graphics::Gdi::{CombineRgn, CreateRectRgn, DeleteObject, SetWindowRgn, RGN_OR},
+    UI::WindowsAndMessaging::{
+        LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR,
+        LR_LOADFROMFILE, WM_SETICON,
+    },
 };
 
 use crate::{
@@ -14,6 +17,7 @@ use crate::{
     error::FlickError,
     features::translation,
     models::AppSettings,
+    models::SelectionRect,
 };
 
 pub fn configure_app_setup(_app: &mut App) {}
@@ -138,6 +142,42 @@ pub fn show_translate_window_after_show(_app: &AppHandle) {}
 pub fn configure_built_window(window: &WebviewWindow) {
     if let Err(error) = set_window_icons(window) {
         eprintln!("failed to set explicit Windows window icons: {error}");
+    }
+}
+
+pub fn configure_screenshot_editor_window_shape(
+    window: &WebviewWindow,
+    regions: &[SelectionRect],
+) {
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    let scale_factor = window.scale_factor().unwrap_or(1.0);
+    let combined = unsafe { CreateRectRgn(0, 0, 0, 0) };
+    if combined.is_null() {
+        return;
+    }
+
+    for region in regions {
+        let left = (region.x as f64 * scale_factor).round() as i32;
+        let top = (region.y as f64 * scale_factor).round() as i32;
+        let right = ((region.x + region.width as i32) as f64 * scale_factor).round() as i32;
+        let bottom = ((region.y + region.height as i32) as f64 * scale_factor).round() as i32;
+        let rect = unsafe { CreateRectRgn(left, top, right, bottom) };
+        if rect.is_null() {
+            continue;
+        }
+        unsafe {
+            CombineRgn(combined, combined, rect, RGN_OR);
+            DeleteObject(rect as _);
+        }
+    }
+
+    let result = unsafe { SetWindowRgn(hwnd.0 as _, combined, 1) };
+    if result == 0 {
+        unsafe {
+            DeleteObject(combined as _);
+        }
     }
 }
 

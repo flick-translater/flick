@@ -29,7 +29,7 @@ use crate::{
 
 use super::{history, platform};
 
-fn capture_editor_log(step: &str) {
+pub(crate) fn capture_editor_log(step: &str) {
     println!(
         "[{}] [capture-editor] {step}",
         Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ")
@@ -520,11 +520,13 @@ fn create_pending_capture_edit(
     });
 
     capture_editor_log("create_pending_capture_edit: storing pending session");
-    let keep_overlay_until_finish = true;
+    let keep_overlay_until_finish = platform::keep_native_overlay_until_editor_finish();
     if selection_spans_multiple_monitors(app, &selection) {
         capture_editor_log("create_pending_capture_edit: cross-monitor selection detected");
     }
-    capture_editor_log("create_pending_capture_edit: keeping native overlay until finish");
+    capture_editor_log(&format!(
+        "create_pending_capture_edit: keep native overlay until finish={keep_overlay_until_finish}"
+    ));
     let pending = PendingCaptureEdit {
         id: record.id.clone(),
         created_at: record.created_at,

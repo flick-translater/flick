@@ -44,7 +44,7 @@ Platform notes:
   - Screen Recording: required for screenshot capture and screenshot OCR.
   - Accessibility: required for selected-text translation, translate-and-replace, and other workflows that interact with the active app.
 - Windows: install Microsoft Visual Studio Build Tools with the C++ desktop workload. WebView2 Runtime is required by Tauri apps and is normally already present on current Windows systems.
-- Linux: install the GTK/WebKit and related desktop libraries. Due to Wayland's security model, global hotkeys and screenshot capture are not available in Wayland sessions; use an X11 session for those features. On Ubuntu/Debian-based systems, this repository includes a helper target:
+- Linux: install the GTK/WebKit and related desktop libraries. Due to Wayland's security model, global hotkeys and screenshot capture are not available in Wayland sessions; use an X11 session for those features. The post-screenshot editor toolbar is currently disabled on Linux, so regular screenshots use the direct save/copy flow there. On Ubuntu/Debian-based systems, this repository includes a helper target:
 
 ```bash
 make setup-linux-deps-ubuntu
