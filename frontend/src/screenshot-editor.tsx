@@ -52,10 +52,7 @@ const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?:
   { id: 'text', label: 'Text', icon: Type },
 ];
 
-function editorLog(step: string) {
-  console.log(`[${new Date().toISOString()}] [capture-editor] ${step}`);
-  void invoke('capture_editor_frontend_log', { message: step }).catch(() => undefined);
-}
+function editorLog(_step: string) {}
 
 function ScreenshotEditor() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
