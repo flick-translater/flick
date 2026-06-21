@@ -234,7 +234,9 @@ fn bgra_to_rgba_image(
         dst[0] = src[2];
         dst[1] = src[1];
         dst[2] = src[0];
-        dst[3] = src[3];
+        // Desktop screenshots should be opaque. Some CGImage buffers report an unusable alpha
+        // byte here, which made the editor draw a transparent image over its white canvas.
+        dst[3] = 255;
     }
 
     ImageBuffer::from_vec(width, height, rgba_buf).ok_or_else(|| anyhow!("buffer not big enough"))

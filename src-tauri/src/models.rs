@@ -31,6 +31,8 @@ pub struct PendingCaptureEdit {
     pub original_path: String,
     pub final_path: String,
     pub selection: SelectionRect,
+    pub cancelled: bool,
+    pub overlay_finalized: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,6 +236,10 @@ fn default_screenshot_editor_toolbar_enabled() -> bool {
     true
 }
 
+fn default_screenshot_editor_color() -> String {
+    "#ef4444".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -249,6 +255,8 @@ pub struct AppSettings {
     pub screenshot_directory: String,
     #[serde(default = "default_screenshot_editor_toolbar_enabled")]
     pub screenshot_editor_toolbar_enabled: bool,
+    #[serde(default = "default_screenshot_editor_color")]
+    pub screenshot_editor_color: String,
     pub ocr_auto_translate: bool,
     pub ocr_target_language: String,
     pub selected_replace_target_language: String,
@@ -271,6 +279,7 @@ impl Default for AppSettings {
             interface_language_set: false,
             screenshot_directory: String::new(),
             screenshot_editor_toolbar_enabled: true,
+            screenshot_editor_color: default_screenshot_editor_color(),
             ocr_auto_translate: true,
             ocr_target_language: default_ocr_target_language(),
             selected_replace_target_language: default_selected_replace_target_language(),

@@ -6,7 +6,7 @@ use tauri::{
 
 use crate::models::SelectionRect;
 
-use super::{AppState, platform};
+use super::{platform, AppState};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRANSLATE_WINDOW_LABEL: &str = "translate";
@@ -80,6 +80,7 @@ pub fn show_screenshot_editor_window(
     selection: &SelectionRect,
     _image_width: u32,
     _image_height: u32,
+    editor_color: &str,
 ) -> tauri::Result<WebviewWindow> {
     let label = format!("{SCREENSHOT_EDITOR_WINDOW_PREFIX}-{session_id}");
     if let Some(window) = app.get_webview_window(&label) {
@@ -113,8 +114,16 @@ pub fn show_screenshot_editor_window(
             .min((desktop_width - toolbar_width - 8.0).max(8.0))
     };
 
+    let color_param = {
+        let color = editor_color.trim().trim_start_matches('#');
+        if color.len() == 6 && color.chars().all(|char| char.is_ascii_hexdigit()) {
+            color.to_ascii_lowercase()
+        } else {
+            "ef4444".into()
+        }
+    };
     let url = format!(
-        "screenshot-editor.html?session_id={session_id}&display_width={}&display_height={}&selection_left={selection_left}&selection_top={selection_top}&toolbar_left={toolbar_left}&toolbar_top={toolbar_top}",
+        "screenshot-editor.html?session_id={session_id}&display_width={}&display_height={}&selection_left={selection_left}&selection_top={selection_top}&toolbar_left={toolbar_left}&toolbar_top={toolbar_top}&color={color_param}",
         selection.width, selection.height
     );
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))

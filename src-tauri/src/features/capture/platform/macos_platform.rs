@@ -180,9 +180,12 @@ pub fn prepare_for_capture_session(
 pub fn complete_ui_before_capture_processing(
     app: &AppHandle,
     state: &State<'_, AppState>,
+    hide_overlay_now: bool,
 ) -> Result<Vec<CachedScreenCapture>, FlickError> {
     clear_active_session();
-    hide_native_overlay(app)?;
+    if hide_overlay_now {
+        hide_native_overlay(app)?;
+    }
     let snapshots = {
         let mut guard = state
             .capture_snapshots
@@ -269,7 +272,7 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
                 }
                 let _ = update_highlight(app.app_handle(), active_selection.clone());
             }
-        } else {
+        } else if !left_was_down {
             if active_selection.is_some() {
                 active_selection = None;
                 let _ = update_highlight(app.app_handle(), None);
@@ -278,7 +281,7 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
 
         if left_down {
             let _ = hide_crosshair(app.app_handle());
-        } else {
+        } else if !left_was_down {
             let _ = update_crosshair(app.app_handle(), &cursor);
         }
 

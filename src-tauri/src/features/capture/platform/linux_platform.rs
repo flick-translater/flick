@@ -49,6 +49,7 @@ pub fn prepare_for_capture_session(
 pub fn complete_ui_before_capture_processing(
     app: &AppHandle,
     state: &State<'_, AppState>,
+    _hide_overlay: bool,
 ) -> Result<Vec<CachedScreenCapture>, FlickError> {
     match current_desktop_backend() {
         LinuxDesktopBackend::Wayland => {

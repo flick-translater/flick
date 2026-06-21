@@ -86,20 +86,21 @@ pub fn prepare_for_capture_session(
 pub fn complete_ui_before_capture_processing(
     app: &AppHandle,
     state: &State<'_, AppState>,
+    hide_overlay: bool,
 ) -> Result<Vec<CachedScreenCapture>, FlickError> {
     #[cfg(target_os = "macos")]
     {
-        return macos_platform::complete_ui_before_capture_processing(app, state);
+        return macos_platform::complete_ui_before_capture_processing(app, state, hide_overlay);
     }
 
     #[cfg(target_os = "linux")]
     {
-        linux_platform::complete_ui_before_capture_processing(app, state)
+        linux_platform::complete_ui_before_capture_processing(app, state, hide_overlay)
     }
 
     #[cfg(target_os = "windows")]
     {
-        windows_platform::complete_ui_before_capture_processing(app, state)
+        windows_platform::complete_ui_before_capture_processing(app, state, hide_overlay)
     }
 }
 

@@ -4,7 +4,7 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_LOADFROMFILE, LoadImageW, SendMessageW,
+    LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_LOADFROMFILE,
     WM_SETICON,
 };
 

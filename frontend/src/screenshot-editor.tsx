@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import './index.css';
+import type { AppSettings } from './types';
 
 type Point = { x: number; y: number };
 type Rect = { x: number; y: number; width: number; height: number };
@@ -37,7 +38,7 @@ type TextDraft = {
   value: string;
 };
 
-const colors = ['#ef4444', '#f59e0b', '#2563eb', '#22c55e', '#ffffff', '#111827'];
+const defaultEditorColor = '#ef4444';
 const toolbarButtonClass = 'flex h-8 w-8 items-center justify-center rounded-md border border-outline-variant/30 bg-surface-container text-on-surface transition-colors hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-40';
 const imageSizeFallback = { width: 1, height: 1 };
 const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?: number }> }> = [
@@ -50,24 +51,40 @@ const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?:
   { id: 'text', label: 'Text', icon: Type },
 ];
 
+function editorLog(step: string) {
+  console.log(`[${new Date().toISOString()}] [capture-editor] ${step}`);
+  void invoke('capture_editor_frontend_log', { message: step }).catch(() => undefined);
+}
+
 function ScreenshotEditor() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
+  const initialColor = useMemo(() => {
+    const rawColor = query.get('color') ?? '';
+    const normalized = rawColor.startsWith('#') ? rawColor : `#${rawColor}`;
+    return isHexColor(normalized) ? normalized.toLowerCase() : defaultEditorColor;
+  }, [query]);
   const sessionId = query.get('session_id') ?? '';
   const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const draftCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const isFinishedRef = useRef(false);
+  const isClosingRef = useRef(false);
+  const readyNotifiedRef = useRef(false);
   const annotationsRef = useRef<Annotation[]>([]);
   const draftRef = useRef<Annotation | null>(null);
   const dragStartRef = useRef<Point | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
+  const [editorVisible, setEditorVisible] = useState(true);
   const [imageSize, setImageSize] = useState(imageSizeFallback);
+  const [screenshotDataUrl, setScreenshotDataUrl] = useState('');
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [undoStack, setUndoStack] = useState<Annotation[][]>([]);
   const [redoStack, setRedoStack] = useState<Annotation[][]>([]);
   const [tool, setTool] = useState<Tool>('pen');
-  const [color, setColor] = useState(colors[0]);
+  const [color, setColor] = useState(initialColor);
+  const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  const [hexInput, setHexInput] = useState(initialColor);
   const [lineWidth, setLineWidth] = useState(4);
   const [fontSize, setFontSize] = useState(28);
   const [mosaicSize, setMosaicSize] = useState(12);
@@ -104,10 +121,14 @@ function ScreenshotEditor() {
     document.body.focus();
     window.focus();
 
+    editorLog('frontend load: get_pending_capture_image start');
     void invoke<string>('get_pending_capture_image', { sessionId })
       .then((dataUrl) => {
+        editorLog(`frontend load: data url received length=${dataUrl.length}`);
+        setScreenshotDataUrl(dataUrl);
         const image = new Image();
         image.onload = () => {
+          editorLog(`frontend load: image decoded natural=${image.naturalWidth}x${image.naturalHeight}`);
           imageRef.current = image;
           setImageSize({ width: image.naturalWidth, height: image.naturalHeight });
           for (const canvas of [baseCanvasRef.current, draftCanvasRef.current]) {
@@ -117,12 +138,42 @@ function ScreenshotEditor() {
             }
           }
           setImageLoaded(true);
-          requestAnimationFrame(() => renderCommitted());
+          editorLog('frontend load: canvas sized');
+          requestAnimationFrame(() => {
+            renderCommitted();
+            requestAnimationFrame(() => {
+              if (readyNotifiedRef.current) {
+                return;
+              }
+              readyNotifiedRef.current = true;
+              editorLog('frontend load: first frame rendered; notify backend ready');
+              void invoke('capture_editor_ready', { sessionId })
+                .catch((readyError: unknown) => {
+                  editorLog(`frontend load: capture_editor_ready failed ${String(readyError)}`);
+                })
+                .finally(() => {
+                  setEditorVisible(true);
+                });
+            });
+          });
+          editorLog('frontend load: initial render scheduled');
         };
-        image.onerror = () => setError('Failed to load screenshot.');
+        image.onerror = () => {
+          if (isClosingRef.current || isFinishedRef.current) {
+            return;
+          }
+          editorLog('frontend load: image decode failed');
+          setError('Failed to load screenshot.');
+        };
         image.src = dataUrl;
       })
-      .catch((loadError: unknown) => setError(String(loadError)));
+      .catch((loadError: unknown) => {
+        if (isClosingRef.current || isFinishedRef.current) {
+          return;
+        }
+        editorLog(`frontend load: failed ${String(loadError)}`);
+        setError(String(loadError));
+      });
   }, [sessionId]);
 
   useEffect(() => {
@@ -191,6 +242,7 @@ function ScreenshotEditor() {
         return;
       }
       event.preventDefault();
+      isClosingRef.current = true;
       isFinishedRef.current = true;
       await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
       await appWindow.close();
@@ -245,19 +297,26 @@ function ScreenshotEditor() {
     const canvas = baseCanvasRef.current;
     const image = imageRef.current;
     if (!canvas || !image) {
+      editorLog(`renderCommitted: skipped canvas=${Boolean(canvas)} image=${Boolean(image)}`);
       return;
     }
 
     const context = canvas.getContext('2d');
     if (!context) {
+      editorLog('renderCommitted: skipped missing 2d context');
       return;
     }
 
+    const bounds = canvas.getBoundingClientRect();
+    editorLog(
+      `renderCommitted: draw start canvas=${canvas.width}x${canvas.height} image=${image.naturalWidth}x${image.naturalHeight} rect=${Math.round(bounds.left)},${Math.round(bounds.top)},${Math.round(bounds.width)}x${Math.round(bounds.height)} selection=${selectionOffset.left},${selectionOffset.top},${displaySize.width}x${displaySize.height}`,
+    );
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     for (const annotation of annotationsRef.current) {
       drawAnnotation(context, annotation);
     }
+    editorLog(`renderCommitted: draw complete ${canvasSampleSummary(context, canvas)}`);
   }
 
   function renderDraft(annotation: Annotation | null) {
@@ -325,6 +384,7 @@ function ScreenshotEditor() {
     if (!imageRef.current) {
       return;
     }
+    setColorPickerOpen(false);
 
     const point = getCanvasPoint(event);
     if (tool === 'text') {
@@ -394,6 +454,45 @@ function ScreenshotEditor() {
     setTextDraft(null);
   }
 
+  function handleColorChange(nextColor: string) {
+    if (!isHexColor(nextColor)) {
+      return;
+    }
+    const normalized = nextColor.toLowerCase();
+    setColor(normalized);
+    setHexInput(normalized);
+    void invoke<AppSettings>('update_screenshot_editor_color', { color: normalized })
+      .then((settings) => {
+        if (isHexColor(settings.screenshot_editor_color)) {
+          setColor(settings.screenshot_editor_color);
+          setHexInput(settings.screenshot_editor_color);
+        }
+      })
+      .catch((saveError: unknown) => {
+        editorLog(`color save failed ${String(saveError)}`);
+      });
+  }
+
+  function handleColorSquarePointer(event: React.PointerEvent<HTMLDivElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = Math.min(Math.max(event.clientX - bounds.left, 0), bounds.width);
+    const y = Math.min(Math.max(event.clientY - bounds.top, 0), bounds.height);
+    const hsv = hexToHsv(color);
+    handleColorChange(hsvToHex({
+      h: hsv.h,
+      s: x / bounds.width,
+      v: 1 - y / bounds.height,
+    }));
+  }
+
+  function handleHexInputCommit() {
+    if (isHexColor(hexInput)) {
+      handleColorChange(hexInput);
+    } else {
+      setHexInput(color);
+    }
+  }
+
   async function handleCancel() {
     if (!sessionId) {
       return;
@@ -401,10 +500,14 @@ function ScreenshotEditor() {
     if (isFinishedRef.current) {
       return;
     }
+    editorLog('cancel click: start');
+    isClosingRef.current = true;
     isFinishedRef.current = true;
     await invoke('cancel_capture_edit', { sessionId }).catch((cancelError: unknown) => {
+      editorLog(`cancel click: failed ${String(cancelError)}`);
       setError(String(cancelError));
     });
+    editorLog('cancel click: close window');
     await getCurrentWindow().close();
   }
 
@@ -417,10 +520,12 @@ function ScreenshotEditor() {
       return;
     }
 
+    editorLog('confirm click: start');
     setIsSaving(true);
     setError('');
     isFinishedRef.current = true;
     try {
+      editorLog('confirm click: create export canvas');
       const exportCanvas = document.createElement('canvas');
       exportCanvas.width = image.naturalWidth;
       exportCanvas.height = image.naturalHeight;
@@ -428,22 +533,30 @@ function ScreenshotEditor() {
       if (!context) {
         throw new Error('Failed to create export canvas.');
       }
+      editorLog('confirm click: draw base image');
       context.drawImage(image, 0, 0);
+      editorLog('confirm click: draw annotations');
       for (const annotation of annotationsRef.current) {
         drawAnnotation(context, annotation);
       }
+      editorLog('confirm click: encode png data url start');
       const pngBase64 = exportCanvas.toDataURL('image/png');
+      editorLog('confirm click: encode png data url complete');
+      editorLog('confirm click: invoke confirm_regular_capture_edit start');
       await invoke('confirm_regular_capture_edit', { sessionId, pngBase64 });
+      editorLog('confirm click: invoke confirm_regular_capture_edit complete');
+      editorLog('confirm click: close window');
       await getCurrentWindow().close();
     } catch (saveError) {
       isFinishedRef.current = false;
+      editorLog(`confirm click: failed ${String(saveError)}`);
       setError(String(saveError));
       setIsSaving(false);
     }
   }
 
   return (
-    <div className="relative h-screen overflow-hidden bg-black/45 text-on-surface">
+    <div className={`relative h-screen overflow-hidden text-on-surface ${editorVisible ? 'bg-black/45' : 'bg-transparent'}`}>
       <div
         className="absolute bg-transparent shadow-[0_0_0_2px_rgba(0,102,204,0.95)]"
         style={{
@@ -451,13 +564,22 @@ function ScreenshotEditor() {
           top: selectionOffset.top,
           width: displaySize.width,
           height: displaySize.height,
+          opacity: editorVisible ? 1 : 0,
         }}
       >
+        {screenshotDataUrl && (
+          <img
+            src={screenshotDataUrl}
+            alt=""
+            className="pointer-events-none absolute inset-0 h-full w-full select-none"
+            draggable={false}
+          />
+        )}
         <canvas
           ref={baseCanvasRef}
           width={imageSize.width}
           height={imageSize.height}
-          className="absolute inset-0 h-full w-full bg-white"
+          className="absolute inset-0 h-full w-full"
         />
         <canvas
           ref={draftCanvasRef}
@@ -505,7 +627,12 @@ function ScreenshotEditor() {
 
       <div
         className="absolute z-40 flex max-w-[calc(100vw-16px)] flex-wrap items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/95 p-1.5 shadow-xl backdrop-blur"
-        style={{ left: toolbarOffset.left, top: toolbarOffset.top }}
+        style={{
+          left: toolbarOffset.left,
+          top: toolbarOffset.top,
+          opacity: editorVisible ? 1 : 0,
+          pointerEvents: editorVisible ? 'auto' : 'none',
+        }}
       >
         <div className="flex items-center gap-1">
           {tools.map((item) => {
@@ -515,7 +642,10 @@ function ScreenshotEditor() {
                 key={item.id}
                 type="button"
                 title={item.label}
-                onClick={() => setTool(item.id)}
+                onClick={() => {
+                  setColorPickerOpen(false);
+                  setTool(item.id);
+                }}
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
                   tool === item.id
                     ? 'border-primary bg-primary text-white'
@@ -530,17 +660,74 @@ function ScreenshotEditor() {
 
         <div className="h-6 w-px shrink-0 bg-outline-variant/40" />
 
-        <div className="flex items-center gap-1">
-          {colors.map((item) => (
-            <button
-              key={item}
-              type="button"
-              title={item}
-              onClick={() => setColor(item)}
-              className={`h-6 w-6 shrink-0 rounded-full border-2 ${color === item ? 'border-primary' : 'border-outline-variant/40'}`}
-              style={{ backgroundColor: item }}
-            />
-          ))}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            title="Color"
+            onClick={() => setColorPickerOpen((open) => !open)}
+            className="h-8 w-8 rounded-md border-2 border-outline-variant/60 shadow-inner"
+            style={{ backgroundColor: color }}
+          />
+          {colorPickerOpen && (
+            <div
+              className="absolute left-0 top-[calc(100%+8px)] z-50 w-56 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <div
+                className="relative h-32 w-full cursor-crosshair overflow-hidden rounded-md border border-outline-variant/30"
+                style={{
+                  backgroundColor: hsvToHex({ h: hexToHsv(color).h, s: 1, v: 1 }),
+                }}
+                onPointerDown={(event) => {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  handleColorSquarePointer(event);
+                }}
+                onPointerMove={(event) => {
+                  if (event.buttons === 1) {
+                    handleColorSquarePointer(event);
+                  }
+                }}
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-white to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black" />
+                <div
+                  className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow"
+                  style={{
+                    left: `${hexToHsv(color).s * 100}%`,
+                    top: `${(1 - hexToHsv(color).v) * 100}%`,
+                  }}
+                />
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="360"
+                value={Math.round(hexToHsv(color).h)}
+                onChange={(event) => {
+                  const hsv = hexToHsv(color);
+                  handleColorChange(hsvToHex({ ...hsv, h: Number(event.target.value) }));
+                }}
+                className="mt-3 h-2 w-full accent-primary"
+                style={{
+                  background: 'linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)',
+                }}
+              />
+              <div className="mt-3 flex items-center gap-2">
+                <div className="h-8 w-8 rounded-md border border-outline-variant/40" style={{ backgroundColor: color }} />
+                <input
+                  value={hexInput}
+                  onChange={(event) => setHexInput(event.target.value)}
+                  onBlur={handleHexInputCommit}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      handleHexInputCommit();
+                    }
+                  }}
+                  className="h-8 min-w-0 flex-1 rounded-md border border-outline-variant/40 bg-surface-container px-2 text-xs font-bold uppercase outline-none focus:border-primary"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {tool !== 'mosaic' && (
@@ -621,10 +808,9 @@ function ScreenshotEditor() {
             title="Confirm"
             disabled={isSaving || !imageLoaded}
             onClick={() => void handleConfirm()}
-            className="flex h-8 shrink-0 items-center gap-1 rounded-md bg-green-600 px-2 text-xs font-bold text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-green-600 text-white transition-colors hover:bg-green-700 disabled:opacity-50"
           >
             <Check size={18} />
-            {isSaving ? 'Saving' : 'Done'}
           </button>
         </div>
       </div>
@@ -801,8 +987,115 @@ function constrainPoint(from: Point, to: Point): Point {
   };
 }
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <React.StrictMode>
-    <ScreenshotEditor />
-  </React.StrictMode>,
-);
+function canvasSampleSummary(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
+  const sampleColumns = Math.min(canvas.width, 16);
+  const sampleRows = Math.min(canvas.height, 16);
+  let totalSamples = 0;
+  let nonWhiteSamples = 0;
+  let brightSamples = 0;
+  let transparentSamples = 0;
+  let redTotal = 0;
+  let greenTotal = 0;
+  let blueTotal = 0;
+
+  for (let row = 0; row < sampleRows; row += 1) {
+    for (let column = 0; column < sampleColumns; column += 1) {
+      const x = sampleColumns <= 1 ? 0 : Math.round((column * (canvas.width - 1)) / (sampleColumns - 1));
+      const y = sampleRows <= 1 ? 0 : Math.round((row * (canvas.height - 1)) / (sampleRows - 1));
+      const [red, green, blue, alpha] = context.getImageData(x, y, 1, 1).data;
+      totalSamples += 1;
+      redTotal += red;
+      greenTotal += green;
+      blueTotal += blue;
+      if (alpha === 0) {
+        transparentSamples += 1;
+      }
+      if (alpha !== 0 && (red < 245 || green < 245 || blue < 245)) {
+        nonWhiteSamples += 1;
+      }
+      if (red >= 245 && green >= 245 && blue >= 245) {
+        brightSamples += 1;
+      }
+    }
+  }
+
+  const averageRed = Math.round(redTotal / Math.max(totalSamples, 1));
+  const averageGreen = Math.round(greenTotal / Math.max(totalSamples, 1));
+  const averageBlue = Math.round(blueTotal / Math.max(totalSamples, 1));
+  return `nonWhiteSamples=${nonWhiteSamples}/${totalSamples} brightSamples=${brightSamples}/${totalSamples} transparentSamples=${transparentSamples}/${totalSamples} avgRgb=${averageRed},${averageGreen},${averageBlue}`;
+}
+
+function isHexColor(value: string | undefined): value is string {
+  return /^#[0-9a-fA-F]{6}$/.test(value ?? '');
+}
+
+function hexToHsv(hex: string): { h: number; s: number; v: number } {
+  const normalized = isHexColor(hex) ? hex : defaultEditorColor;
+  const red = Number.parseInt(normalized.slice(1, 3), 16) / 255;
+  const green = Number.parseInt(normalized.slice(3, 5), 16) / 255;
+  const blue = Number.parseInt(normalized.slice(5, 7), 16) / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  let hue = 0;
+
+  if (delta !== 0) {
+    if (max === red) {
+      hue = 60 * (((green - blue) / delta) % 6);
+    } else if (max === green) {
+      hue = 60 * ((blue - red) / delta + 2);
+    } else {
+      hue = 60 * ((red - green) / delta + 4);
+    }
+  }
+
+  return {
+    h: (hue + 360) % 360,
+    s: max === 0 ? 0 : delta / max,
+    v: max,
+  };
+}
+
+function hsvToHex({ h, s, v }: { h: number; s: number; v: number }) {
+  const chroma = v * s;
+  const hue = ((h % 360) + 360) % 360;
+  const x = chroma * (1 - Math.abs((hue / 60) % 2 - 1));
+  const match = v - chroma;
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+
+  if (hue < 60) {
+    red = chroma;
+    green = x;
+  } else if (hue < 120) {
+    red = x;
+    green = chroma;
+  } else if (hue < 180) {
+    green = chroma;
+    blue = x;
+  } else if (hue < 240) {
+    green = x;
+    blue = chroma;
+  } else if (hue < 300) {
+    red = x;
+    blue = chroma;
+  } else {
+    red = chroma;
+    blue = x;
+  }
+
+  return rgbToHex(
+    Math.round((red + match) * 255),
+    Math.round((green + match) * 255),
+    Math.round((blue + match) * 255),
+  );
+}
+
+function rgbToHex(red: number, green: number, blue: number) {
+  return `#${[red, green, blue]
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('')}`;
+}
+
+ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(<ScreenshotEditor />);

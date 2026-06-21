@@ -31,6 +31,7 @@ export type AppSettings = {
   interface_language_set: boolean;
   screenshot_directory: string;
   screenshot_editor_toolbar_enabled: boolean;
+  screenshot_editor_color: string;
   ocr_auto_translate: boolean;
   ocr_target_language: string;
   selected_replace_target_language: string;

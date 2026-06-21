@@ -89,6 +89,20 @@ pub fn cancel_capture_edit(
     capture::cancel_capture_edit_command(app, state, session_id)
 }
 
+#[tauri::command]
+pub fn capture_editor_ready(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), FlickError> {
+    capture::capture_editor_ready(app, state, session_id)
+}
+
+#[tauri::command]
+pub fn capture_editor_frontend_log(message: String) {
+    capture::capture_editor_frontend_log(&message);
+}
+
 pub fn begin_capture_session(
     app: &AppHandle,
     state: &State<'_, AppState>,

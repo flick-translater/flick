@@ -199,6 +199,36 @@ pub fn update_screenshot_editor_toolbar_enabled(
 }
 
 #[tauri::command]
+pub fn update_screenshot_editor_color(
+    state: State<'_, AppState>,
+    color: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = normalize_hex_color(&color)?;
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.screenshot_editor_color = normalized;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+fn normalize_hex_color(color: &str) -> Result<String, FlickError> {
+    let value = color.trim();
+    let valid = value.len() == 7
+        && value.starts_with('#')
+        && value[1..].chars().all(|ch| ch.is_ascii_hexdigit());
+    if !valid {
+        return Err(FlickError::Message("invalid screenshot editor color".into()));
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
+#[tauri::command]
 pub fn update_ocr_provider(
     state: State<'_, AppState>,
     provider: String,

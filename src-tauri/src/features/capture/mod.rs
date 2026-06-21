@@ -15,6 +15,6 @@ pub use history::{
 pub use io::{open_file_in_default_app, pick_screenshot_directory, read_image_as_data_url};
 pub use session::{
     begin_capture_session, begin_capture_session_with_intent, cancel_capture,
-    cancel_capture_edit_command, complete_capture, confirm_regular_capture_edit,
-    get_pending_capture_image,
+    cancel_capture_edit_command, capture_editor_frontend_log, capture_editor_ready,
+    complete_capture, confirm_regular_capture_edit, get_pending_capture_image,
 };

@@ -10,10 +10,10 @@ use std::{
 #[cfg(target_os = "windows")]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::{
-    AppHandle, Manager, WebviewWindow,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuId, MenuItemBuilder},
     path::BaseDirectory,
     tray::TrayIconBuilder,
+    AppHandle, Manager, WebviewWindow,
 };
 #[cfg(target_os = "macos")]
 use tauri_plugin_autostart::MacosLauncher;
@@ -23,9 +23,9 @@ use crate::{
     commands,
     models::{AppSettings, CaptureRecord, PendingCaptureEdit, TranslateWindowState},
     services::{
-        CachedScreenCapture, OcrService, SettingsStore, TranslationHistoryStore, TtsService,
         available_ocr_engines, available_tts_engines, create_ocr_service, default_ocr_provider,
-        normalize_ocr_engine_id, normalize_tts_engine_id,
+        normalize_ocr_engine_id, normalize_tts_engine_id, CachedScreenCapture, OcrService,
+        SettingsStore, TranslationHistoryStore, TtsService,
     },
 };
 
@@ -115,6 +115,8 @@ pub fn run() {
             commands::capture::get_pending_capture_image,
             commands::capture::confirm_regular_capture_edit,
             commands::capture::cancel_capture_edit,
+            commands::capture::capture_editor_ready,
+            commands::capture::capture_editor_frontend_log,
             commands::settings::get_app_settings,
             commands::settings::get_autostart_status,
             commands::settings::set_autostart_enabled,
@@ -124,6 +126,7 @@ pub fn run() {
             commands::settings::update_max_screenshots,
             commands::settings::update_screenshot_directory,
             commands::settings::update_screenshot_editor_toolbar_enabled,
+            commands::settings::update_screenshot_editor_color,
             commands::settings::update_translate_shortcut,
             commands::settings::update_selected_translate_shortcut,
             commands::settings::update_selected_translate_replace_shortcut,
