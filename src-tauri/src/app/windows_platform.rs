@@ -1,13 +1,16 @@
+use std::{ffi::c_void, mem::size_of};
+
 use tauri::path::BaseDirectory;
 use tauri::{
     App, AppHandle, Manager, RunEvent, Runtime, State, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 use windows_sys::Win32::{
-    Graphics::Gdi::{CombineRgn, CreateRectRgn, DeleteObject, SetWindowRgn, RGN_OR},
+    Graphics::Dwm::{DWMWA_TRANSITIONS_FORCEDISABLED, DwmSetWindowAttribute},
+    Graphics::Gdi::{CombineRgn, CreateRectRgn, DeleteObject, RGN_OR, SetWindowRgn},
     UI::WindowsAndMessaging::{
-        LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR,
-        LR_LOADFROMFILE, WM_SETICON,
+        ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_LOADFROMFILE, LoadImageW,
+        SendMessageW, WM_SETICON,
     },
 };
 
@@ -145,10 +148,13 @@ pub fn configure_built_window(window: &WebviewWindow) {
     }
 }
 
-pub fn configure_screenshot_editor_window_shape(
-    window: &WebviewWindow,
-    regions: &[SelectionRect],
-) {
+pub fn configure_screenshot_editor_window(window: &WebviewWindow) {
+    if let Err(error) = disable_window_transitions(window) {
+        eprintln!("failed to disable screenshot editor window transitions: {error}");
+    }
+}
+
+pub fn configure_screenshot_editor_window_shape(window: &WebviewWindow, regions: &[SelectionRect]) {
     let Ok(hwnd) = window.hwnd() else {
         return;
     };
@@ -236,10 +242,29 @@ fn set_window_icons(window: &WebviewWindow) -> anyhow::Result<()> {
         anyhow::bail!("LoadImageW failed for {}", icon_path.display());
     }
 
-    let hwnd = window.hwnd()?.0 as *mut std::ffi::c_void;
+    let hwnd = window.hwnd()?.0 as *mut c_void;
     unsafe {
         SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, big_icon as isize);
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, big_icon as isize);
+    }
+
+    Ok(())
+}
+
+fn disable_window_transitions(window: &WebviewWindow) -> anyhow::Result<()> {
+    let hwnd = window.hwnd()?.0 as *mut c_void;
+    let disabled: i32 = 1;
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED as u32,
+            (&disabled as *const i32).cast(),
+            size_of::<i32>() as u32,
+        )
+    };
+
+    if result < 0 {
+        anyhow::bail!("DwmSetWindowAttribute failed with HRESULT {result:#x}");
     }
 
     Ok(())

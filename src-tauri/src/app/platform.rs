@@ -187,7 +187,7 @@ pub fn configure_screenshot_editor_window(window: &WebviewWindow) {
     macos_platform::configure_screenshot_editor_window(window);
 
     #[cfg(target_os = "windows")]
-    let _ = window;
+    windows_platform::configure_screenshot_editor_window(window);
 
     #[cfg(target_os = "linux")]
     let _ = window;

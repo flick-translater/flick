@@ -7,7 +7,7 @@ use tauri::{
 
 use crate::models::SelectionRect;
 
-use super::{platform, AppState};
+use super::{AppState, platform};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRANSLATE_WINDOW_LABEL: &str = "translate";
@@ -91,8 +91,8 @@ pub fn show_screenshot_editor_window(
         return Ok(window);
     }
 
-    let (desktop_x, desktop_y, desktop_width, desktop_height) = selection_primary_monitor_bounds(app, selection)
-        .unwrap_or((
+    let (desktop_x, desktop_y, desktop_width, desktop_height) =
+        selection_primary_monitor_bounds(app, selection).unwrap_or((
             selection.x as f64,
             selection.y as f64,
             selection.width as f64,
@@ -196,7 +196,9 @@ pub fn show_screenshot_editor_window(
         let _ = window.set_position(LogicalPosition::new(window_x, window_y));
         match window.url() {
             Ok(mut current_url) => {
-                current_url.set_query(Some(url.split_once('?').map(|(_, query)| query).unwrap_or("")));
+                current_url.set_query(Some(
+                    url.split_once('?').map(|(_, query)| query).unwrap_or(""),
+                ));
                 current_url.set_path("screenshot-editor.html");
                 window.navigate(current_url)?;
                 platform::configure_screenshot_editor_window(&window);
@@ -217,8 +219,8 @@ pub fn show_screenshot_editor_window(
         .inner_size(window_width, window_height)
         .position(window_x, window_y)
         .resizable(false)
-        .visible(true)
-        .focused(true)
+        .visible(false)
+        .focused(false)
         .always_on_top(true)
         .accept_first_mouse(true)
         .decorations(false)
@@ -229,6 +231,7 @@ pub fn show_screenshot_editor_window(
     platform::configure_screenshot_editor_window(&window);
     platform::configure_screenshot_editor_window_shape(&window, &window_regions);
     let _ = window.set_position(LogicalPosition::new(window_x, window_y));
+    let _ = window.show();
     let _ = window.set_focus();
     Ok(window)
 }
@@ -277,7 +280,10 @@ pub fn selection_spans_multiple_monitors(app: &AppHandle, selection: &SelectionR
     intersecting_monitor_count(app, selection).unwrap_or(1) > 1
 }
 
-fn selection_primary_monitor_bounds(app: &AppHandle, selection: &SelectionRect) -> Option<(f64, f64, f64, f64)> {
+fn selection_primary_monitor_bounds(
+    app: &AppHandle,
+    selection: &SelectionRect,
+) -> Option<(f64, f64, f64, f64)> {
     let monitors = app.available_monitors().ok()?;
     let mut best_bounds = None;
     let mut best_overlap = 0.0;
