@@ -11,7 +11,8 @@ use crate::{
     models::AppSettings,
 };
 
-use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
+use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWindow, NSWorkspace};
+use objc2_foundation::NSInteger;
 
 pub fn configure_app_setup(app: &mut App) {
     app.set_activation_policy(ActivationPolicy::Accessory);
@@ -118,6 +119,20 @@ pub fn show_translate_window_before_focus(app: &AppHandle) {
 
 pub fn show_translate_window_after_show(_app: &AppHandle) {}
 
+pub fn configure_screenshot_editor_window(window: &tauri::WebviewWindow) {
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    let ns_window = ns_window as usize;
+    window
+        .run_on_main_thread(move || {
+            let window = unsafe { &*(ns_window as *mut std::ffi::c_void).cast::<NSWindow>() };
+            window.setLevel(shielding_window_level() + 2);
+            window.orderFrontRegardless();
+        })
+        .ok();
+}
+
 pub fn refresh_previous_frontmost_app(app: &AppHandle) {
     remember_previous_frontmost_app(app);
 }
@@ -162,6 +177,14 @@ fn remember_previous_frontmost_app(app: &AppHandle) {
             *stored_pid = previous_pid;
         }
     }
+}
+
+unsafe extern "C" {
+    fn CGShieldingWindowLevel() -> NSInteger;
+}
+
+fn shielding_window_level() -> NSInteger {
+    unsafe { CGShieldingWindowLevel() }
 }
 
 fn restore_previous_frontmost_app(app: &AppHandle) {

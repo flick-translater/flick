@@ -16,7 +16,8 @@ use uuid::Uuid;
 use crate::{
     app::{
         windows::{
-            close_screenshot_editor_window, emit_capture_status, show_screenshot_editor_window,
+            close_screenshot_editor_window, emit_capture_status, preload_screenshot_editor_window,
+            selection_spans_multiple_monitors, show_screenshot_editor_window,
         },
         AppState, CaptureIntent,
     },
@@ -465,8 +466,11 @@ pub fn capture_editor_ready(
             .lock()
             .map_err(|_| FlickError::Message("pending capture edits mutex poisoned".into()))?;
         if let Some(session) = pending.get_mut(&session_id) {
-            let should_finalize = !session.cancelled && !session.overlay_finalized;
-            session.overlay_finalized = true;
+            let should_finalize =
+                !session.cancelled && !session.overlay_finalized && !session.keep_overlay_until_finish;
+            if should_finalize {
+                session.overlay_finalized = true;
+            }
             should_finalize
         } else {
             false
@@ -513,6 +517,11 @@ fn create_pending_capture_edit(
     });
 
     capture_editor_log("create_pending_capture_edit: storing pending session");
+    let keep_overlay_until_finish = true;
+    if selection_spans_multiple_monitors(app, &selection) {
+        capture_editor_log("create_pending_capture_edit: cross-monitor selection detected");
+    }
+    capture_editor_log("create_pending_capture_edit: keeping native overlay until finish");
     let pending = PendingCaptureEdit {
         id: record.id.clone(),
         created_at: record.created_at,
@@ -521,6 +530,7 @@ fn create_pending_capture_edit(
         selection: selection.clone(),
         cancelled: false,
         overlay_finalized: false,
+        keep_overlay_until_finish,
     };
 
     {
@@ -605,7 +615,9 @@ fn start_capture_edit_finalize_fallback(app: AppHandle, session_id: String) {
             .lock()
             .map(|mut sessions| {
                 if let Some(session) = sessions.get_mut(&session_id) {
-                    let should_finalize = !session.cancelled && !session.overlay_finalized;
+                    let should_finalize = !session.cancelled
+                        && !session.overlay_finalized
+                        && !session.keep_overlay_until_finish;
                     if should_finalize {
                         session.overlay_finalized = true;
                     }
@@ -812,6 +824,20 @@ pub fn begin_capture_session_with_intent(
             .lock()
             .map_err(|_| FlickError::Message("capture intent mutex poisoned".into()))?;
         *guard = intent;
+    }
+
+    let should_preload_editor = {
+        let settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::LockError("settings".into()))?;
+        intent == CaptureIntent::Capture && settings.screenshot_editor_toolbar_enabled
+    };
+    if should_preload_editor {
+        capture_editor_log("begin_capture_session: preloading screenshot editor window");
+        if let Err(error) = preload_screenshot_editor_window(app) {
+            eprintln!("failed to preload screenshot editor window: {error}");
+        }
     }
 
     platform::prepare_for_capture_session(app, state)?;

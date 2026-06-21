@@ -33,6 +33,7 @@ pub struct PendingCaptureEdit {
     pub selection: SelectionRect,
     pub cancelled: bool,
     pub overlay_finalized: bool,
+    pub keep_overlay_until_finish: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

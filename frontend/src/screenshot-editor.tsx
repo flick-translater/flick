@@ -64,8 +64,10 @@ function ScreenshotEditor() {
     return isHexColor(normalized) ? normalized.toLowerCase() : defaultEditorColor;
   }, [query]);
   const sessionId = query.get('session_id') ?? '';
+  const isPreload = query.get('preload') === '1';
   const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const draftCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const isFinishedRef = useRef(false);
@@ -105,6 +107,7 @@ function ScreenshotEditor() {
     left: Number(query.get('toolbar_left')) || 8,
     top: Number(query.get('toolbar_top')) || displaySize.height + 8,
   };
+  const [toolbarPosition, setToolbarPosition] = useState(toolbarOffset);
 
   useEffect(() => {
     annotationsRef.current = annotations;
@@ -112,6 +115,35 @@ function ScreenshotEditor() {
   }, [annotations]);
 
   useEffect(() => {
+    if (isPreload) {
+      return;
+    }
+    const updateToolbarPosition = () => {
+      const toolbar = toolbarRef.current;
+      if (!toolbar) {
+        return;
+      }
+      const bounds = toolbar.getBoundingClientRect();
+      const left = Math.min(
+        Math.max(toolbarOffset.left, 8),
+        Math.max(window.innerWidth - bounds.width - 8, 8),
+      );
+      const top = Math.min(
+        Math.max(toolbarOffset.top, 8),
+        Math.max(window.innerHeight - bounds.height - 8, 8),
+      );
+      setToolbarPosition({ left, top });
+    };
+    requestAnimationFrame(updateToolbarPosition);
+    window.addEventListener('resize', updateToolbarPosition);
+    return () => window.removeEventListener('resize', updateToolbarPosition);
+  }, [isPreload, toolbarOffset.left, toolbarOffset.top]);
+
+  useEffect(() => {
+    if (isPreload) {
+      editorLog('preload window ready');
+      return;
+    }
     if (!sessionId) {
       setError('Missing editor session.');
       return;
@@ -174,7 +206,7 @@ function ScreenshotEditor() {
         editorLog(`frontend load: failed ${String(loadError)}`);
         setError(String(loadError));
       });
-  }, [sessionId]);
+  }, [isPreload, sessionId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -556,7 +588,9 @@ function ScreenshotEditor() {
   }
 
   return (
-    <div className={`relative h-screen overflow-hidden text-on-surface ${editorVisible ? 'bg-black/45' : 'bg-transparent'}`}>
+    <div className="relative h-screen overflow-hidden bg-transparent text-on-surface">
+      {!isPreload && (
+        <>
       <div
         className="absolute bg-transparent shadow-[0_0_0_2px_rgba(0,102,204,0.95)]"
         style={{
@@ -626,10 +660,11 @@ function ScreenshotEditor() {
       </div>
 
       <div
+        ref={toolbarRef}
         className="absolute z-40 flex max-w-[calc(100vw-16px)] flex-wrap items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/95 p-1.5 shadow-xl backdrop-blur"
         style={{
-          left: toolbarOffset.left,
-          top: toolbarOffset.top,
+          left: toolbarPosition.left,
+          top: toolbarPosition.top,
           opacity: editorVisible ? 1 : 0,
           pointerEvents: editorVisible ? 'auto' : 'none',
         }}
@@ -816,6 +851,8 @@ function ScreenshotEditor() {
       </div>
 
       {error && <div className="fixed bottom-16 left-2 right-2 rounded bg-error/90 px-3 py-2 text-sm text-white">{error}</div>}
+        </>
+      )}
     </div>
   );
 }

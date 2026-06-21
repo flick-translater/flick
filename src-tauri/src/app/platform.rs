@@ -182,6 +182,17 @@ pub fn configure_built_window(window: &WebviewWindow) {
     let _ = window;
 }
 
+pub fn configure_screenshot_editor_window(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    macos_platform::configure_screenshot_editor_window(window);
+
+    #[cfg(target_os = "windows")]
+    let _ = window;
+
+    #[cfg(target_os = "linux")]
+    let _ = window;
+}
+
 pub fn refresh_previous_frontmost_app(app: &AppHandle) {
     #[cfg(target_os = "macos")]
     macos_platform::refresh_previous_frontmost_app(app);
