@@ -1,6 +1,7 @@
 //! Application bootstrap and shared runtime state.
 
 use std::{
+    collections::HashMap,
     collections::VecDeque,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -20,7 +21,7 @@ use tauri_plugin_autostart::{Builder as AutostartBuilder, ManagerExt as _};
 
 use crate::{
     commands,
-    models::{AppSettings, CaptureRecord, TranslateWindowState},
+    models::{AppSettings, CaptureRecord, PendingCaptureEdit, TranslateWindowState},
     services::{
         CachedScreenCapture, OcrService, SettingsStore, TranslationHistoryStore, TtsService,
         available_ocr_engines, available_tts_engines, create_ocr_service, default_ocr_provider,
@@ -39,6 +40,7 @@ pub mod windows;
 pub struct AppState {
     pub capture_snapshots: Mutex<Vec<CachedScreenCapture>>,
     pub history: Mutex<VecDeque<CaptureRecord>>,
+    pub pending_capture_edits: Mutex<HashMap<String, PendingCaptureEdit>>,
     pub data_dir: PathBuf,
     pub ocr_models_dir: PathBuf,
     pub screenshot_dir: Mutex<PathBuf>,
@@ -110,6 +112,9 @@ pub fn run() {
             commands::capture::copy_capture_image,
             commands::capture::start_capture_session,
             commands::capture::start_translate_capture_session,
+            commands::capture::get_pending_capture_image,
+            commands::capture::confirm_regular_capture_edit,
+            commands::capture::cancel_capture_edit,
             commands::settings::get_app_settings,
             commands::settings::get_autostart_status,
             commands::settings::set_autostart_enabled,
@@ -118,6 +123,7 @@ pub fn run() {
             commands::settings::update_interface_language,
             commands::settings::update_max_screenshots,
             commands::settings::update_screenshot_directory,
+            commands::settings::update_screenshot_editor_toolbar_enabled,
             commands::settings::update_translate_shortcut,
             commands::settings::update_selected_translate_shortcut,
             commands::settings::update_selected_translate_replace_shortcut,
@@ -226,6 +232,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
     Ok(AppState {
         capture_snapshots: Mutex::new(Vec::new()),
         history: Mutex::new(VecDeque::new()),
+        pending_capture_edits: Mutex::new(HashMap::new()),
         data_dir: data_dir.clone(),
         ocr_models_dir: ocr_models_dir.clone(),
         screenshot_dir: Mutex::new(screenshot_dir),

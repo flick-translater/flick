@@ -440,6 +440,10 @@ fn escape_key_is_down() -> bool {
     unsafe { CGEventSourceKeyState(EVENT_SOURCE_STATE_COMBINED_SESSION, ESCAPE_KEY_CODE) }
 }
 
+pub fn editor_escape_key_pressed() -> bool {
+    escape_key_is_down()
+}
+
 fn is_active_session(session_id: u64) -> bool {
     native_runtime()
         .lock()

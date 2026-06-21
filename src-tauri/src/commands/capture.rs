@@ -6,7 +6,7 @@ use crate::{
     app::{AppState, CaptureIntent},
     error::FlickError,
     features::capture,
-    models::{CaptureHistory, StorageInfo},
+    models::{CaptureHistory, CaptureRecord, StorageInfo},
 };
 
 #[tauri::command]
@@ -60,6 +60,33 @@ pub fn start_translate_capture_session(
     state: State<'_, AppState>,
 ) -> Result<(), FlickError> {
     capture::begin_capture_session_with_intent(&app, &state, CaptureIntent::Translate)
+}
+
+#[tauri::command]
+pub fn get_pending_capture_image(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<String, FlickError> {
+    capture::get_pending_capture_image(state, session_id)
+}
+
+#[tauri::command]
+pub fn confirm_regular_capture_edit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    png_base64: String,
+) -> Result<CaptureRecord, FlickError> {
+    capture::confirm_regular_capture_edit(app, state, session_id, png_base64)
+}
+
+#[tauri::command]
+pub fn cancel_capture_edit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), FlickError> {
+    capture::cancel_capture_edit_command(app, state, session_id)
 }
 
 pub fn begin_capture_session(

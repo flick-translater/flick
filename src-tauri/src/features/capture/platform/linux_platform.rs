@@ -99,6 +99,10 @@ pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
     }
 }
 
+pub fn editor_escape_key_pressed() -> bool {
+    false
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LinuxDesktopBackend {
     Wayland,

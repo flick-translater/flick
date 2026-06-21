@@ -30,6 +30,7 @@ export default defineConfig(({mode}) => {
         input: {
           main: path.resolve(__dirname, 'index.html'),
           widget: path.resolve(__dirname, 'translation-window.html'),
+          screenshotEditor: path.resolve(__dirname, 'screenshot-editor.html'),
         },
       },
     },

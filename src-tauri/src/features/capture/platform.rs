@@ -176,3 +176,20 @@ pub fn capture_image(
         .map_err(FlickError::from)?;
     Ok(image)
 }
+
+pub fn editor_escape_key_pressed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return macos_platform::editor_escape_key_pressed();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return windows_platform::editor_escape_key_pressed();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_platform::editor_escape_key_pressed()
+    }
+}

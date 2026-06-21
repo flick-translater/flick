@@ -16,7 +16,7 @@ use tauri::{AppHandle, Manager, State};
 use windows_sys::Win32::{
     Foundation::{LPARAM, LRESULT, WPARAM},
     UI::{
-        Input::KeyboardAndMouse::VK_ESCAPE,
+        Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE},
         WindowsAndMessaging::{
             CallNextHookEx, HC_ACTION, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE,
             PeekMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL,
@@ -447,6 +447,10 @@ fn take_escape_pressed() -> bool {
         }
         Err(_) => false,
     }
+}
+
+pub fn editor_escape_key_pressed() -> bool {
+    unsafe { GetAsyncKeyState(VK_ESCAPE as i32) < 0 }
 }
 
 unsafe extern "system" fn low_level_mouse_proc(

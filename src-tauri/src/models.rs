@@ -25,6 +25,15 @@ pub struct CaptureRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingCaptureEdit {
+    pub id: String,
+    pub created_at: DateTime<Utc>,
+    pub original_path: String,
+    pub final_path: String,
+    pub selection: SelectionRect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureHistory {
     pub directory: String,
     pub items: Vec<CaptureRecord>,
@@ -221,6 +230,10 @@ fn default_selected_replace_target_language() -> String {
     "zh".into()
 }
 
+fn default_screenshot_editor_toolbar_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -234,6 +247,8 @@ pub struct AppSettings {
     pub interface_language: String,
     pub interface_language_set: bool,
     pub screenshot_directory: String,
+    #[serde(default = "default_screenshot_editor_toolbar_enabled")]
+    pub screenshot_editor_toolbar_enabled: bool,
     pub ocr_auto_translate: bool,
     pub ocr_target_language: String,
     pub selected_replace_target_language: String,
@@ -255,6 +270,7 @@ impl Default for AppSettings {
             interface_language: default_interface_language(),
             interface_language_set: false,
             screenshot_directory: String::new(),
+            screenshot_editor_toolbar_enabled: true,
             ocr_auto_translate: true,
             ocr_target_language: default_ocr_target_language(),
             selected_replace_target_language: default_selected_replace_target_language(),

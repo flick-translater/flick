@@ -181,6 +181,24 @@ pub fn update_screenshot_directory(
 }
 
 #[tauri::command]
+pub fn update_screenshot_editor_toolbar_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<AppSettings, FlickError> {
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.screenshot_editor_toolbar_enabled = enabled;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
 pub fn update_ocr_provider(
     state: State<'_, AppState>,
     provider: String,
