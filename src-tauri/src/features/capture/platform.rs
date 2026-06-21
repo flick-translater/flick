@@ -194,3 +194,15 @@ pub fn editor_escape_key_pressed() -> bool {
         linux_platform::editor_escape_key_pressed()
     }
 }
+
+pub fn supports_screenshot_editor_toolbar() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        return linux_platform::supports_screenshot_editor_toolbar();
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}

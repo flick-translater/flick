@@ -69,6 +69,7 @@ pub fn complete_capture(
         .lock()
         .map_err(|_| FlickError::Message("ocr service mutex poisoned".into()))?
         .clone();
+    let editor_supported = platform::supports_screenshot_editor_toolbar();
     let (ai_settings, ocr_auto_translate, ocr_target_language, editor_enabled) = {
         let settings = state
             .settings
@@ -78,7 +79,9 @@ pub fn complete_capture(
             settings.ai.clone(),
             settings.ocr_auto_translate,
             settings.ocr_target_language.clone(),
-            intent == CaptureIntent::Capture && settings.screenshot_editor_toolbar_enabled,
+            intent == CaptureIntent::Capture
+                && settings.screenshot_editor_toolbar_enabled
+                && editor_supported,
         )
     };
     let defer_overlay_hide_for_editor = editor_enabled;
@@ -831,7 +834,9 @@ pub fn begin_capture_session_with_intent(
             .settings
             .lock()
             .map_err(|_| FlickError::LockError("settings".into()))?;
-        intent == CaptureIntent::Capture && settings.screenshot_editor_toolbar_enabled
+        intent == CaptureIntent::Capture
+            && settings.screenshot_editor_toolbar_enabled
+            && platform::supports_screenshot_editor_toolbar()
     };
     if should_preload_editor {
         capture_editor_log("begin_capture_session: preloading screenshot editor window");
