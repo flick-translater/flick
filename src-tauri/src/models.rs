@@ -25,6 +25,20 @@ pub struct CaptureRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LongCaptureUpdate {
+    pub current_frame_data_url: String,
+    pub preview_data_url: String,
+    pub preview_append_data_url: String,
+    pub preview_append_rows: u32,
+    pub width: u32,
+    pub frame_height: u32,
+    pub total_height: u32,
+    pub scroll_offset: i32,
+    pub min_offset: i32,
+    pub max_offset: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingCaptureEdit {
     pub id: String,
     pub created_at: DateTime<Utc>,

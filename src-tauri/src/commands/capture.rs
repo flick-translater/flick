@@ -6,7 +6,7 @@ use crate::{
     app::{AppState, CaptureIntent},
     error::FlickError,
     features::capture,
-    models::{CaptureHistory, CaptureRecord, StorageInfo},
+    models::{CaptureHistory, CaptureRecord, LongCaptureUpdate, StorageInfo},
 };
 
 #[tauri::command]
@@ -81,6 +81,16 @@ pub fn confirm_regular_capture_edit(
 }
 
 #[tauri::command]
+pub fn save_regular_capture_edit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    png_base64: String,
+) -> Result<CaptureRecord, FlickError> {
+    capture::save_regular_capture_edit(app, state, session_id, png_base64)
+}
+
+#[tauri::command]
 pub fn cancel_capture_edit(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -96,6 +106,75 @@ pub fn capture_editor_ready(
     session_id: String,
 ) -> Result<(), FlickError> {
     capture::capture_editor_ready(app, state, session_id)
+}
+
+#[tauri::command]
+pub fn start_long_capture(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<LongCaptureUpdate, FlickError> {
+    capture::start_long_capture(app, state, session_id)
+}
+
+#[tauri::command]
+pub fn scroll_long_capture(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    delta_y: f64,
+) -> Result<LongCaptureUpdate, FlickError> {
+    capture::scroll_long_capture(app, state, session_id, delta_y)
+}
+
+#[tauri::command]
+pub fn get_long_capture_image(session_id: String) -> Result<String, FlickError> {
+    capture::get_long_capture_image(session_id)
+}
+
+#[tauri::command]
+pub fn save_long_capture(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<CaptureRecord, FlickError> {
+    capture::save_long_capture(app, state, session_id)
+}
+
+#[tauri::command]
+pub fn confirm_long_capture(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<CaptureRecord, FlickError> {
+    capture::confirm_long_capture(app, state, session_id)
+}
+
+#[tauri::command]
+pub fn cancel_long_capture(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), FlickError> {
+    capture::cancel_long_capture(app, state, session_id)
+}
+
+#[tauri::command]
+pub fn prepare_long_capture_edit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), FlickError> {
+    capture::prepare_long_capture_edit(app, state, session_id)
+}
+
+#[tauri::command]
+pub fn open_long_capture_edit_window(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), FlickError> {
+    capture::open_long_capture_edit_window(app, state, session_id)
 }
 
 #[tauri::command]

@@ -430,7 +430,6 @@ fn paint_overlay_frame(
             visuals,
         );
     }
-
 }
 
 fn intersect_local_rect(

@@ -1,11 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import {
+  LogicalPosition,
+  LogicalSize,
+  currentMonitor,
+  getCurrentWindow,
+} from '@tauri-apps/api/window';
 import './index.css';
 import { ScreenshotEditorCanvas } from './components/screenshot-editor/Canvas';
 import { emojiChoices } from './components/screenshot-editor/emoji-data';
-import { ScreenshotEditorToolbar } from './components/screenshot-editor/Toolbar';
+import { LongScreenshotToolbar, ScreenshotEditorToolbar } from './components/screenshot-editor/Toolbar';
 import type {
   Annotation,
   AnnotationDragState,
@@ -24,11 +29,57 @@ const emojiDefaultSize = 64;
 const emojiMinSize = 18;
 const emojiHandleSize = 8;
 const selectionMinSize = 18;
+const defaultLongScreenshotThumbnailWidth = 300;
+const longEditToolbarMinWidth = 560;
+const longEditToolbarHeight = 48;
+const longEditPanelClearance = 288;
+const longEditMinImageHeight = 120;
+const longEditMinWindowHeight = longEditToolbarHeight
+  + longEditPanelClearance * 2
+  + longEditMinImageHeight;
 
-function editorLog(_step: string) {}
+type EditorMode = 'edit' | 'long-capture';
+
+type PreviewSegment = {
+  id: number;
+  dataUrl: string;
+  rows: number;
+};
+
+type LongScreenshotState = {
+  active: boolean;
+  scrollOffset: number;
+  minOffset: number;
+  maxOffset: number;
+  frameHeight: number;
+  totalHeight: number;
+  currentFrameDataUrl: string;
+  previewDataUrl: string;
+  previewSegments: PreviewSegment[];
+};
+
+type LongCaptureUpdate = {
+  current_frame_data_url: string;
+  preview_data_url: string;
+  preview_append_data_url?: string;
+  preview_append_rows?: number;
+  width: number;
+  frame_height: number;
+  total_height: number;
+  scroll_offset: number;
+  min_offset: number;
+  max_offset: number;
+};
+
+function editorLog(step: string) {
+  const message = `[screenshot-editor] ${new Date().toISOString()} ${step}`;
+  console.info(message);
+  void invoke('capture_editor_frontend_log', { message }).catch(() => undefined);
+}
 
 function ScreenshotEditor() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
+  const appWindow = useMemo(() => getCurrentWindow(), []);
   const initialColor = useMemo(() => {
     const rawColor = query.get('color') ?? '';
     const normalized = rawColor.startsWith('#') ? rawColor : `#${rawColor}`;
@@ -36,6 +87,8 @@ function ScreenshotEditor() {
   }, [query]);
   const sessionId = query.get('session_id') ?? '';
   const isPreload = query.get('preload') === '1';
+  const isLongEditLaunch = query.get('long_edit') === '1';
+  const windowLabel = appWindow.label;
   const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const draftCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
@@ -44,6 +97,8 @@ function ScreenshotEditor() {
   const isFinishedRef = useRef(false);
   const isClosingRef = useRef(false);
   const readyNotifiedRef = useRef(false);
+  const longUpdateSignatureRef = useRef('');
+  const previewSegmentIdRef = useRef(0);
   const annotationsRef = useRef<Annotation[]>([]);
   const draftRef = useRef<Annotation | null>(null);
   const dragStartRef = useRef<Point | null>(null);
@@ -71,6 +126,20 @@ function ScreenshotEditor() {
   const [canvasCursor, setCanvasCursor] = useState('default');
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [editorMode, setEditorMode] = useState<EditorMode>('edit');
+  const [isLongEditWindow, setIsLongEditWindow] = useState(false);
+  const [longEditDisplaySize, setLongEditDisplaySize] = useState(imageSizeFallback);
+  const [longScreenshot, setLongScreenshot] = useState<LongScreenshotState>({
+    active: false,
+    scrollOffset: 0,
+    minOffset: 0,
+    maxOffset: 0,
+    frameHeight: 0,
+    totalHeight: 0,
+    currentFrameDataUrl: '',
+    previewDataUrl: '',
+    previewSegments: [],
+  });
   const displaySize = {
     width: Number(query.get('display_width')) || imageSize.width,
     height: Number(query.get('display_height')) || imageSize.height,
@@ -83,6 +152,11 @@ function ScreenshotEditor() {
     left: Number(query.get('toolbar_left')) || 8,
     top: Number(query.get('toolbar_top')) || displaySize.height + 8,
   };
+  const longScreenshotThumbnailWidth =
+    Number(query.get('thumbnail_width')) || defaultLongScreenshotThumbnailWidth;
+  const longScreenshotThumbnailHeightFromQuery = Number(query.get('thumbnail_height')) || 0;
+  const longScreenshotThumbnailLeftFromQuery = Number(query.get('thumbnail_left'));
+  const longScreenshotThumbnailTopFromQuery = Number(query.get('thumbnail_top'));
   const popupPlacement = query.get('popup_placement') === 'up' ? 'up' : 'down';
   const popupPositionClass = popupPlacement === 'up' ? 'bottom-[calc(100%+8px)]' : 'top-[calc(100%+8px)]';
   const [toolbarPosition, setToolbarPosition] = useState(toolbarOffset);
@@ -138,9 +212,13 @@ function ScreenshotEditor() {
     document.body.tabIndex = -1;
     document.body.focus();
     window.focus();
+    editorLog(
+      `window load: label=${windowLabel} session=${sessionId} preload=${isPreload} long_edit=${isLongEditLaunch} href=${window.location.href}`,
+    );
 
-    editorLog('frontend load: get_pending_capture_image start');
-    void invoke<string>('get_pending_capture_image', { sessionId })
+    const imageCommand = isLongEditLaunch ? 'get_long_capture_image' : 'get_pending_capture_image';
+    editorLog(`frontend load: ${imageCommand} start`);
+    void invoke<string>(imageCommand, { sessionId })
       .then((dataUrl) => {
         editorLog(`frontend load: data url received length=${dataUrl.length}`);
         setScreenshotDataUrl(dataUrl);
@@ -149,6 +227,12 @@ function ScreenshotEditor() {
           editorLog(`frontend load: image decoded natural=${image.naturalWidth}x${image.naturalHeight}`);
           imageRef.current = image;
           setImageSize({ width: image.naturalWidth, height: image.naturalHeight });
+          if (isLongEditLaunch) {
+            setLongEditDisplaySize({
+              width: image.naturalWidth,
+              height: image.naturalHeight,
+            });
+          }
           for (const canvas of [baseCanvasRef.current, draftCanvasRef.current]) {
             if (canvas) {
               canvas.width = image.naturalWidth;
@@ -157,6 +241,12 @@ function ScreenshotEditor() {
           }
           setImageLoaded(true);
           editorLog('frontend load: canvas sized');
+          if (isLongEditLaunch) {
+            void invoke('prepare_long_capture_edit', { sessionId });
+            setIsLongEditWindow(true);
+            setEditorMode('edit');
+            void resizeWindowForLongEdit(image.naturalWidth, image.naturalHeight, true);
+          }
           requestAnimationFrame(() => {
             renderCommitted();
             requestAnimationFrame(() => {
@@ -192,7 +282,7 @@ function ScreenshotEditor() {
         editorLog(`frontend load: failed ${String(loadError)}`);
         setError(String(loadError));
       });
-  }, [isPreload, sessionId]);
+  }, [isPreload, isLongEditLaunch, sessionId, windowLabel]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -253,23 +343,45 @@ function ScreenshotEditor() {
     });
   }, [textDraft]);
 
+  // The backend watches real scroll-wheel activity (the selection region is transparent so
+  // the wheel scrolls the real page) and pushes a fresh stitched preview after each scroll
+  // settles. Apply those updates here.
   useEffect(() => {
-    const appWindow = getCurrentWindow();
+    if (isPreload) {
+      return;
+    }
+    editorLog('long update listener: registering window');
+    const windowUnlisten = appWindow.listen<LongCaptureUpdate>('long-capture-update', (event) => {
+      editorLog('long update listener: window event received');
+      applyLongCaptureUpdate(event.payload);
+    });
+    return () => {
+      void windowUnlisten.then((dispose) => dispose());
+    };
+  }, [appWindow, isPreload]);
+
+  useEffect(() => {
     const unlistenPromise = appWindow.onCloseRequested(async (event) => {
+      editorLog(
+        `window close requested: label=${windowLabel} session=${sessionId || '<missing>'} finished=${isFinishedRef.current} closing=${isClosingRef.current} mode=${editorMode} long_edit=${isLongEditLaunch}`,
+      );
       if (isFinishedRef.current || !sessionId) {
+        editorLog(`window close allowed: label=${windowLabel}`);
         return;
       }
       event.preventDefault();
       isClosingRef.current = true;
       isFinishedRef.current = true;
+      editorLog(`window close prevented: invoke cancel_capture_edit label=${windowLabel}`);
       await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
+      editorLog(`window close prevented: closing label=${windowLabel}`);
       await appWindow.close();
     });
 
     return () => {
       void unlistenPromise.then((unlisten) => unlisten());
     };
-  }, [sessionId]);
+  }, [appWindow, editorMode, isLongEditLaunch, sessionId, windowLabel]);
 
   const commitAnnotations = useCallback((next: Annotation[]) => {
     setAnnotations((current) => {
@@ -677,6 +789,175 @@ function ScreenshotEditor() {
     }
   }
 
+  function buildEditedPngBase64() {
+    const image = imageRef.current;
+    if (!image) {
+      throw new Error('Screenshot image is not loaded.');
+    }
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = image.naturalWidth;
+    exportCanvas.height = image.naturalHeight;
+    const context = exportCanvas.getContext('2d');
+    if (!context) {
+      throw new Error('Failed to create export canvas.');
+    }
+    context.drawImage(image, 0, 0);
+    for (const annotation of annotationsRef.current) {
+      drawAnnotation(context, annotation);
+    }
+    return exportCanvas.toDataURL('image/png');
+  }
+
+  function applyLongCaptureUpdate(update: LongCaptureUpdate) {
+    const previewAppendDataUrl = update.preview_append_data_url ?? '';
+    const previewAppendRows = update.preview_append_rows ?? 0;
+    const signature = [
+      update.total_height,
+      update.scroll_offset,
+      update.preview_data_url,
+      previewAppendDataUrl,
+      previewAppendRows,
+      update.current_frame_data_url,
+    ].join(':');
+    if (longUpdateSignatureRef.current === signature) {
+      return;
+    }
+    longUpdateSignatureRef.current = signature;
+    editorLog(
+      `long update: frame=${update.width}x${update.frame_height} total=${update.total_height} offset=${update.scroll_offset} min=${update.min_offset} max=${update.max_offset} preview_len=${update.preview_data_url.length} preview_append_len=${previewAppendDataUrl.length} preview_append_rows=${previewAppendRows} current_len=${update.current_frame_data_url.length}`,
+    );
+    setLongScreenshot((previous) => {
+      let previewSegments = previous.previewSegments;
+      let previewDataUrl = previous.previewDataUrl;
+      if (update.preview_data_url) {
+        previewDataUrl = update.preview_data_url;
+        previewSegments = [{
+          id: ++previewSegmentIdRef.current,
+          dataUrl: update.preview_data_url,
+          rows: update.total_height,
+        }];
+      } else if (previewAppendDataUrl && previewAppendRows > 0) {
+        previewSegments = [
+          ...previous.previewSegments,
+          {
+            id: ++previewSegmentIdRef.current,
+            dataUrl: previewAppendDataUrl,
+            rows: previewAppendRows,
+          },
+        ];
+      }
+      return {
+        active: true,
+        scrollOffset: update.scroll_offset,
+        minOffset: update.min_offset,
+        maxOffset: update.max_offset,
+        frameHeight: update.frame_height,
+        totalHeight: update.total_height,
+        currentFrameDataUrl: update.current_frame_data_url,
+        previewDataUrl,
+        previewSegments,
+      };
+    });
+  }
+
+  async function handleLongCaptureStart() {
+    editorLog(
+      `long start click: session=${sessionId || '<missing>'} isSaving=${isSaving} imageLoaded=${imageLoaded} mode=${editorMode} selection=${selectionOffset.left},${selectionOffset.top},${displaySize.width}x${displaySize.height}`,
+    );
+    if (!sessionId || isSaving) {
+      editorLog('long start ignored: missing session or saving');
+      return;
+    }
+    setTool(null);
+    setColorPickerOpen(false);
+    setEmojiPickerOpen(false);
+    setSelectedAnnotationIndex(null);
+    setTextDraft(null);
+    setIsSaving(true);
+    setError('');
+    setIsLongEditWindow(false);
+    setLongEditDisplaySize(imageSizeFallback);
+    setEditorMode('long-capture');
+    try {
+      editorLog('long start invoke start_long_capture');
+      const update = await invoke<LongCaptureUpdate>('start_long_capture', { sessionId });
+      editorLog('long start invoke complete');
+      applyLongCaptureUpdate(update);
+    } catch (startError) {
+      editorLog(`long start failed: ${String(startError)}`);
+      setEditorMode('edit');
+      setError(String(startError));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function handleLongEdit() {
+    editorLog(
+      `long edit click: active=${longScreenshot.active} preview_len=${longScreenshot.previewDataUrl.length} total=${longScreenshot.totalHeight}`,
+    );
+    void (async () => {
+      try {
+        if (!sessionId) {
+          throw new Error('Long screenshot session is missing.');
+        }
+        editorLog(`long edit click: invoke open_long_capture_edit_window start label=${windowLabel}`);
+        await invoke('open_long_capture_edit_window', { sessionId });
+        editorLog(`long edit click: invoke open_long_capture_edit_window complete label=${windowLabel}`);
+      } catch (editError) {
+        editorLog(`long edit failed: ${String(editError)}`);
+        setError(String(editError));
+      }
+    })();
+  }
+
+  async function resizeWindowForLongEdit(
+    imageWidth: number,
+    imageHeight: number,
+    showAfterResize = false,
+  ) {
+    try {
+      const appWindow = getCurrentWindow();
+      const monitor = await currentMonitor();
+      const scaleFactor = monitor?.scaleFactor ?? 1;
+      const monitorWidth = monitor ? monitor.size.width / scaleFactor : window.screen.availWidth;
+      const monitorHeight = monitor ? monitor.size.height / scaleFactor : window.screen.availHeight;
+      const monitorLeft = monitor ? monitor.position.x / scaleFactor : 0;
+      const monitorTop = monitor ? monitor.position.y / scaleFactor : 0;
+      const maxWindowWidth = Math.max(1, monitorWidth - 80);
+      const maxWindowHeight = Math.max(longEditToolbarHeight + 1, Math.min(900, monitorHeight - 80));
+      const minWindowHeight = Math.min(maxWindowHeight, longEditMinWindowHeight);
+      const verticalChromeHeight = longEditToolbarHeight + longEditPanelClearance * 2;
+      const imageLogicalWidth = Math.max(1, imageWidth / scaleFactor);
+      const imageLogicalHeight = Math.max(1, imageHeight / scaleFactor);
+      const fitScale = Math.min(
+        1,
+        maxWindowWidth / imageLogicalWidth,
+        Math.max(1, maxWindowHeight - verticalChromeHeight) / imageLogicalHeight,
+      );
+      const imageDisplayWidth = Math.max(1, Math.round(imageLogicalWidth * fitScale));
+      const imageDisplayHeight = Math.max(1, Math.round(imageLogicalHeight * fitScale));
+      const width = Math.min(maxWindowWidth, Math.max(longEditToolbarMinWidth, imageDisplayWidth));
+      const height = Math.min(
+        maxWindowHeight,
+        Math.max(minWindowHeight, verticalChromeHeight + imageDisplayHeight),
+      );
+      setLongEditDisplaySize({ width: imageDisplayWidth, height: imageDisplayHeight });
+      await appWindow.setSize(new LogicalSize(width, height));
+      await appWindow.setPosition(new LogicalPosition(
+        monitorLeft + (monitorWidth - width) / 2,
+        monitorTop + (monitorHeight - height) / 2,
+      ));
+      if (showAfterResize) {
+        editorLog(`long edit resize: show window label=${windowLabel} size=${width}x${height}`);
+        await appWindow.show();
+      }
+      await appWindow.setFocus();
+    } catch (resizeError) {
+      editorLog(`long edit resize failed: ${String(resizeError)}`);
+    }
+  }
+
   async function handleCancel() {
     if (!sessionId) {
       return;
@@ -684,52 +965,50 @@ function ScreenshotEditor() {
     if (isFinishedRef.current) {
       return;
     }
-    editorLog('cancel click: start');
+    editorLog(`cancel click: start label=${windowLabel} mode=${editorMode} long_edit=${isLongEditLaunch}`);
     isClosingRef.current = true;
     isFinishedRef.current = true;
+    if (editorMode === 'long-capture') {
+      editorLog('cancel click: invoke cancel_long_capture start');
+      await invoke('cancel_long_capture', { sessionId }).catch(() => undefined);
+      editorLog('cancel click: invoke cancel_long_capture complete');
+    }
+    editorLog(`cancel click: invoke cancel_capture_edit start label=${windowLabel}`);
     await invoke('cancel_capture_edit', { sessionId }).catch((cancelError: unknown) => {
       editorLog(`cancel click: failed ${String(cancelError)}`);
       setError(String(cancelError));
     });
-    editorLog('cancel click: close window');
+    editorLog(`cancel click: invoke cancel_capture_edit complete label=${windowLabel}`);
+    editorLog(`cancel click: close window label=${windowLabel}`);
     await getCurrentWindow().close();
   }
 
   async function handleConfirm() {
-    const image = imageRef.current;
-    if (!image || !sessionId) {
+    if (!imageRef.current || !sessionId) {
       return;
     }
     if (isFinishedRef.current) {
       return;
     }
 
-    editorLog('confirm click: start');
+    editorLog(`confirm click: start label=${windowLabel} mode=${editorMode} long_edit=${isLongEditLaunch}`);
     setIsSaving(true);
     setError('');
     isFinishedRef.current = true;
     try {
-      editorLog('confirm click: create export canvas');
-      const exportCanvas = document.createElement('canvas');
-      exportCanvas.width = image.naturalWidth;
-      exportCanvas.height = image.naturalHeight;
-      const context = exportCanvas.getContext('2d');
-      if (!context) {
-        throw new Error('Failed to create export canvas.');
-      }
-      editorLog('confirm click: draw base image');
-      context.drawImage(image, 0, 0);
-      editorLog('confirm click: draw annotations');
-      for (const annotation of annotationsRef.current) {
-        drawAnnotation(context, annotation);
-      }
       editorLog('confirm click: encode png data url start');
-      const pngBase64 = exportCanvas.toDataURL('image/png');
-      editorLog('confirm click: encode png data url complete');
-      editorLog('confirm click: invoke confirm_regular_capture_edit start');
-      await invoke('confirm_regular_capture_edit', { sessionId, pngBase64 });
-      editorLog('confirm click: invoke confirm_regular_capture_edit complete');
-      editorLog('confirm click: close window');
+      if (editorMode === 'long-capture') {
+        editorLog('confirm click: invoke confirm_long_capture start');
+        await invoke('confirm_long_capture', { sessionId });
+        editorLog('confirm click: invoke confirm_long_capture complete');
+      } else {
+        const pngBase64 = buildEditedPngBase64();
+        editorLog('confirm click: encode png data url complete');
+        editorLog(`confirm click: invoke confirm_regular_capture_edit start label=${windowLabel}`);
+        await invoke('confirm_regular_capture_edit', { sessionId, pngBase64 });
+        editorLog(`confirm click: invoke confirm_regular_capture_edit complete label=${windowLabel}`);
+      }
+      editorLog(`confirm click: close window label=${windowLabel}`);
       await getCurrentWindow().close();
     } catch (saveError) {
       isFinishedRef.current = false;
@@ -739,6 +1018,34 @@ function ScreenshotEditor() {
     }
   }
 
+  const thumbnailMaxHeight = longScreenshotThumbnailHeightFromQuery || 560;
+  const thumbnailHeight = Math.min(
+    thumbnailMaxHeight,
+    Math.max(
+      96,
+      (longScreenshotThumbnailWidth / Math.max(imageSize.width, 1))
+        * Math.max(imageSize.height, longScreenshot.totalHeight || imageSize.height),
+    ),
+  );
+  const thumbnailLeft = Number.isFinite(longScreenshotThumbnailLeftFromQuery)
+    ? longScreenshotThumbnailLeftFromQuery
+    : 8;
+  const thumbnailTop = Number.isFinite(longScreenshotThumbnailTopFromQuery)
+    ? longScreenshotThumbnailTopFromQuery
+    : 8;
+  const thumbnailTotalHeight = Math.max(longScreenshot.totalHeight || imageSize.height, 1);
+  const thumbnailViewportHeight = Math.min(
+    longScreenshot.frameHeight || imageSize.height,
+    thumbnailTotalHeight,
+  );
+  const thumbnailViewportTop = Math.max(
+    0,
+    Math.min(longScreenshot.scrollOffset, thumbnailTotalHeight - thumbnailViewportHeight),
+  );
+  const thumbnailViewportHeightPercent =
+    (thumbnailViewportHeight / thumbnailTotalHeight) * 100;
+  const thumbnailViewportTopPercent = (thumbnailViewportTop / thumbnailTotalHeight) * 100;
+
   return (
     <div
       className="relative h-screen overflow-hidden text-on-surface"
@@ -746,88 +1053,250 @@ function ScreenshotEditor() {
     >
       {!isPreload && (
         <>
-      <ScreenshotEditorCanvas
-        selectionOffset={selectionOffset}
-        displaySize={displaySize}
-        editorVisible={editorVisible}
-        screenshotDataUrl={screenshotDataUrl}
-        baseCanvasRef={baseCanvasRef}
-        draftCanvasRef={draftCanvasRef}
-        imageSize={imageSize}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={() => {
-          annotationDragRef.current = null;
-          draftRef.current = null;
-          dragStartRef.current = null;
-          setIsDragging(false);
-          setCanvasCursor(tool ? 'crosshair' : 'default');
-          renderDraft(null);
-        }}
-        onPointerLeave={() => {
-          if (!isDragging) {
-            setCanvasCursor(tool ? 'crosshair' : 'default');
-          }
-        }}
-        canvasCursor={canvasCursor}
-        selectedControlRect={selectedControlRect}
-        canvasRectToCss={canvasRectToCss}
-        resizeHandles={resizeHandles}
-        textDraft={textDraft}
-        textAreaRef={textAreaRef}
-        setTextDraft={setTextDraft}
-        commitTextDraft={commitTextDraft}
-        color={color}
-        fontSize={fontSize}
-      />
+          {isLongEditWindow ? (
+            <div className="absolute inset-0 z-50 flex flex-col overflow-hidden bg-surface-container-lowest text-on-surface">
+              <div className="flex h-12 shrink-0 items-center justify-center border-b border-outline-variant/40 bg-surface-container-lowest px-3 shadow-sm">
+                <ScreenshotEditorToolbar
+                  toolbarRef={toolbarRef}
+                  toolbarPosition={toolbarPosition}
+                  editorVisible={editorVisible}
+                  tool={tool}
+                  onToolClick={handleToolClick}
+                  popupPositionClass="top-[calc(100%+8px)]"
+                  lineWidth={lineWidth}
+                  setLineWidth={setLineWidth}
+                  mosaicWidth={mosaicWidth}
+                  setMosaicWidth={setMosaicWidth}
+                  mosaicSize={mosaicSize}
+                  setMosaicSize={setMosaicSize}
+                  fontSize={fontSize}
+                  setFontSize={setFontSize}
+                  emojiPickerOpen={emojiPickerOpen}
+                  visibleEmojiChoices={visibleEmojiChoices}
+                  onEmojiChoice={handleEmojiChoice}
+                  emojiPage={emojiPage}
+                  emojiPageCount={emojiPageCount}
+                  emojiCount={emojiChoices.length}
+                  setEmojiPage={setEmojiPage}
+                  color={color}
+                  colorPickerOpen={colorPickerOpen}
+                  setColorPickerOpen={setColorPickerOpen}
+                  setEmojiPickerOpen={setEmojiPickerOpen}
+                  handleColorSquarePointer={handleColorSquarePointer}
+                  handleColorChange={handleColorChange}
+                  hexInput={hexInput}
+                  setHexInput={setHexInput}
+                  handleHexInputCommit={handleHexInputCommit}
+                  hexToHsv={hexToHsv}
+                  hsvToHex={hsvToHex}
+                  undo={undo}
+                  redo={redo}
+                  canUndo={undoStack.length > 0}
+                  canRedo={redoStack.length > 0}
+                  clearAnnotations={() => {
+                    setSelectedAnnotationIndex(null);
+                    commitAnnotations([]);
+                  }}
+                  onLongCapture={handleLongCaptureStart}
+                  onCancel={() => void handleCancel()}
+                  onConfirm={() => void handleConfirm()}
+                  isSaving={isSaving}
+                  imageLoaded={imageLoaded}
+                  embedded
+                  showLongCapture={false}
+                />
+              </div>
+              <div
+                className="flex-1 overflow-hidden bg-surface-container-lowest"
+                style={{
+                  paddingTop: longEditPanelClearance,
+                  paddingBottom: longEditPanelClearance,
+                }}
+              >
+                <div
+                  className="relative mx-auto bg-surface-container-lowest"
+                  style={{
+                    width: longEditDisplaySize.width,
+                    height: longEditDisplaySize.height,
+                  }}
+                >
+                  <ScreenshotEditorCanvas
+                    selectionOffset={{ left: 0, top: 0 }}
+                    displaySize={longEditDisplaySize}
+                    editorVisible={editorVisible}
+                    screenshotDataUrl={screenshotDataUrl}
+                    baseCanvasRef={baseCanvasRef}
+                    draftCanvasRef={draftCanvasRef}
+                    imageSize={imageSize}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerCancel={() => {
+                      annotationDragRef.current = null;
+                      draftRef.current = null;
+                      dragStartRef.current = null;
+                      setIsDragging(false);
+                      setCanvasCursor(tool ? 'crosshair' : 'default');
+                      renderDraft(null);
+                    }}
+                    onPointerLeave={() => {
+                      if (!isDragging) {
+                        setCanvasCursor(tool ? 'crosshair' : 'default');
+                      }
+                    }}
+                    canvasCursor={canvasCursor}
+                    selectedControlRect={selectedControlRect}
+                    canvasRectToCss={canvasRectToCss}
+                    resizeHandles={resizeHandles}
+                    textDraft={textDraft}
+                    textAreaRef={textAreaRef}
+                    setTextDraft={setTextDraft}
+                    commitTextDraft={commitTextDraft}
+                    color={color}
+                    fontSize={fontSize}
+                    viewportImageOffsetY={0}
+                    showAnnotationLayer
+                    framed={false}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <ScreenshotEditorCanvas
+                selectionOffset={selectionOffset}
+                displaySize={displaySize}
+                editorVisible={editorVisible}
+                screenshotDataUrl={editorMode === 'long-capture' ? longScreenshot.currentFrameDataUrl : screenshotDataUrl}
+                baseCanvasRef={baseCanvasRef}
+                draftCanvasRef={draftCanvasRef}
+                imageSize={imageSize}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={() => {
+                  annotationDragRef.current = null;
+                  draftRef.current = null;
+                  dragStartRef.current = null;
+                  setIsDragging(false);
+                  setCanvasCursor(tool ? 'crosshair' : 'default');
+                  renderDraft(null);
+                }}
+                onPointerLeave={() => {
+                  if (!isDragging) {
+                    setCanvasCursor(tool ? 'crosshair' : 'default');
+                  }
+                }}
+                canvasCursor={canvasCursor}
+                selectedControlRect={selectedControlRect}
+                canvasRectToCss={canvasRectToCss}
+                resizeHandles={resizeHandles}
+                textDraft={textDraft}
+                textAreaRef={textAreaRef}
+                setTextDraft={setTextDraft}
+                commitTextDraft={commitTextDraft}
+                color={color}
+                fontSize={fontSize}
+                viewportImageOffsetY={0}
+                showAnnotationLayer={editorMode === 'edit'}
+              />
 
-      <ScreenshotEditorToolbar
-        toolbarRef={toolbarRef}
-        toolbarPosition={toolbarPosition}
-        editorVisible={editorVisible}
-        tool={tool}
-        onToolClick={handleToolClick}
-        popupPositionClass={popupPositionClass}
-        lineWidth={lineWidth}
-        setLineWidth={setLineWidth}
-        mosaicWidth={mosaicWidth}
-        setMosaicWidth={setMosaicWidth}
-        mosaicSize={mosaicSize}
-        setMosaicSize={setMosaicSize}
-        fontSize={fontSize}
-        setFontSize={setFontSize}
-        emojiPickerOpen={emojiPickerOpen}
-        visibleEmojiChoices={visibleEmojiChoices}
-        onEmojiChoice={handleEmojiChoice}
-        emojiPage={emojiPage}
-        emojiPageCount={emojiPageCount}
-        emojiCount={emojiChoices.length}
-        setEmojiPage={setEmojiPage}
-        color={color}
-        colorPickerOpen={colorPickerOpen}
-        setColorPickerOpen={setColorPickerOpen}
-        setEmojiPickerOpen={setEmojiPickerOpen}
-        handleColorSquarePointer={handleColorSquarePointer}
-        handleColorChange={handleColorChange}
-        hexInput={hexInput}
-        setHexInput={setHexInput}
-        handleHexInputCommit={handleHexInputCommit}
-        hexToHsv={hexToHsv}
-        hsvToHex={hsvToHex}
-        undo={undo}
-        redo={redo}
-        canUndo={undoStack.length > 0}
-        canRedo={redoStack.length > 0}
-        clearAnnotations={() => {
-          setSelectedAnnotationIndex(null);
-          commitAnnotations([]);
-        }}
-        onCancel={() => void handleCancel()}
-        onConfirm={() => void handleConfirm()}
-        isSaving={isSaving}
-        imageLoaded={imageLoaded}
-      />
+              {editorMode === 'edit' ? (
+                <ScreenshotEditorToolbar
+                  toolbarRef={toolbarRef}
+                  toolbarPosition={toolbarPosition}
+                  editorVisible={editorVisible}
+                  tool={tool}
+                  onToolClick={handleToolClick}
+                  popupPositionClass={popupPositionClass}
+                  lineWidth={lineWidth}
+                  setLineWidth={setLineWidth}
+                  mosaicWidth={mosaicWidth}
+                  setMosaicWidth={setMosaicWidth}
+                  mosaicSize={mosaicSize}
+                  setMosaicSize={setMosaicSize}
+                  fontSize={fontSize}
+                  setFontSize={setFontSize}
+                  emojiPickerOpen={emojiPickerOpen}
+                  visibleEmojiChoices={visibleEmojiChoices}
+                  onEmojiChoice={handleEmojiChoice}
+                  emojiPage={emojiPage}
+                  emojiPageCount={emojiPageCount}
+                  emojiCount={emojiChoices.length}
+                  setEmojiPage={setEmojiPage}
+                  color={color}
+                  colorPickerOpen={colorPickerOpen}
+                  setColorPickerOpen={setColorPickerOpen}
+                  setEmojiPickerOpen={setEmojiPickerOpen}
+                  handleColorSquarePointer={handleColorSquarePointer}
+                  handleColorChange={handleColorChange}
+                  hexInput={hexInput}
+                  setHexInput={setHexInput}
+                  handleHexInputCommit={handleHexInputCommit}
+                  hexToHsv={hexToHsv}
+                  hsvToHex={hsvToHex}
+                  undo={undo}
+                  redo={redo}
+                  canUndo={undoStack.length > 0}
+                  canRedo={redoStack.length > 0}
+                  clearAnnotations={() => {
+                    setSelectedAnnotationIndex(null);
+                    commitAnnotations([]);
+                  }}
+                  onLongCapture={handleLongCaptureStart}
+                  onCancel={() => void handleCancel()}
+                  onConfirm={() => void handleConfirm()}
+                  isSaving={isSaving}
+                  imageLoaded={imageLoaded}
+                />
+              ) : (
+                <LongScreenshotToolbar
+                  toolbarRef={toolbarRef}
+                  toolbarPosition={toolbarPosition}
+                  editorVisible={editorVisible}
+                  onEdit={handleLongEdit}
+                  onCancel={() => void handleCancel()}
+                  onConfirm={() => void handleConfirm()}
+                  isSaving={isSaving}
+                  imageLoaded={imageLoaded}
+                />
+              )}
+
+              {editorMode === 'long-capture' && longScreenshot.previewSegments.length > 0 && (
+                <div
+                  className="absolute z-30 overflow-hidden rounded-md border border-outline-variant/50 bg-surface-container-lowest shadow-xl"
+                  style={{
+                    left: thumbnailLeft,
+                    top: thumbnailTop,
+                    width: longScreenshotThumbnailWidth,
+                    height: thumbnailHeight,
+                  }}
+                >
+                  <div className="h-full w-full">
+                    {longScreenshot.previewSegments.map((segment) => (
+                      <img
+                        key={segment.id}
+                        src={segment.dataUrl}
+                        alt=""
+                        draggable={false}
+                        className="block w-full select-none object-fill"
+                        style={{
+                          height: `${segment.rows / Math.max(longScreenshot.totalHeight || segment.rows, 1) * 100}%`,
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <div
+                    className="absolute left-0 right-0 border-2 border-primary/90 bg-primary/10"
+                    style={{
+                      top: `${thumbnailViewportTopPercent}%`,
+                      height: `${thumbnailViewportHeightPercent}%`,
+                    }}
+                  />
+                </div>
+              )}
+            </>
+          )}
 
       {error && <div className="fixed bottom-16 left-2 right-2 rounded bg-error/90 px-3 py-2 text-sm text-white">{error}</div>}
         </>

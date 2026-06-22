@@ -166,6 +166,94 @@ pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
     }
 }
 
+pub fn hide_overlay_for_live_capture(app: &AppHandle, state: &State<'_, AppState>) {
+    #[cfg(target_os = "macos")]
+    {
+        macos_platform::hide_overlay_for_live_capture(app, state);
+        return;
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let _ = (app, state);
+    }
+}
+
+pub fn restore_overlay_after_live_capture(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    selection: &SelectionRect,
+) {
+    #[cfg(target_os = "macos")]
+    {
+        macos_platform::restore_overlay_after_live_capture(app, state, selection);
+        return;
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let _ = (app, state, selection);
+    }
+}
+
+pub fn set_overlay_capture_sharing(app: &AppHandle, include_in_capture: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        macos_platform::set_overlay_capture_sharing(app, include_in_capture);
+        return;
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let _ = (app, include_in_capture);
+    }
+}
+
+pub fn set_overlay_mouse_passthrough(app: &AppHandle, passthrough: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        macos_platform::set_overlay_mouse_passthrough(app, passthrough);
+        return;
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let _ = (app, passthrough);
+    }
+}
+
+pub fn set_window_capture_sharing(window: &tauri::WebviewWindow, include_in_capture: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        macos_platform::set_window_capture_sharing(window, include_in_capture);
+        return;
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let _ = (window, include_in_capture);
+    }
+}
+
+pub fn scroll_for_long_capture(
+    delta_y: f64,
+    selection: &SelectionRect,
+    target_pid: Option<i32>,
+) -> Result<(), FlickError> {
+    #[cfg(target_os = "macos")]
+    {
+        return macos_platform::scroll_for_long_capture(delta_y, selection, target_pid);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let _ = selection;
+        let _ = delta_y;
+        let _ = target_pid;
+        Ok(())
+    }
+}
+
 pub fn capture_image(
     capture_service: &ScreenCaptureService,
     selection: &SelectionRect,

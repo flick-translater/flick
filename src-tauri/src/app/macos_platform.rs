@@ -58,10 +58,12 @@ pub fn apply_shortcut_bindings(app: &AppHandle, settings: &AppSettings) -> anyho
 pub fn trigger_shortcut_action(app: &AppHandle, action: ShortcutAction) {
     match action {
         ShortcutAction::Capture => {
+            remember_previous_frontmost_app(app);
             let state = app.state::<AppState>();
             let _ = commands::capture::begin_capture_session(app, &state);
         }
         ShortcutAction::TranslateCapture => {
+            remember_previous_frontmost_app(app);
             let state = app.state::<AppState>();
             let _ = commands::capture::begin_capture_session_with_intent(
                 app,

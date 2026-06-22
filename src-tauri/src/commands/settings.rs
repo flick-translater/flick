@@ -223,7 +223,9 @@ fn normalize_hex_color(color: &str) -> Result<String, FlickError> {
         && value.starts_with('#')
         && value[1..].chars().all(|ch| ch.is_ascii_hexdigit());
     if !valid {
-        return Err(FlickError::Message("invalid screenshot editor color".into()));
+        return Err(FlickError::Message(
+            "invalid screenshot editor color".into(),
+        ));
     }
     Ok(value.to_ascii_lowercase())
 }

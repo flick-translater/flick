@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use chrono::Utc;
 use image::{ImageBuffer, Rgba};
 use tauri::{AppHandle, Manager, State};
@@ -15,11 +15,11 @@ use uuid::Uuid;
 
 use crate::{
     app::{
+        AppState, CaptureIntent,
         windows::{
             close_screenshot_editor_window, emit_capture_status, preload_screenshot_editor_window,
             selection_spans_multiple_monitors, show_screenshot_editor_window,
         },
-        AppState, CaptureIntent,
     },
     error::FlickError,
     features::translation,
@@ -29,9 +29,13 @@ use crate::{
 
 use super::{history, platform};
 
-pub(crate) fn capture_editor_log(_step: &str) {}
+pub(crate) fn capture_editor_log(step: &str) {
+    eprintln!("[capture-editor] {step}");
+}
 
-pub fn capture_editor_frontend_log(_message: &str) {}
+pub fn capture_editor_frontend_log(message: &str) {
+    eprintln!("[capture-editor/frontend] {message}");
+}
 
 pub fn cancel_capture(app: &AppHandle) -> Result<(), FlickError> {
     if let Some(state) = app.try_state::<AppState>() {
@@ -418,6 +422,55 @@ pub fn confirm_regular_capture_edit(
     Ok(record)
 }
 
+pub fn save_regular_capture_edit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    png_base64: String,
+) -> Result<CaptureRecord, FlickError> {
+    capture_editor_log("save_regular_capture_edit: start");
+    platform::finalize_capture_session(&app, &state, true);
+    let pending = remove_pending_capture_edit(&state, &session_id)?;
+    capture_editor_log("save_regular_capture_edit: pending session removed");
+    close_screenshot_editor_window(&app, &session_id);
+    cleanup_pending_original(&pending);
+
+    let image_bytes = decode_png_base64(&png_base64)?;
+    let image = image::load_from_memory(&image_bytes)
+        .map_err(|error| FlickError::Message(format!("failed to decode edited image: {error}")))?
+        .to_rgba8();
+    let screenshot_dir = history::current_screenshot_dir(&state)?;
+    let max_screenshots = state
+        .settings
+        .lock()
+        .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
+        .max_screenshots;
+    let record = CaptureRecord {
+        id: pending.id,
+        created_at: pending.created_at,
+        width: image.width(),
+        height: image.height(),
+        path: pending.final_path,
+    };
+
+    capture_editor_log("save_regular_capture_edit: save png start");
+    ScreenCaptureService::default().save_png(&image, Path::new(&record.path))?;
+    capture_editor_log("save_regular_capture_edit: prune history start");
+    history::prune_capture_history(&screenshot_dir, max_screenshots)?;
+
+    let mut history_guard = state
+        .history
+        .lock()
+        .map_err(|_| FlickError::Message("history mutex poisoned".into()))?;
+    history_guard.push_front(record.clone());
+    history_guard.truncate(max_screenshots as usize);
+    drop(history_guard);
+
+    emit_capture_status(&app, "capture-finished", &record);
+    capture_editor_log("save_regular_capture_edit: complete");
+    Ok(record)
+}
+
 pub fn cancel_capture_edit(
     app: &AppHandle,
     state: &AppState,
@@ -462,8 +515,9 @@ pub fn capture_editor_ready(
             .lock()
             .map_err(|_| FlickError::Message("pending capture edits mutex poisoned".into()))?;
         if let Some(session) = pending.get_mut(&session_id) {
-            let should_finalize =
-                !session.cancelled && !session.overlay_finalized && !session.keep_overlay_until_finish;
+            let should_finalize = !session.cancelled
+                && !session.overlay_finalized
+                && !session.keep_overlay_until_finish;
             if should_finalize {
                 session.overlay_finalized = true;
             }
@@ -771,7 +825,7 @@ fn wait_for_file(path: &Path, timeout: Duration) -> Result<(), FlickError> {
     )))
 }
 
-fn remove_pending_capture_edit(
+pub(crate) fn remove_pending_capture_edit(
     state: &State<'_, AppState>,
     session_id: &str,
 ) -> Result<PendingCaptureEdit, FlickError> {
@@ -790,7 +844,7 @@ fn remove_pending_capture_edit_by_state(
         .ok_or_else(|| FlickError::Message("pending capture edit not found".into()))
 }
 
-fn cleanup_pending_original(pending: &PendingCaptureEdit) {
+pub(crate) fn cleanup_pending_original(pending: &PendingCaptureEdit) {
     match fs::remove_file(&pending.original_path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

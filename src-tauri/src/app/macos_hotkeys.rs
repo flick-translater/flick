@@ -1,11 +1,11 @@
 use std::{
-    sync::{mpsc, Mutex, OnceLock},
+    sync::{Mutex, OnceLock, mpsc},
     thread,
     time::Duration,
 };
 
-use anyhow::{anyhow, Context};
-use core_foundation::runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop};
+use anyhow::{Context, anyhow};
+use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventType, CallbackResult, EventField,
@@ -13,7 +13,7 @@ use core_graphics::event::{
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 
-use crate::app::{trigger_shortcut_action, ShortcutAction};
+use crate::app::{ShortcutAction, trigger_shortcut_action};
 
 #[derive(Clone, Copy)]
 struct RegisteredHotkey {

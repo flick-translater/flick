@@ -30,6 +30,9 @@ type ScreenshotEditorCanvasProps = {
   commitTextDraft: () => void;
   color: string;
   fontSize: number;
+  viewportImageOffsetY?: number;
+  showAnnotationLayer?: boolean;
+  framed?: boolean;
 };
 
 export function ScreenshotEditorCanvas({
@@ -55,12 +58,15 @@ export function ScreenshotEditorCanvas({
   commitTextDraft,
   color,
   fontSize,
+  viewportImageOffsetY = 0,
+  showAnnotationLayer = true,
+  framed = true,
 }: ScreenshotEditorCanvasProps) {
   const selectedControlCssRect = selectedControlRect ? canvasRectToCss(selectedControlRect) : null;
 
   return (
     <div
-      className="absolute bg-transparent shadow-[0_0_0_2px_rgba(0,102,204,0.95)]"
+      className={`absolute overflow-hidden bg-transparent ${framed ? 'shadow-[0_0_0_2px_rgba(0,102,204,0.95)]' : ''}`}
       style={{
         left: selectionOffset.left,
         top: selectionOffset.top,
@@ -69,7 +75,7 @@ export function ScreenshotEditorCanvas({
         opacity: editorVisible ? 1 : 0,
       }}
     >
-      {screenshotDataUrl && (
+      {screenshotDataUrl && showAnnotationLayer && (
         <img
           src={screenshotDataUrl}
           alt=""
@@ -77,11 +83,26 @@ export function ScreenshotEditorCanvas({
           draggable={false}
         />
       )}
+      {screenshotDataUrl && !showAnnotationLayer && (
+        <img
+          src={screenshotDataUrl}
+          alt=""
+          draggable={false}
+          className="pointer-events-none absolute inset-0 h-full w-full select-none"
+          style={{
+            transform: `translateY(${-viewportImageOffsetY}px)`,
+          }}
+        />
+      )}
       <canvas
         ref={baseCanvasRef}
         width={imageSize.width}
         height={imageSize.height}
         className="absolute inset-0 h-full w-full"
+        style={{
+          opacity: showAnnotationLayer ? 1 : 0,
+          pointerEvents: showAnnotationLayer ? 'auto' : 'none',
+        }}
       />
       <canvas
         ref={draftCanvasRef}
@@ -93,9 +114,13 @@ export function ScreenshotEditorCanvas({
         onPointerCancel={onPointerCancel}
         onPointerLeave={onPointerLeave}
         className="absolute inset-0 h-full w-full"
-        style={{ cursor: canvasCursor }}
+        style={{
+          cursor: canvasCursor,
+          opacity: showAnnotationLayer ? 1 : 0,
+          pointerEvents: showAnnotationLayer ? 'auto' : 'none',
+        }}
       />
-      {selectedControlCssRect && (
+      {showAnnotationLayer && selectedControlCssRect && (
         <div
           className="pointer-events-none absolute z-20 border border-primary"
           style={{
@@ -119,7 +144,7 @@ export function ScreenshotEditorCanvas({
           ))}
         </div>
       )}
-      {textDraft && (
+      {showAnnotationLayer && textDraft && (
         <textarea
           ref={textAreaRef}
           value={textDraft.value}

@@ -1,11 +1,13 @@
 import type React from 'react';
 import {
   ArrowUpRight,
+  ArrowUpDown,
   Brush,
   Check,
   ChevronLeft,
   ChevronRight,
   Circle,
+  Edit3,
   Redo2,
   Smile,
   Slash,
@@ -19,6 +21,7 @@ import type { Tool } from './types';
 
 const toolbarButtonClass = 'flex h-8 w-8 items-center justify-center rounded-md border border-outline-variant/30 bg-surface-container text-on-surface transition-colors hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-40';
 const toolOptionPanelClass = 'absolute left-0 z-50 w-40 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl';
+const toolbarSeparatorClass = 'h-6 w-px shrink-0 bg-outline-variant/40';
 
 const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?: number; active?: boolean }> }> = [
   { id: 'pen', label: 'Brush', icon: Brush },
@@ -69,10 +72,13 @@ type ScreenshotEditorToolbarProps = {
   canUndo: boolean;
   canRedo: boolean;
   clearAnnotations: () => void;
+  onLongCapture: () => void;
   onCancel: () => void;
   onConfirm: () => void;
   isSaving: boolean;
   imageLoaded: boolean;
+  embedded?: boolean;
+  showLongCapture?: boolean;
 };
 
 export function ScreenshotEditorToolbar({
@@ -113,23 +119,34 @@ export function ScreenshotEditorToolbar({
   canUndo,
   canRedo,
   clearAnnotations,
+  onLongCapture,
   onCancel,
   onConfirm,
   isSaving,
   imageLoaded,
+  embedded = false,
+  showLongCapture = true,
 }: ScreenshotEditorToolbarProps) {
   const hsvColor = hexToHsv(color);
+  const toolbarClassName = embedded
+    ? 'relative z-40 flex max-w-[calc(100vw-16px)] items-center gap-1.5 bg-transparent p-0'
+    : 'absolute z-40 flex max-w-[calc(100vw-16px)] items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/95 p-1.5 shadow-xl backdrop-blur';
 
   return (
     <div
       ref={toolbarRef}
-      className="absolute z-40 flex max-w-[calc(100vw-16px)] items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/95 p-1.5 shadow-xl backdrop-blur"
-      style={{
-        left: toolbarPosition.left,
-        top: toolbarPosition.top,
-        opacity: editorVisible ? 1 : 0,
-        pointerEvents: editorVisible ? 'auto' : 'none',
-      }}
+      className={toolbarClassName}
+      style={embedded
+        ? {
+            opacity: editorVisible ? 1 : 0,
+            pointerEvents: editorVisible ? 'auto' : 'none',
+          }
+        : {
+            left: toolbarPosition.left,
+            top: toolbarPosition.top,
+            opacity: editorVisible ? 1 : 0,
+            pointerEvents: editorVisible ? 'auto' : 'none',
+          }}
     >
       <div className="flex items-center gap-1">
         {tools.map((item) => {
@@ -242,7 +259,7 @@ export function ScreenshotEditorToolbar({
         })}
       </div>
 
-      <div className="h-6 w-px shrink-0 bg-outline-variant/40" />
+      <div className={toolbarSeparatorClass} />
 
       <div className="relative shrink-0">
         <button
@@ -252,7 +269,7 @@ export function ScreenshotEditorToolbar({
             setEmojiPickerOpen(false);
             setColorPickerOpen((open) => !open);
           }}
-          className="h-8 w-8 rounded-md border-2 border-outline-variant/60 shadow-inner"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-outline-variant/30 shadow-inner"
           style={{ backgroundColor: color }}
         />
         {colorPickerOpen && (
@@ -316,6 +333,29 @@ export function ScreenshotEditorToolbar({
         )}
       </div>
 
+      {showLongCapture && (
+        <>
+          <div className={toolbarSeparatorClass} />
+
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              title="Long screenshot"
+              disabled={isSaving || !imageLoaded}
+              onClick={() => {
+                console.info(`[screenshot-editor] ${new Date().toISOString()} toolbar long screenshot button click`);
+                onLongCapture();
+              }}
+              className={toolbarButtonClass}
+            >
+              <LongScreenshotIcon />
+            </button>
+          </div>
+        </>
+      )}
+
+      <div className={toolbarSeparatorClass} />
+
       <div className="flex items-center gap-1">
         <button type="button" title="Undo" onClick={undo} disabled={!canUndo} className={toolbarButtonClass}>
           <Undo2 size={18} />
@@ -323,6 +363,11 @@ export function ScreenshotEditorToolbar({
         <button type="button" title="Redo" onClick={redo} disabled={!canRedo} className={toolbarButtonClass}>
           <Redo2 size={18} />
         </button>
+      </div>
+
+      <div className={toolbarSeparatorClass} />
+
+      <div className="flex items-center gap-1">
         <button type="button" title="Clear" onClick={clearAnnotations} className={toolbarButtonClass}>
           <Trash2 size={18} />
         </button>
@@ -344,6 +389,77 @@ export function ScreenshotEditorToolbar({
           <Check size={18} />
         </button>
       </div>
+    </div>
+  );
+}
+
+type LongScreenshotToolbarProps = {
+  toolbarRef: React.RefObject<HTMLDivElement | null>;
+  toolbarPosition: { left: number; top: number };
+  editorVisible: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+  isSaving: boolean;
+  imageLoaded: boolean;
+};
+
+export function LongScreenshotToolbar({
+  toolbarRef,
+  toolbarPosition,
+  editorVisible,
+  onEdit,
+  onCancel,
+  onConfirm,
+  isSaving,
+  imageLoaded,
+}: LongScreenshotToolbarProps) {
+  return (
+    <div
+      ref={toolbarRef}
+      className="absolute z-40 flex max-w-[calc(100vw-16px)] items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/95 p-1.5 shadow-xl backdrop-blur"
+      style={{
+        left: toolbarPosition.left,
+        top: toolbarPosition.top,
+        opacity: editorVisible ? 1 : 0,
+        pointerEvents: editorVisible ? 'auto' : 'none',
+      }}
+    >
+      <button
+        type="button"
+        title="Edit"
+        disabled={isSaving || !imageLoaded}
+        onClick={() => {
+          console.info(`[screenshot-editor] ${new Date().toISOString()} long toolbar edit click`);
+          onEdit();
+        }}
+        className={toolbarButtonClass}
+      >
+        <Edit3 size={18} />
+      </button>
+      <button
+        type="button"
+        title="Cancel"
+        onClick={() => {
+          console.info(`[screenshot-editor] ${new Date().toISOString()} long toolbar cancel click`);
+          onCancel();
+        }}
+        className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <X size={18} />
+      </button>
+      <button
+        type="button"
+        title="Confirm"
+        disabled={isSaving || !imageLoaded}
+        onClick={() => {
+          console.info(`[screenshot-editor] ${new Date().toISOString()} long toolbar confirm click`);
+          onConfirm();
+        }}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-green-600 text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+      >
+        <Check size={18} />
+      </button>
     </div>
   );
 }
@@ -381,6 +497,14 @@ function CheckerboardIcon({ size = 18, active = false }: { size?: number; active
       <span className={lightClass} />
       <span className={lightClass} />
       <span className={darkClass} />
+    </span>
+  );
+}
+
+function LongScreenshotIcon() {
+  return (
+    <span className="relative flex h-[18px] w-[14px] items-center justify-center rounded-[2px] border border-current">
+      <ArrowUpDown size={12} strokeWidth={2.5} />
     </span>
   );
 }

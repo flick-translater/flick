@@ -10,10 +10,10 @@ use std::{
 #[cfg(target_os = "windows")]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::{
+    AppHandle, Manager, WebviewWindow,
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuId, MenuItemBuilder},
     path::BaseDirectory,
     tray::TrayIconBuilder,
-    AppHandle, Manager, WebviewWindow,
 };
 #[cfg(target_os = "macos")]
 use tauri_plugin_autostart::MacosLauncher;
@@ -23,9 +23,9 @@ use crate::{
     commands,
     models::{AppSettings, CaptureRecord, PendingCaptureEdit, TranslateWindowState},
     services::{
+        CachedScreenCapture, OcrService, SettingsStore, TranslationHistoryStore, TtsService,
         available_ocr_engines, available_tts_engines, create_ocr_service, default_ocr_provider,
-        normalize_ocr_engine_id, normalize_tts_engine_id, CachedScreenCapture, OcrService,
-        SettingsStore, TranslationHistoryStore, TtsService,
+        normalize_ocr_engine_id, normalize_tts_engine_id,
     },
 };
 
@@ -114,8 +114,17 @@ pub fn run() {
             commands::capture::start_translate_capture_session,
             commands::capture::get_pending_capture_image,
             commands::capture::confirm_regular_capture_edit,
+            commands::capture::save_regular_capture_edit,
             commands::capture::cancel_capture_edit,
             commands::capture::capture_editor_ready,
+            commands::capture::start_long_capture,
+            commands::capture::scroll_long_capture,
+            commands::capture::get_long_capture_image,
+            commands::capture::save_long_capture,
+            commands::capture::confirm_long_capture,
+            commands::capture::cancel_long_capture,
+            commands::capture::prepare_long_capture_edit,
+            commands::capture::open_long_capture_edit_window,
             commands::capture::capture_editor_frontend_log,
             commands::settings::get_app_settings,
             commands::settings::get_autostart_status,

@@ -104,7 +104,8 @@ pub fn show_screenshot_editor_window(
     let toolbar_anchor_height = 44.0;
     let toolbar_interactive_height = 340.0;
     let toolbar_top_below = selection_top + selection.height as f64 + 8.0;
-    let toolbar_placement_below = toolbar_top_below + toolbar_interactive_height <= desktop_height - 8.0;
+    let toolbar_placement_below =
+        toolbar_top_below + toolbar_interactive_height <= desktop_height - 8.0;
     let toolbar_top = if toolbar_placement_below {
         toolbar_top_below
     } else {
@@ -127,14 +128,36 @@ pub fn show_screenshot_editor_window(
             .max(8.0)
             .min((desktop_width - toolbar_width - 8.0).max(8.0))
     };
+    let long_thumbnail_width = 300.0;
+    let long_thumbnail_height = 560.0_f64.min(desktop_height - 16.0).max(96.0);
+    let long_thumbnail_gap = 12.0;
+    let long_thumbnail_left =
+        if selection_left + selection.width as f64 + long_thumbnail_gap + long_thumbnail_width
+            <= desktop_width - 8.0
+        {
+            selection_left + selection.width as f64 + long_thumbnail_gap
+        } else {
+            (selection_left - long_thumbnail_gap - long_thumbnail_width).max(8.0)
+        };
+    let long_thumbnail_top = selection_top
+        .max(8.0)
+        .min((desktop_height - long_thumbnail_height - 8.0).max(8.0));
     let content_margin = 8.0;
-    let content_left = selection_left.min(toolbar_left).max(0.0);
-    let content_top = selection_top.min(toolbar_region_top).max(0.0);
+    let content_left = selection_left
+        .min(toolbar_left)
+        .min(long_thumbnail_left)
+        .max(0.0);
+    let content_top = selection_top
+        .min(toolbar_region_top)
+        .min(long_thumbnail_top)
+        .max(0.0);
     let content_right = (selection_left + selection.width as f64)
         .max(toolbar_left + toolbar_width)
+        .max(long_thumbnail_left + long_thumbnail_width)
         .min(desktop_width);
     let content_bottom = (selection_top + selection.height as f64)
         .max(toolbar_region_top + toolbar_region_height)
+        .max(long_thumbnail_top + long_thumbnail_height)
         .min(desktop_height);
     let window_left = (content_left - content_margin).max(0.0);
     let window_top = (content_top - content_margin).max(0.0);
@@ -176,6 +199,8 @@ pub fn show_screenshot_editor_window(
     let toolbar_window_left = toolbar_left - window_left;
     let toolbar_window_top = toolbar_top - window_top;
     let toolbar_region_window_top = toolbar_region_top - window_top;
+    let long_thumbnail_window_left = long_thumbnail_left - window_left;
+    let long_thumbnail_window_top = long_thumbnail_top - window_top;
     let window_regions = vec![
         SelectionRect {
             x: selection_window_left.floor() as i32,
@@ -189,6 +214,12 @@ pub fn show_screenshot_editor_window(
             width: toolbar_width.ceil() as u32,
             height: toolbar_region_height.ceil() as u32,
         },
+        SelectionRect {
+            x: long_thumbnail_window_left.floor() as i32,
+            y: long_thumbnail_window_top.floor() as i32,
+            width: long_thumbnail_width.ceil() as u32,
+            height: long_thumbnail_height.ceil() as u32,
+        },
     ];
 
     let color_param = {
@@ -200,10 +231,14 @@ pub fn show_screenshot_editor_window(
         }
     };
     let url = format!(
-        "screenshot-editor.html?session_id={session_id}&display_width={}&display_height={}&selection_left={selection_window_left}&selection_top={selection_window_top}&toolbar_left={toolbar_window_left}&toolbar_top={toolbar_window_top}&popup_placement={}&color={color_param}",
+        "screenshot-editor.html?session_id={session_id}&display_width={}&display_height={}&selection_left={selection_window_left}&selection_top={selection_window_top}&toolbar_left={toolbar_window_left}&toolbar_top={toolbar_window_top}&thumbnail_left={long_thumbnail_window_left}&thumbnail_top={long_thumbnail_window_top}&thumbnail_width={long_thumbnail_width}&thumbnail_height={long_thumbnail_height}&popup_placement={}&color={color_param}",
         selection.width,
         selection.height,
-        if toolbar_placement_below { "down" } else { "up" },
+        if toolbar_placement_below {
+            "down"
+        } else {
+            "up"
+        },
     );
 
     if let Some(window) = app.get_webview_window(PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL) {
@@ -282,13 +317,57 @@ pub fn preload_screenshot_editor_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn close_screenshot_editor_window(app: &AppHandle, session_id: &str) {
+    crate::features::capture::capture_editor_log(&format!(
+        "close_screenshot_editor_window: start session={session_id}"
+    ));
     let label = format!("{SCREENSHOT_EDITOR_WINDOW_PREFIX}-{session_id}");
     if let Some(window) = app.get_webview_window(&label) {
+        crate::features::capture::capture_editor_log(&format!(
+            "close_screenshot_editor_window: close capture window label={label}"
+        ));
+        let _ = window.set_ignore_cursor_events(false);
+        let _ = window.hide();
+        restore_screenshot_editor_capture_window_style(&window);
         let _ = window.close();
+    } else {
+        crate::features::capture::capture_editor_log(&format!(
+            "close_screenshot_editor_window: capture window missing label={label}"
+        ));
+    }
+    let long_edit_label = format!("{SCREENSHOT_EDITOR_WINDOW_PREFIX}-long-{session_id}");
+    if let Some(window) = app.get_webview_window(&long_edit_label) {
+        crate::features::capture::capture_editor_log(&format!(
+            "close_screenshot_editor_window: close long edit window label={long_edit_label}"
+        ));
+        let _ = window.set_ignore_cursor_events(false);
+        let _ = window.hide();
+        let _ = window.close();
+    } else {
+        crate::features::capture::capture_editor_log(&format!(
+            "close_screenshot_editor_window: long edit window missing label={long_edit_label}"
+        ));
     }
     if let Some(window) = app.get_webview_window(PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL) {
+        crate::features::capture::capture_editor_log(&format!(
+            "close_screenshot_editor_window: close preload window label={PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL}"
+        ));
+        let _ = window.set_ignore_cursor_events(false);
+        let _ = window.hide();
+        restore_screenshot_editor_capture_window_style(&window);
         let _ = window.close();
+    } else {
+        crate::features::capture::capture_editor_log(&format!(
+            "close_screenshot_editor_window: preload window missing label={PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL}"
+        ));
     }
+    crate::features::capture::capture_editor_log("close_screenshot_editor_window: complete");
+}
+
+fn restore_screenshot_editor_capture_window_style(window: &WebviewWindow) {
+    let _ = window.set_decorations(false);
+    let _ = window.set_resizable(false);
+    let _ = window.set_always_on_top(true);
+    let _ = window.set_shadow(false);
 }
 
 pub fn selection_spans_multiple_monitors(app: &AppHandle, selection: &SelectionRect) -> bool {

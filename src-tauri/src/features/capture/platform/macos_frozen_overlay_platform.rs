@@ -285,6 +285,116 @@ pub(super) fn hide_native_overlay(app: &AppHandle) -> Result<(), FlickError> {
     Ok(())
 }
 
+/// Temporarily order the overlay windows out without tearing down the snapshot state, so
+/// a live capture can grab the real desktop underneath. Pair with
+/// [`restore_overlay_windows`]; both are non-destructive and cheap.
+pub(super) fn order_out_overlay_windows(app: &AppHandle) -> Result<(), FlickError> {
+    app.run_on_main_thread(move || {
+        let state = overlay_state()
+            .lock()
+            .expect("frozen overlay mutex poisoned");
+        eprintln!(
+            "[long-capture/overlay] order_out_overlay_windows: visible={} image_windows={} blocker_windows={}",
+            state.overlay_visible,
+            state.image_windows.len(),
+            state.blocker_windows.len()
+        );
+        for window in &state.image_windows {
+            hide_window(*window);
+        }
+        for window in &state.blocker_windows {
+            hide_window(*window);
+        }
+    })?;
+    Ok(())
+}
+
+pub(super) fn restore_overlay_windows(app: &AppHandle) -> Result<(), FlickError> {
+    app.run_on_main_thread(move || {
+        let state = overlay_state()
+            .lock()
+            .expect("frozen overlay mutex poisoned");
+        eprintln!(
+            "[long-capture/overlay] restore_overlay_windows: visible={} geometry={} image_windows={} blocker_windows={}",
+            state.overlay_visible,
+            state.overlay_geometry.len(),
+            state.image_windows.len(),
+            state.blocker_windows.len()
+        );
+        if !state.overlay_visible {
+            eprintln!("[long-capture/overlay] restore_overlay_windows: skipped not visible");
+            return;
+        }
+        let Some(coordinate_space) = state.coordinate_space else {
+            eprintln!("[long-capture/overlay] restore_overlay_windows: skipped missing coordinate space");
+            return;
+        };
+        for (window, rect) in state.image_windows.iter().zip(state.overlay_geometry.iter()) {
+            set_window_frame(*window, rect, coordinate_space);
+            show_window(*window);
+        }
+        for (window, rect) in state.blocker_windows.iter().zip(state.overlay_geometry.iter()) {
+            set_window_frame(*window, rect, coordinate_space);
+            show_window(*window);
+        }
+        request_redraw_locked(&state);
+    })?;
+    Ok(())
+}
+
+pub(super) fn set_overlay_window_capture_sharing(
+    app: &AppHandle,
+    include_in_capture: bool,
+) -> Result<(), FlickError> {
+    app.run_on_main_thread(move || {
+        let state = overlay_state()
+            .lock()
+            .expect("frozen overlay mutex poisoned");
+        let sharing = if include_in_capture {
+            NSWindowSharingType::ReadOnly
+        } else {
+            NSWindowSharingType::None
+        };
+        eprintln!(
+            "[long-capture/overlay] set_overlay_window_capture_sharing include_in_capture={} image_windows={} blocker_windows={}",
+            include_in_capture,
+            state.image_windows.len(),
+            state.blocker_windows.len()
+        );
+        for window in &state.image_windows {
+            set_window_sharing(*window, sharing);
+        }
+        for window in &state.blocker_windows {
+            set_window_sharing(*window, sharing);
+        }
+    })?;
+    Ok(())
+}
+
+pub(super) fn set_overlay_mouse_passthrough(
+    app: &AppHandle,
+    passthrough: bool,
+) -> Result<(), FlickError> {
+    app.run_on_main_thread(move || {
+        let state = overlay_state()
+            .lock()
+            .expect("frozen overlay mutex poisoned");
+        eprintln!(
+            "[long-capture/overlay] set_overlay_mouse_passthrough passthrough={} image_windows={} blocker_windows={}",
+            passthrough,
+            state.image_windows.len(),
+            state.blocker_windows.len()
+        );
+        for window in &state.image_windows {
+            set_window_mouse_passthrough(*window, true);
+        }
+        for window in &state.blocker_windows {
+            set_window_mouse_passthrough(*window, passthrough);
+        }
+    })?;
+    Ok(())
+}
+
 pub(super) fn update_highlight(
     app: &AppHandle,
     selection: Option<SelectionRect>,
@@ -449,6 +559,12 @@ fn set_window_background(window: WindowHandle, alpha: f64) {
 fn set_window_sharing(window: WindowHandle, sharing_type: NSWindowSharingType) {
     unsafe {
         window_ref(window).setSharingType(sharing_type);
+    }
+}
+
+fn set_window_mouse_passthrough(window: WindowHandle, passthrough: bool) {
+    unsafe {
+        window_ref(window).setIgnoresMouseEvents(passthrough);
     }
 }
 
