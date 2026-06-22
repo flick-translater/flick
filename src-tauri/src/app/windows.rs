@@ -101,7 +101,7 @@ pub fn show_screenshot_editor_window(
     let selection_left = selection.x as f64 - desktop_x;
     let selection_top = selection.y as f64 - desktop_y;
     let toolbar_width = desktop_width.min(680.0).max(1.0);
-    let toolbar_interactive_height = 190.0;
+    let toolbar_interactive_height = 340.0;
     let toolbar_top_below = selection_top + selection.height as f64 + 8.0;
     let toolbar_top = if toolbar_top_below + toolbar_interactive_height <= desktop_height - 8.0 {
         toolbar_top_below

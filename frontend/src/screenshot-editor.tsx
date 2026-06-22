@@ -6,9 +6,12 @@ import {
   ArrowUpRight,
   Brush,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   Grid2X2,
   Redo2,
+  Smile,
   Slash,
   Square,
   Trash2,
@@ -21,7 +24,8 @@ import type { AppSettings } from './types';
 
 type Point = { x: number; y: number };
 type Rect = { x: number; y: number; width: number; height: number };
-type Tool = 'pen' | 'line' | 'arrow' | 'ellipse' | 'rect' | 'mosaic' | 'text';
+type Tool = 'pen' | 'line' | 'arrow' | 'ellipse' | 'rect' | 'mosaic' | 'text' | 'emoji';
+type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 
 type Annotation =
   | { kind: 'pen'; points: Point[]; color: string; width: number }
@@ -30,7 +34,8 @@ type Annotation =
   | { kind: 'ellipse'; rect: Rect; color: string; width: number }
   | { kind: 'rect'; rect: Rect; color: string; width: number }
   | { kind: 'mosaic'; points: Point[]; width: number; blockSize: number }
-  | { kind: 'text'; position: Point; text: string; color: string; fontSize: number };
+  | { kind: 'text'; position: Point; text: string; color: string; fontSize: number }
+  | { kind: 'emoji'; rect: Rect; emoji: string };
 
 type TextDraft = {
   position: Point;
@@ -38,10 +43,76 @@ type TextDraft = {
   value: string;
 };
 
+type AnnotationDragState = {
+  annotationIndex: number;
+  initialAnnotations: Annotation[];
+  initialRect: Rect;
+  startPoint: Point;
+  mode: 'move' | 'resize';
+  handle?: ResizeHandle;
+};
+
 const defaultEditorColor = '#ef4444';
 const toolbarButtonClass = 'flex h-8 w-8 items-center justify-center rounded-md border border-outline-variant/30 bg-surface-container text-on-surface transition-colors hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-40';
 const toolOptionPanelClass = 'absolute left-0 top-[calc(100%+8px)] z-50 w-40 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl';
 const imageSizeFallback = { width: 1, height: 1 };
+const emojiChoices = [
+  '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
+  '🙂', '🙃', '🫠', '😉', '😊', '😇', '🥰', '😍',
+  '🤩', '😘', '😗', '☺️', '😚', '😙', '🥲', '😋',
+  '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🫢',
+  '🫣', '🤫', '🤔', '🫡', '🤐', '🤨', '😐️', '😑',
+  '😶', '🫥', '😶‍🌫️', '😏', '😒', '🙄', '😬', '😮‍💨',
+  '🤥', '🫨', '🙂‍↔️', '🙂‍↕️', '😌', '😔', '😪', '🤤',
+  '😴', '🫩', '😷', '🤒', '🤕', '🤢', '🤮', '🤧',
+  '🥵', '🥶', '🥴', '😵', '😵‍💫', '🤯', '🤠', '🥳',
+  '🥸', '😎', '🤓', '🧐', '😕', '🫤', '😟', '🙁',
+  '☹️', '😮', '😯', '😲', '😳', '🫪', '🥺', '🥹',
+  '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱',
+  '😖', '😣', '😞', '😓', '😩', '😫', '🥱', '😤',
+  '😡', '😠', '🤬', '😈', '👿', '💀', '☠️', '💩',
+  '🤡', '👹', '👺', '👻', '👽️', '👾', '🤖', '😺',
+  '😸', '😹', '😻', '😼', '😽', '🙀', '😿', '😾',
+  '🙈', '🙉', '🙊', '💌', '💘', '💝', '💖', '💗',
+  '💓', '💞', '💕', '💟', '❣️', '💔', '❤️‍🔥', '❤️‍🩹',
+  '❤️', '🩷', '🧡', '💛', '💚', '💙', '🩵', '💜',
+  '🤎', '🖤', '🩶', '🤍', '💋', '💯', '💢', '🫯',
+  '💥', '💫', '💦', '💨', '🕳️', '💬', '👁️‍🗨️', '🗨️',
+  '🗯️', '💭', '💤',
+  '🏧', '🚮', '🚰', '♿️', '🚹️', '🚺️', '🚻', '🚼️',
+  '🚾', '🛂', '🛃', '🛄', '🛅', '⚠️', '🚸', '⛔️',
+  '🚫', '🚳', '🚭️', '🚯', '🚱', '🚷', '📵', '🔞',
+  '☢️', '☣️', '⬆️', '↗️', '➡️', '↘️', '⬇️', '↙️',
+  '⬅️', '↖️', '↕️', '↔️', '↩️', '↪️', '⤴️', '⤵️',
+  '🔃', '🔄', '🔙', '🔚', '🔛', '🔜', '🔝', '🛐',
+  '⚛️', '🕉️', '✡️', '☸️', '☯️', '✝️', '☦️', '☪️',
+  '☮️', '🕎', '🔯', '🪯', '♈️', '♉️', '♊️', '♋️',
+  '♌️', '♍️', '♎️', '♏️', '♐️', '♑️', '♒️', '♓️',
+  '⛎️', '🔀', '🔁', '🔂', '▶️', '⏩️', '⏭️', '⏯️',
+  '◀️', '⏪️', '⏮️', '🔼', '⏫️', '🔽', '⏬️', '⏸️',
+  '⏹️', '⏺️', '⏏️', '🎦', '🔅', '🔆', '📶', '🛜',
+  '📳', '📴', '♀️', '♂️', '⚧️', '✖️', '➕️', '➖️',
+  '➗️', '🟰', '♾️', '‼️', '⁉️', '❓️', '❔️', '❕️',
+  '❗️', '〰️', '💱', '💲', '⚕️', '♻️', '⚜️', '🔱',
+  '📛', '🔰', '⭕️', '✅️', '☑️', '✔️', '❌️', '❎️',
+  '➰️', '➿️', '〽️', '✳️', '✴️', '❇️', '©️', '®️',
+  '™️', '🫟', '#️⃣', '*️⃣', '0️⃣', '1️⃣', '2️⃣', '3️⃣',
+  '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟', '🔠',
+  '🔡', '🔢', '🔣', '🔤', '🅰️', '🆎', '🅱️', '🆑',
+  '🆒', '🆓', 'ℹ️', '🆔', 'Ⓜ️', '🆕', '🆖', '🅾️',
+  '🆗', '🅿️', '🆘', '🆙', '🆚', '🈁', '🈂️', '🈷️',
+  '🈶', '🈯️', '🉐', '🈹', '🈚️', '🈲', '🉑', '🈸',
+  '🈴', '🈳', '㊗️', '㊙️', '🈺', '🈵', '🔴', '🟠',
+  '🟡', '🟢', '🔵', '🟣', '🟤', '⚫️', '⚪️', '🟥',
+  '🟧', '🟨', '🟩', '🟦', '🟪', '🟫', '⬛️', '⬜️',
+  '◼️', '◻️', '◾️', '◽️', '▪️', '▫️', '🔶', '🔷',
+  '🔸', '🔹', '🔺', '🔻', '💠', '🔘', '🔳', '🔲',
+];
+const emojiPageSize = 48;
+const emojiDefaultSize = 64;
+const emojiMinSize = 18;
+const emojiHandleSize = 8;
+const selectionMinSize = 18;
 const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?: number }> }> = [
   { id: 'pen', label: 'Brush', icon: Brush },
   { id: 'line', label: 'Line', icon: Slash },
@@ -50,6 +121,7 @@ const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?:
   { id: 'rect', label: 'Rectangle', icon: Square },
   { id: 'mosaic', label: 'Mosaic', icon: Grid2X2 },
   { id: 'text', label: 'Text', icon: Type },
+  { id: 'emoji', label: 'Emoji', icon: Smile },
 ];
 
 function editorLog(_step: string) {}
@@ -74,6 +146,7 @@ function ScreenshotEditor() {
   const annotationsRef = useRef<Annotation[]>([]);
   const draftRef = useRef<Annotation | null>(null);
   const dragStartRef = useRef<Point | null>(null);
+  const annotationDragRef = useRef<AnnotationDragState | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [editorVisible, setEditorVisible] = useState(true);
   const [imageSize, setImageSize] = useState(imageSizeFallback);
@@ -91,6 +164,10 @@ function ScreenshotEditor() {
   const [mosaicWidth, setMosaicWidth] = useState(28);
   const [isDragging, setIsDragging] = useState(false);
   const [textDraft, setTextDraft] = useState<TextDraft | null>(null);
+  const [selectedAnnotationIndex, setSelectedAnnotationIndex] = useState<number | null>(null);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [emojiPage, setEmojiPage] = useState(0);
+  const [canvasCursor, setCanvasCursor] = useState('default');
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const displaySize = {
@@ -106,10 +183,18 @@ function ScreenshotEditor() {
     top: Number(query.get('toolbar_top')) || displaySize.height + 8,
   };
   const [toolbarPosition, setToolbarPosition] = useState(toolbarOffset);
+  const emojiPageCount = Math.max(1, Math.ceil(emojiChoices.length / emojiPageSize));
+  const visibleEmojiChoices = emojiChoices.slice(emojiPage * emojiPageSize, (emojiPage + 1) * emojiPageSize);
 
   useEffect(() => {
     annotationsRef.current = annotations;
     renderCommitted();
+    if (
+      selectedAnnotationIndex !== null
+      && !isSelectableAnnotation(annotations[selectedAnnotationIndex])
+    ) {
+      setSelectedAnnotationIndex(null);
+    }
   }, [annotations]);
 
   useEffect(() => {
@@ -320,8 +405,16 @@ function ScreenshotEditor() {
   }, []);
 
   const addAnnotation = useCallback((annotation: Annotation) => {
+    const nextIndex = annotationsRef.current.length;
     commitAnnotations([...annotationsRef.current, annotation]);
+    setSelectedAnnotationIndex(isSelectableAnnotation(annotation) ? nextIndex : null);
   }, [commitAnnotations]);
+
+  const selectedAnnotation = selectedAnnotationIndex === null ? null : annotations[selectedAnnotationIndex];
+  const selectedAnnotationRect = selectedAnnotation && isSelectableAnnotation(selectedAnnotation)
+    ? getAnnotationBounds(selectedAnnotation)
+    : null;
+  const selectedControlRect = selectedAnnotationRect ? expandRectToMinSize(selectedAnnotationRect, selectionMinSize) : null;
 
   function renderCommitted() {
     const canvas = baseCanvasRef.current;
@@ -396,6 +489,28 @@ function ScreenshotEditor() {
     };
   }
 
+  function getCanvasScale() {
+    const canvas = draftCanvasRef.current;
+    if (!canvas) {
+      return { x: 1, y: 1 };
+    }
+    const bounds = canvas.getBoundingClientRect();
+    return {
+      x: bounds.width / Math.max(canvas.width, 1),
+      y: bounds.height / Math.max(canvas.height, 1),
+    };
+  }
+
+  function canvasRectToCss(rect: Rect): Rect {
+    const scale = getCanvasScale();
+    return {
+      x: rect.x * scale.x,
+      y: rect.y * scale.y,
+      width: rect.width * scale.x,
+      height: rect.height * scale.y,
+    };
+  }
+
   function buildShape(from: Point, to: Point, constrain: boolean): Annotation {
     const adjustedTo = constrain ? constrainPoint(from, to) : to;
     if (tool === 'line') {
@@ -412,7 +527,55 @@ function ScreenshotEditor() {
 
   function handleToolClick(nextTool: Tool) {
     setColorPickerOpen(false);
-    setTool((currentTool) => currentTool === nextTool ? null : nextTool);
+    setTool((currentTool) => {
+      const nextActiveTool = currentTool === nextTool ? null : nextTool;
+      setEmojiPickerOpen(nextActiveTool === 'emoji');
+      if (nextActiveTool === 'emoji') {
+        setEmojiPage(0);
+      }
+      return nextActiveTool;
+    });
+  }
+
+  function handleEmojiChoice(emoji: string) {
+    const size = Math.min(emojiDefaultSize, Math.max(emojiMinSize, Math.min(imageSize.width, imageSize.height) * 0.25));
+    const annotation: Annotation = {
+      kind: 'emoji',
+      emoji,
+      rect: {
+        x: Math.max(0, imageSize.width / 2 - size / 2),
+        y: Math.max(0, imageSize.height / 2 - size / 2),
+        width: size,
+        height: size,
+      },
+    };
+    const nextAnnotations = [...annotationsRef.current, annotation];
+    commitAnnotations(nextAnnotations);
+    setSelectedAnnotationIndex(nextAnnotations.length - 1);
+    setEmojiPickerOpen(false);
+  }
+
+  function updateAnnotationAt(index: number, annotation: Annotation) {
+    const nextAnnotations = annotationsRef.current.map((item, itemIndex) => (
+      itemIndex === index ? annotation : item
+    ));
+    annotationsRef.current = nextAnnotations;
+    setAnnotations(nextAnnotations);
+  }
+
+  function finishAnnotationDrag() {
+    const drag = annotationDragRef.current;
+    if (!drag) {
+      return;
+    }
+    annotationDragRef.current = null;
+    setIsDragging(false);
+    const current = annotationsRef.current[drag.annotationIndex];
+    const currentRect = current && isSelectableAnnotation(current) ? getAnnotationBounds(current) : null;
+    if (currentRect && !sameRect(currentRect, drag.initialRect)) {
+      setUndoStack((stack) => [...stack, drag.initialAnnotations]);
+      setRedoStack([]);
+    }
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -420,13 +583,54 @@ function ScreenshotEditor() {
       return;
     }
     setColorPickerOpen(false);
+    setEmojiPickerOpen(false);
+    const point = getCanvasPoint(event);
+    const handleHit = selectedControlRect ? hitResizeHandle(point, selectedControlRect, getCanvasScale()) : null;
+    if (selectedAnnotationIndex !== null && selectedAnnotationRect && handleHit) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      annotationDragRef.current = {
+        annotationIndex: selectedAnnotationIndex,
+        initialAnnotations: annotationsRef.current,
+        initialRect: selectedAnnotationRect,
+        startPoint: point,
+        mode: 'resize',
+        handle: handleHit,
+      };
+      setIsDragging(true);
+      setCanvasCursor(getResizeCursor(handleHit));
+      return;
+    }
+
+    const annotationHitIndex = hitSelectableAnnotation(point, annotationsRef.current);
+    if (annotationHitIndex !== null) {
+      const annotation = annotationsRef.current[annotationHitIndex];
+      if (!isSelectableAnnotation(annotation)) {
+        return;
+      }
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setSelectedAnnotationIndex(annotationHitIndex);
+      annotationDragRef.current = {
+        annotationIndex: annotationHitIndex,
+        initialAnnotations: annotationsRef.current,
+        initialRect: getAnnotationBounds(annotation),
+        startPoint: point,
+        mode: 'move',
+      };
+      setIsDragging(true);
+      setCanvasCursor('grabbing');
+      return;
+    }
+
+    setSelectedAnnotationIndex(null);
     if (!tool) {
       return;
     }
 
-    const point = getCanvasPoint(event);
     if (tool === 'text') {
       setTextDraft({ position: point, cssPosition: getCssPoint(event), value: '' });
+      return;
+    }
+    if (tool === 'emoji') {
       return;
     }
 
@@ -443,7 +647,23 @@ function ScreenshotEditor() {
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (annotationDragRef.current) {
+      const drag = annotationDragRef.current;
+      const point = getCanvasPoint(event);
+      const initial = drag.initialAnnotations[drag.annotationIndex];
+      if (!isSelectableAnnotation(initial)) {
+        return;
+      }
+      const delta = { x: point.x - drag.startPoint.x, y: point.y - drag.startPoint.y };
+      const updated = drag.mode === 'move'
+        ? moveAnnotation(initial, delta, imageSize)
+        : resizeAnnotation(initial, drag.initialRect, delta, drag.handle ?? 'se', imageSize);
+      updateAnnotationAt(drag.annotationIndex, updated);
+      return;
+    }
+
     if (!isDragging || !draftRef.current || !dragStartRef.current) {
+      setCanvasCursor(getCanvasCursor(getCanvasPoint(event)));
       return;
     }
 
@@ -460,6 +680,13 @@ function ScreenshotEditor() {
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (annotationDragRef.current) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+      finishAnnotationDrag();
+      setCanvasCursor(getCanvasCursor(getCanvasPoint(event)));
+      return;
+    }
+
     if (!isDragging || !draftRef.current) {
       return;
     }
@@ -474,7 +701,23 @@ function ScreenshotEditor() {
     draftRef.current = null;
     dragStartRef.current = null;
     setIsDragging(false);
+    setCanvasCursor(getCanvasCursor(getCanvasPoint(event)));
     renderDraft(null);
+  }
+
+  function getCanvasCursor(point: Point) {
+    if (selectedControlRect) {
+      const handle = hitResizeHandle(point, selectedControlRect, getCanvasScale());
+      if (handle) {
+        return getResizeCursor(handle);
+      }
+    }
+
+    if (hitSelectableAnnotation(point, annotationsRef.current) !== null) {
+      return 'grab';
+    }
+
+    return tool ? 'crosshair' : 'default';
   }
 
   function commitTextDraft() {
@@ -632,13 +875,45 @@ function ScreenshotEditor() {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={() => {
+            annotationDragRef.current = null;
             draftRef.current = null;
             dragStartRef.current = null;
             setIsDragging(false);
+            setCanvasCursor(tool ? 'crosshair' : 'default');
             renderDraft(null);
           }}
-          className="absolute inset-0 h-full w-full cursor-crosshair"
+          onPointerLeave={() => {
+            if (!isDragging) {
+              setCanvasCursor(tool ? 'crosshair' : 'default');
+            }
+          }}
+          className="absolute inset-0 h-full w-full"
+          style={{ cursor: canvasCursor }}
         />
+        {selectedControlRect && (
+          <div
+            className="pointer-events-none absolute z-20 border border-primary"
+            style={{
+              left: canvasRectToCss(selectedControlRect).x,
+              top: canvasRectToCss(selectedControlRect).y,
+              width: canvasRectToCss(selectedControlRect).width,
+              height: canvasRectToCss(selectedControlRect).height,
+              boxShadow: '0 0 0 1px rgba(255,255,255,0.9)',
+            }}
+          >
+            {resizeHandles(canvasRectToCss(selectedControlRect)).map((handle) => (
+              <span
+                key={handle.id}
+                className="absolute h-2 w-2 rounded-sm border border-primary bg-white shadow-sm"
+                style={{
+                  left: handle.x,
+                  top: handle.y,
+                  transform: 'translate(-50%, -50%)',
+                }}
+              />
+            ))}
+          </div>
+        )}
         {textDraft && (
           <textarea
             ref={textAreaRef}
@@ -696,7 +971,7 @@ function ScreenshotEditor() {
                 >
                   <Icon size={18} />
                 </button>
-                {isActive && item.id !== 'mosaic' && item.id !== 'text' && (
+                {isActive && item.id !== 'mosaic' && item.id !== 'text' && item.id !== 'emoji' && (
                   <ToolOptionPanel label="Size">
                     <input
                       type="range"
@@ -741,6 +1016,49 @@ function ScreenshotEditor() {
                     />
                   </ToolOptionPanel>
                 )}
+                {isActive && item.id === 'emoji' && emojiPickerOpen && (
+                  <div
+                    className="absolute left-0 top-[calc(100%+8px)] z-50 w-72 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-2 shadow-2xl"
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    <div className="grid grid-cols-8 gap-1">
+                      {visibleEmojiChoices.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          title={emoji}
+                          onClick={() => handleEmojiChoice(emoji)}
+                          className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none hover:bg-surface-container-high"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex items-center justify-between border-t border-outline-variant/30 pt-2">
+                      <button
+                        type="button"
+                        title="Previous"
+                        disabled={emojiPage === 0}
+                        onClick={() => setEmojiPage((page) => Math.max(page - 1, 0))}
+                        className={toolbarButtonClass}
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <div className="px-2 text-xs font-semibold text-on-surface-variant">
+                        {emojiPage + 1}/{emojiPageCount} · {emojiChoices.length}
+                      </div>
+                      <button
+                        type="button"
+                        title="Next"
+                        disabled={emojiPage >= emojiPageCount - 1}
+                        onClick={() => setEmojiPage((page) => Math.min(page + 1, emojiPageCount - 1))}
+                        className={toolbarButtonClass}
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -752,7 +1070,10 @@ function ScreenshotEditor() {
           <button
             type="button"
             title="Color"
-            onClick={() => setColorPickerOpen((open) => !open)}
+            onClick={() => {
+              setEmojiPickerOpen(false);
+              setColorPickerOpen((open) => !open);
+            }}
             className="h-8 w-8 rounded-md border-2 border-outline-variant/60 shadow-inner"
             style={{ backgroundColor: color }}
           />
@@ -825,7 +1146,15 @@ function ScreenshotEditor() {
           <button type="button" title="Redo" onClick={redo} disabled={redoStack.length === 0} className={toolbarButtonClass}>
             <Redo2 size={18} />
           </button>
-          <button type="button" title="Clear" onClick={() => commitAnnotations([])} className={toolbarButtonClass}>
+          <button
+            type="button"
+            title="Clear"
+            onClick={() => {
+              setSelectedAnnotationIndex(null);
+              commitAnnotations([]);
+            }}
+            className={toolbarButtonClass}
+          >
             <Trash2 size={18} />
           </button>
           <button
@@ -907,9 +1236,394 @@ function drawAnnotation(context: CanvasRenderingContext2D, annotation: Annotatio
     for (const [index, line] of annotation.text.split('\n').entries()) {
       context.fillText(line, annotation.position.x, annotation.position.y + index * annotation.fontSize * 1.25);
     }
+  } else if (annotation.kind === 'emoji') {
+    drawEmojiAnnotation(context, annotation);
   }
 
   context.restore();
+}
+
+function drawEmojiAnnotation(context: CanvasRenderingContext2D, annotation: Extract<Annotation, { kind: 'emoji' }>) {
+  context.font = `${annotation.rect.height}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+  context.textAlign = 'left';
+  context.textBaseline = 'alphabetic';
+
+  const metrics = context.measureText(annotation.emoji);
+  const left = metrics.actualBoundingBoxLeft || 0;
+  const right = metrics.actualBoundingBoxRight || metrics.width;
+  const ascent = metrics.actualBoundingBoxAscent || annotation.rect.height * 0.8;
+  const descent = metrics.actualBoundingBoxDescent || annotation.rect.height * 0.2;
+  const centerX = annotation.rect.x + annotation.rect.width / 2;
+  const centerY = annotation.rect.y + annotation.rect.height / 2;
+
+  context.fillText(
+    annotation.emoji,
+    centerX - (right - left) / 2,
+    centerY + (ascent - descent) / 2,
+  );
+}
+
+function isSelectableAnnotation(annotation: Annotation | undefined): annotation is Exclude<Annotation, { kind: 'mosaic' }> {
+  return Boolean(annotation) && annotation?.kind !== 'mosaic';
+}
+
+function hitSelectableAnnotation(point: Point, annotations: Annotation[]) {
+  for (let index = annotations.length - 1; index >= 0; index -= 1) {
+    const annotation = annotations[index];
+    if (isSelectableAnnotation(annotation) && pointInRect(point, expandRectToMinSize(getAnnotationBounds(annotation), selectionMinSize))) {
+      return index;
+    }
+  }
+  return null;
+}
+
+function hitResizeHandle(point: Point, rect: Rect, scale: { x: number; y: number }): ResizeHandle | null {
+  const handles = handlePoints(rect);
+  const radius = Math.max(10, emojiHandleSize / Math.max(Math.min(scale.x, scale.y), 0.001));
+  for (const handle of handles) {
+    if (Math.abs(point.x - handle.point.x) <= radius && Math.abs(point.y - handle.point.y) <= radius) {
+      return handle.id;
+    }
+  }
+  return null;
+}
+
+function getResizeCursor(handle: ResizeHandle) {
+  if (handle === 'nw' || handle === 'se') {
+    return 'nwse-resize';
+  }
+  if (handle === 'ne' || handle === 'sw') {
+    return 'nesw-resize';
+  }
+  if (handle === 'n' || handle === 's') {
+    return 'ns-resize';
+  }
+  return 'ew-resize';
+}
+
+function handlePoints(rect: Rect): Array<{ id: ResizeHandle; point: Point }> {
+  const centerX = rect.x + rect.width / 2;
+  const centerY = rect.y + rect.height / 2;
+  const right = rect.x + rect.width;
+  const bottom = rect.y + rect.height;
+  return [
+    { id: 'nw', point: { x: rect.x, y: rect.y } },
+    { id: 'n', point: { x: centerX, y: rect.y } },
+    { id: 'ne', point: { x: right, y: rect.y } },
+    { id: 'e', point: { x: right, y: centerY } },
+    { id: 'se', point: { x: right, y: bottom } },
+    { id: 's', point: { x: centerX, y: bottom } },
+    { id: 'sw', point: { x: rect.x, y: bottom } },
+    { id: 'w', point: { x: rect.x, y: centerY } },
+  ];
+}
+
+function resizeHandles(rect: Rect): Array<{ id: ResizeHandle; x: number; y: number }> {
+  return [
+    { id: 'nw', x: 0, y: 0 },
+    { id: 'n', x: rect.width / 2, y: 0 },
+    { id: 'ne', x: rect.width, y: 0 },
+    { id: 'e', x: rect.width, y: rect.height / 2 },
+    { id: 'se', x: rect.width, y: rect.height },
+    { id: 's', x: rect.width / 2, y: rect.height },
+    { id: 'sw', x: 0, y: rect.height },
+    { id: 'w', x: 0, y: rect.height / 2 },
+  ];
+}
+
+function getAnnotationBounds(annotation: Exclude<Annotation, { kind: 'mosaic' }>): Rect {
+  if (annotation.kind === 'pen') {
+    return expandRect(pointsBounds(annotation.points), annotation.width / 2);
+  }
+  if (annotation.kind === 'line' || annotation.kind === 'arrow') {
+    return expandRect(pointsBounds([annotation.from, annotation.to]), annotation.width / 2);
+  }
+  if (annotation.kind === 'ellipse' || annotation.kind === 'rect') {
+    return expandRect(normalizeRect(annotation.rect), annotation.width / 2);
+  }
+  if (annotation.kind === 'text') {
+    return getTextBounds(annotation);
+  }
+  return normalizeRect(annotation.rect);
+}
+
+function pointsBounds(points: Point[]): Rect {
+  if (points.length === 0) {
+    return { x: 0, y: 0, width: 1, height: 1 };
+  }
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  const right = Math.max(...xs);
+  const bottom = Math.max(...ys);
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function getTextBounds(annotation: Extract<Annotation, { kind: 'text' }>): Rect {
+  const lines = annotation.text.split('\n');
+  const longestLine = lines.reduce((longest, line) => Math.max(longest, line.length), 1);
+  return {
+    x: annotation.position.x,
+    y: annotation.position.y,
+    width: Math.max(annotation.fontSize, longestLine * annotation.fontSize * 0.62),
+    height: Math.max(annotation.fontSize, lines.length * annotation.fontSize * 1.25),
+  };
+}
+
+function moveAnnotation(annotation: Exclude<Annotation, { kind: 'mosaic' }>, delta: Point, bounds: { width: number; height: number }): Annotation {
+  const clampedDelta = clampDeltaForRect(getAnnotationBounds(annotation), delta, bounds);
+  if (annotation.kind === 'pen') {
+    return { ...annotation, points: annotation.points.map((point) => addPoints(point, clampedDelta)) };
+  }
+  if (annotation.kind === 'line' || annotation.kind === 'arrow') {
+    return {
+      ...annotation,
+      from: addPoints(annotation.from, clampedDelta),
+      to: addPoints(annotation.to, clampedDelta),
+    };
+  }
+  if (annotation.kind === 'ellipse' || annotation.kind === 'rect') {
+    return {
+      ...annotation,
+      rect: {
+        ...annotation.rect,
+        x: annotation.rect.x + clampedDelta.x,
+        y: annotation.rect.y + clampedDelta.y,
+      },
+    };
+  }
+  if (annotation.kind === 'text') {
+    return { ...annotation, position: addPoints(annotation.position, clampedDelta) };
+  }
+  return { ...annotation, rect: moveRect(annotation.rect, clampedDelta, bounds) };
+}
+
+function resizeAnnotation(
+  annotation: Exclude<Annotation, { kind: 'mosaic' }>,
+  initialRect: Rect,
+  delta: Point,
+  handle: ResizeHandle,
+  bounds: { width: number; height: number },
+): Annotation {
+  if (annotation.kind === 'emoji') {
+    return { ...annotation, rect: resizeRect(initialRect, delta, handle, bounds) };
+  }
+
+  const targetRect = resizeSelectionRect(initialRect, delta, handle, bounds);
+  return transformAnnotation(annotation, initialRect, targetRect);
+}
+
+function transformAnnotation(annotation: Exclude<Annotation, { kind: 'mosaic' | 'emoji' }>, fromRect: Rect, toRect: Rect): Annotation {
+  const transformPoint = (point: Point) => transformPointBetweenRects(point, fromRect, toRect);
+
+  if (annotation.kind === 'pen') {
+    const scale = averageRectScale(fromRect, toRect);
+    return {
+      ...annotation,
+      points: annotation.points.map(transformPoint),
+      width: Math.max(1, annotation.width * scale),
+    };
+  }
+  if (annotation.kind === 'line' || annotation.kind === 'arrow') {
+    return {
+      ...annotation,
+      from: transformPoint(annotation.from),
+      to: transformPoint(annotation.to),
+      width: Math.max(1, annotation.width * averageRectScale(fromRect, toRect)),
+    };
+  }
+  if (annotation.kind === 'ellipse' || annotation.kind === 'rect') {
+    const topLeft = transformPoint({ x: annotation.rect.x, y: annotation.rect.y });
+    const bottomRight = transformPoint({
+      x: annotation.rect.x + annotation.rect.width,
+      y: annotation.rect.y + annotation.rect.height,
+    });
+    return {
+      ...annotation,
+      rect: {
+        x: topLeft.x,
+        y: topLeft.y,
+        width: bottomRight.x - topLeft.x,
+        height: bottomRight.y - topLeft.y,
+      },
+      width: Math.max(1, annotation.width * averageRectScale(fromRect, toRect)),
+    };
+  }
+
+  return {
+    ...annotation,
+    position: { x: toRect.x, y: toRect.y },
+    fontSize: Math.max(8, annotation.fontSize * averageRectScale(fromRect, toRect)),
+  };
+}
+
+function transformPointBetweenRects(point: Point, fromRect: Rect, toRect: Rect): Point {
+  const normalizedFrom = expandRectToMinSize(normalizeRect(fromRect), 1);
+  const normalizedTo = normalizeRect(toRect);
+  const xRatio = Math.abs(normalizedFrom.width) < 1 ? 0.5 : (point.x - normalizedFrom.x) / normalizedFrom.width;
+  const yRatio = Math.abs(normalizedFrom.height) < 1 ? 0.5 : (point.y - normalizedFrom.y) / normalizedFrom.height;
+  return {
+    x: normalizedTo.x + xRatio * normalizedTo.width,
+    y: normalizedTo.y + yRatio * normalizedTo.height,
+  };
+}
+
+function resizeSelectionRect(rect: Rect, delta: Point, handle: ResizeHandle, bounds: { width: number; height: number }): Rect {
+  let left = rect.x;
+  let top = rect.y;
+  let right = rect.x + rect.width;
+  let bottom = rect.y + rect.height;
+
+  if (handle.includes('w')) {
+    left += delta.x;
+  }
+  if (handle.includes('e')) {
+    right += delta.x;
+  }
+  if (handle.includes('n')) {
+    top += delta.y;
+  }
+  if (handle.includes('s')) {
+    bottom += delta.y;
+  }
+
+  if (right - left < selectionMinSize) {
+    if (handle.includes('w')) {
+      left = right - selectionMinSize;
+    } else {
+      right = left + selectionMinSize;
+    }
+  }
+  if (bottom - top < selectionMinSize) {
+    if (handle.includes('n')) {
+      top = bottom - selectionMinSize;
+    } else {
+      bottom = top + selectionMinSize;
+    }
+  }
+
+  const width = right - left;
+  const height = bottom - top;
+  left = Math.min(Math.max(left, 0), Math.max(bounds.width - width, 0));
+  top = Math.min(Math.max(top, 0), Math.max(bounds.height - height, 0));
+
+  return { x: left, y: top, width, height };
+}
+
+function normalizeRect(rect: Rect): Rect {
+  const left = Math.min(rect.x, rect.x + rect.width);
+  const top = Math.min(rect.y, rect.y + rect.height);
+  return {
+    x: left,
+    y: top,
+    width: Math.abs(rect.width),
+    height: Math.abs(rect.height),
+  };
+}
+
+function expandRect(rect: Rect, amount: number): Rect {
+  return {
+    x: rect.x - amount,
+    y: rect.y - amount,
+    width: rect.width + amount * 2,
+    height: rect.height + amount * 2,
+  };
+}
+
+function expandRectToMinSize(rect: Rect, minSize: number): Rect {
+  const normalized = normalizeRect(rect);
+  const width = Math.max(normalized.width, minSize);
+  const height = Math.max(normalized.height, minSize);
+  return {
+    x: normalized.x + normalized.width / 2 - width / 2,
+    y: normalized.y + normalized.height / 2 - height / 2,
+    width,
+    height,
+  };
+}
+
+function clampDeltaForRect(rect: Rect, delta: Point, bounds: { width: number; height: number }): Point {
+  const normalized = normalizeRect(rect);
+  return {
+    x: Math.min(Math.max(delta.x, -normalized.x), bounds.width - normalized.x - normalized.width),
+    y: Math.min(Math.max(delta.y, -normalized.y), bounds.height - normalized.y - normalized.height),
+  };
+}
+
+function addPoints(point: Point, delta: Point): Point {
+  return { x: point.x + delta.x, y: point.y + delta.y };
+}
+
+function averageRectScale(fromRect: Rect, toRect: Rect) {
+  const xScale = toRect.width / Math.max(fromRect.width, 1);
+  const yScale = toRect.height / Math.max(fromRect.height, 1);
+  return Math.max(0.1, (Math.abs(xScale) + Math.abs(yScale)) / 2);
+}
+
+function pointInRect(point: Point, rect: Rect) {
+  const left = Math.min(rect.x, rect.x + rect.width);
+  const right = Math.max(rect.x, rect.x + rect.width);
+  const top = Math.min(rect.y, rect.y + rect.height);
+  const bottom = Math.max(rect.y, rect.y + rect.height);
+  return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+}
+
+function moveRect(rect: Rect, delta: Point, bounds: { width: number; height: number }): Rect {
+  return {
+    ...rect,
+    x: Math.min(Math.max(rect.x + delta.x, 0), Math.max(bounds.width - rect.width, 0)),
+    y: Math.min(Math.max(rect.y + delta.y, 0), Math.max(bounds.height - rect.height, 0)),
+  };
+}
+
+function resizeRect(rect: Rect, delta: Point, handle: ResizeHandle, bounds: { width: number; height: number }): Rect {
+  const size = Math.max(rect.width, rect.height);
+  const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  let nextSize = size;
+  let nextX = rect.x;
+  let nextY = rect.y;
+
+  if (handle === 'e' || handle === 'w') {
+    nextSize = Math.max(emojiMinSize, size + (handle === 'e' ? delta.x : -delta.x));
+    nextX = handle === 'e' ? rect.x : rect.x + rect.width - nextSize;
+    nextY = center.y - nextSize / 2;
+  } else if (handle === 's' || handle === 'n') {
+    nextSize = Math.max(emojiMinSize, size + (handle === 's' ? delta.y : -delta.y));
+    nextX = center.x - nextSize / 2;
+    nextY = handle === 's' ? rect.y : rect.y + rect.height - nextSize;
+  } else {
+    const horizontalDelta = handle.includes('e') ? delta.x : -delta.x;
+    const verticalDelta = handle.includes('s') ? delta.y : -delta.y;
+    nextSize = Math.max(emojiMinSize, size + Math.max(horizontalDelta, verticalDelta));
+    nextX = handle.includes('e') ? rect.x : rect.x + rect.width - nextSize;
+    nextY = handle.includes('s') ? rect.y : rect.y + rect.height - nextSize;
+  }
+
+  nextSize = Math.min(nextSize, bounds.width, bounds.height);
+  nextX = Math.min(Math.max(nextX, 0), Math.max(bounds.width - nextSize, 0));
+  nextY = Math.min(Math.max(nextY, 0), Math.max(bounds.height - nextSize, 0));
+
+  return {
+    x: nextX,
+    y: nextY,
+    width: nextSize,
+    height: nextSize,
+  };
+}
+
+function sameRect(left: Rect, right: Rect) {
+  return (
+    Math.abs(left.x - right.x) < 0.5
+    && Math.abs(left.y - right.y) < 0.5
+    && Math.abs(left.width - right.width) < 0.5
+    && Math.abs(left.height - right.height) < 0.5
+  );
 }
 
 function drawPath(context: CanvasRenderingContext2D, points: Point[], color: string, width: number) {
