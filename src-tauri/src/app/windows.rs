@@ -101,12 +101,24 @@ pub fn show_screenshot_editor_window(
     let selection_left = selection.x as f64 - desktop_x;
     let selection_top = selection.y as f64 - desktop_y;
     let toolbar_width = desktop_width.min(680.0).max(1.0);
+    let toolbar_anchor_height = 44.0;
     let toolbar_interactive_height = 340.0;
     let toolbar_top_below = selection_top + selection.height as f64 + 8.0;
-    let toolbar_top = if toolbar_top_below + toolbar_interactive_height <= desktop_height - 8.0 {
+    let toolbar_placement_below = toolbar_top_below + toolbar_interactive_height <= desktop_height - 8.0;
+    let toolbar_top = if toolbar_placement_below {
         toolbar_top_below
     } else {
-        (selection_top - toolbar_interactive_height - 8.0).max(8.0)
+        (selection_top - toolbar_anchor_height - 8.0).max(8.0)
+    };
+    let toolbar_region_top = if toolbar_placement_below {
+        toolbar_top
+    } else {
+        (toolbar_top + toolbar_anchor_height - toolbar_interactive_height).max(0.0)
+    };
+    let toolbar_region_height = if toolbar_placement_below {
+        toolbar_interactive_height.min(desktop_height - toolbar_region_top)
+    } else {
+        (toolbar_top + toolbar_anchor_height - toolbar_region_top).min(toolbar_interactive_height)
     };
     let toolbar_left = if selection_left + toolbar_width <= desktop_width - 8.0 {
         selection_left.max(8.0)
@@ -117,12 +129,12 @@ pub fn show_screenshot_editor_window(
     };
     let content_margin = 8.0;
     let content_left = selection_left.min(toolbar_left).max(0.0);
-    let content_top = selection_top.min(toolbar_top).max(0.0);
+    let content_top = selection_top.min(toolbar_region_top).max(0.0);
     let content_right = (selection_left + selection.width as f64)
         .max(toolbar_left + toolbar_width)
         .min(desktop_width);
     let content_bottom = (selection_top + selection.height as f64)
-        .max(toolbar_top + toolbar_interactive_height)
+        .max(toolbar_region_top + toolbar_region_height)
         .min(desktop_height);
     let window_left = (content_left - content_margin).max(0.0);
     let window_top = (content_top - content_margin).max(0.0);
@@ -140,9 +152,9 @@ pub fn show_screenshot_editor_window(
     };
     let toolbar_screen_rect = SelectionRect {
         x: (desktop_x + toolbar_left).floor() as i32,
-        y: (desktop_y + toolbar_top).floor() as i32,
+        y: (desktop_y + toolbar_region_top).floor() as i32,
         width: toolbar_width.ceil() as u32,
-        height: toolbar_interactive_height.ceil() as u32,
+        height: toolbar_region_height.ceil() as u32,
     };
     crate::features::capture::capture_editor_log(&format!(
         "show_screenshot_editor_window: desktop=({desktop_x},{desktop_y},{desktop_width}x{desktop_height}) selection=({}, {}, {}x{}) toolbar=({}, {}, {}x{}) editor_window=({}, {}, {}x{})",
@@ -163,6 +175,7 @@ pub fn show_screenshot_editor_window(
     let selection_window_top = selection_top - window_top;
     let toolbar_window_left = toolbar_left - window_left;
     let toolbar_window_top = toolbar_top - window_top;
+    let toolbar_region_window_top = toolbar_region_top - window_top;
     let window_regions = vec![
         SelectionRect {
             x: selection_window_left.floor() as i32,
@@ -172,9 +185,9 @@ pub fn show_screenshot_editor_window(
         },
         SelectionRect {
             x: toolbar_window_left.floor() as i32,
-            y: toolbar_window_top.floor() as i32,
+            y: toolbar_region_window_top.floor() as i32,
             width: toolbar_width.ceil() as u32,
-            height: toolbar_interactive_height.ceil() as u32,
+            height: toolbar_region_height.ceil() as u32,
         },
     ];
 
@@ -187,8 +200,10 @@ pub fn show_screenshot_editor_window(
         }
     };
     let url = format!(
-        "screenshot-editor.html?session_id={session_id}&display_width={}&display_height={}&selection_left={selection_window_left}&selection_top={selection_window_top}&toolbar_left={toolbar_window_left}&toolbar_top={toolbar_window_top}&color={color_param}",
-        selection.width, selection.height
+        "screenshot-editor.html?session_id={session_id}&display_width={}&display_height={}&selection_left={selection_window_left}&selection_top={selection_window_top}&toolbar_left={toolbar_window_left}&toolbar_top={toolbar_window_top}&popup_placement={}&color={color_param}",
+        selection.width,
+        selection.height,
+        if toolbar_placement_below { "down" } else { "up" },
     );
 
     if let Some(window) = app.get_webview_window(PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL) {

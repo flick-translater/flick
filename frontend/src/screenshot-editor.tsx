@@ -9,7 +9,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
-  Grid2X2,
   Redo2,
   Smile,
   Slash,
@@ -54,7 +53,7 @@ type AnnotationDragState = {
 
 const defaultEditorColor = '#ef4444';
 const toolbarButtonClass = 'flex h-8 w-8 items-center justify-center rounded-md border border-outline-variant/30 bg-surface-container text-on-surface transition-colors hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-40';
-const toolOptionPanelClass = 'absolute left-0 top-[calc(100%+8px)] z-50 w-40 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl';
+const toolOptionPanelClass = 'absolute left-0 z-50 w-40 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl';
 const imageSizeFallback = { width: 1, height: 1 };
 const emojiChoices = [
   '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
@@ -113,18 +112,38 @@ const emojiDefaultSize = 64;
 const emojiMinSize = 18;
 const emojiHandleSize = 8;
 const selectionMinSize = 18;
-const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?: number }> }> = [
+const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?: number; active?: boolean }> }> = [
   { id: 'pen', label: 'Brush', icon: Brush },
   { id: 'line', label: 'Line', icon: Slash },
   { id: 'arrow', label: 'Arrow', icon: ArrowUpRight },
   { id: 'ellipse', label: 'Circle', icon: Circle },
   { id: 'rect', label: 'Rectangle', icon: Square },
-  { id: 'mosaic', label: 'Mosaic', icon: Grid2X2 },
+  { id: 'mosaic', label: 'Mosaic', icon: CheckerboardIcon },
   { id: 'text', label: 'Text', icon: Type },
   { id: 'emoji', label: 'Emoji', icon: Smile },
 ];
 
 function editorLog(_step: string) {}
+
+function CheckerboardIcon({ size = 18, active = false }: { size?: number; active?: boolean }) {
+  const darkClass = active ? 'bg-white' : 'bg-black';
+  const lightClass = active ? 'bg-black' : 'bg-white';
+  return (
+    <span
+      aria-hidden="true"
+      className="grid grid-cols-2 overflow-hidden rounded-sm border border-current"
+      style={{
+        width: size,
+        height: size,
+      }}
+    >
+      <span className={darkClass} />
+      <span className={lightClass} />
+      <span className={lightClass} />
+      <span className={darkClass} />
+    </span>
+  );
+}
 
 function ScreenshotEditor() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -182,6 +201,8 @@ function ScreenshotEditor() {
     left: Number(query.get('toolbar_left')) || 8,
     top: Number(query.get('toolbar_top')) || displaySize.height + 8,
   };
+  const popupPlacement = query.get('popup_placement') === 'up' ? 'up' : 'down';
+  const popupPositionClass = popupPlacement === 'up' ? 'bottom-[calc(100%+8px)]' : 'top-[calc(100%+8px)]';
   const [toolbarPosition, setToolbarPosition] = useState(toolbarOffset);
   const emojiPageCount = Math.max(1, Math.ceil(emojiChoices.length / emojiPageSize));
   const visibleEmojiChoices = emojiChoices.slice(emojiPage * emojiPageSize, (emojiPage + 1) * emojiPageSize);
@@ -969,10 +990,10 @@ function ScreenshotEditor() {
                       : 'border-outline-variant/30 bg-surface-container text-on-surface hover:bg-surface-container-high'
                   }`}
                 >
-                  <Icon size={18} />
+                  <Icon size={18} active={isActive} />
                 </button>
                 {isActive && item.id !== 'mosaic' && item.id !== 'text' && item.id !== 'emoji' && (
-                  <ToolOptionPanel label="Size">
+                  <ToolOptionPanel label="Size" positionClass={popupPositionClass}>
                     <input
                       type="range"
                       min="2"
@@ -984,7 +1005,7 @@ function ScreenshotEditor() {
                   </ToolOptionPanel>
                 )}
                 {isActive && item.id === 'mosaic' && (
-                  <ToolOptionPanel label="Brush">
+                  <ToolOptionPanel label="Brush" positionClass={popupPositionClass}>
                     <input
                       type="range"
                       min="12"
@@ -1005,7 +1026,7 @@ function ScreenshotEditor() {
                   </ToolOptionPanel>
                 )}
                 {isActive && item.id === 'text' && (
-                  <ToolOptionPanel label="Text">
+                  <ToolOptionPanel label="Text" positionClass={popupPositionClass}>
                     <input
                       type="range"
                       min="14"
@@ -1018,7 +1039,7 @@ function ScreenshotEditor() {
                 )}
                 {isActive && item.id === 'emoji' && emojiPickerOpen && (
                   <div
-                    className="absolute left-0 top-[calc(100%+8px)] z-50 w-72 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-2 shadow-2xl"
+                    className={`absolute left-0 ${popupPositionClass} z-50 w-72 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-2 shadow-2xl`}
                     onPointerDown={(event) => event.stopPropagation()}
                   >
                     <div className="grid grid-cols-8 gap-1">
@@ -1079,7 +1100,7 @@ function ScreenshotEditor() {
           />
           {colorPickerOpen && (
             <div
-              className="absolute left-0 top-[calc(100%+8px)] z-50 w-56 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl"
+              className={`absolute left-0 ${popupPositionClass} z-50 w-56 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl`}
               onPointerDown={(event) => event.stopPropagation()}
             >
               <div
@@ -1184,9 +1205,17 @@ function ScreenshotEditor() {
   );
 }
 
-function ToolOptionPanel({ label, children }: { label: string; children: React.ReactNode }) {
+function ToolOptionPanel({
+  label,
+  positionClass,
+  children,
+}: {
+  label: string;
+  positionClass: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className={toolOptionPanelClass} onPointerDown={(event) => event.stopPropagation()}>
+    <div className={`${toolOptionPanelClass} ${positionClass}`} onPointerDown={(event) => event.stopPropagation()}>
       <div className="mb-1 text-xs font-semibold text-on-surface-variant">{label}</div>
       {children}
     </div>
