@@ -2,148 +2,30 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import {
-  ArrowUpRight,
-  Brush,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Circle,
-  Redo2,
-  Smile,
-  Slash,
-  Square,
-  Trash2,
-  Type,
-  Undo2,
-  X,
-} from 'lucide-react';
 import './index.css';
+import { ScreenshotEditorCanvas } from './components/screenshot-editor/Canvas';
+import { emojiChoices } from './components/screenshot-editor/emoji-data';
+import { ScreenshotEditorToolbar } from './components/screenshot-editor/Toolbar';
+import type {
+  Annotation,
+  AnnotationDragState,
+  Point,
+  Rect,
+  ResizeHandle,
+  TextDraft,
+  Tool,
+} from './components/screenshot-editor/types';
 import type { AppSettings } from './types';
 
-type Point = { x: number; y: number };
-type Rect = { x: number; y: number; width: number; height: number };
-type Tool = 'pen' | 'line' | 'arrow' | 'ellipse' | 'rect' | 'mosaic' | 'text' | 'emoji';
-type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
-
-type Annotation =
-  | { kind: 'pen'; points: Point[]; color: string; width: number }
-  | { kind: 'line'; from: Point; to: Point; color: string; width: number }
-  | { kind: 'arrow'; from: Point; to: Point; color: string; width: number }
-  | { kind: 'ellipse'; rect: Rect; color: string; width: number }
-  | { kind: 'rect'; rect: Rect; color: string; width: number }
-  | { kind: 'mosaic'; points: Point[]; width: number; blockSize: number }
-  | { kind: 'text'; position: Point; text: string; color: string; fontSize: number }
-  | { kind: 'emoji'; rect: Rect; emoji: string };
-
-type TextDraft = {
-  position: Point;
-  cssPosition: Point;
-  value: string;
-};
-
-type AnnotationDragState = {
-  annotationIndex: number;
-  initialAnnotations: Annotation[];
-  initialRect: Rect;
-  startPoint: Point;
-  mode: 'move' | 'resize';
-  handle?: ResizeHandle;
-};
-
 const defaultEditorColor = '#ef4444';
-const toolbarButtonClass = 'flex h-8 w-8 items-center justify-center rounded-md border border-outline-variant/30 bg-surface-container text-on-surface transition-colors hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-40';
-const toolOptionPanelClass = 'absolute left-0 z-50 w-40 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl';
 const imageSizeFallback = { width: 1, height: 1 };
-const emojiChoices = [
-  '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
-  '🙂', '🙃', '🫠', '😉', '😊', '😇', '🥰', '😍',
-  '🤩', '😘', '😗', '☺️', '😚', '😙', '🥲', '😋',
-  '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🫢',
-  '🫣', '🤫', '🤔', '🫡', '🤐', '🤨', '😐️', '😑',
-  '😶', '🫥', '😶‍🌫️', '😏', '😒', '🙄', '😬', '😮‍💨',
-  '🤥', '🫨', '🙂‍↔️', '🙂‍↕️', '😌', '😔', '😪', '🤤',
-  '😴', '🫩', '😷', '🤒', '🤕', '🤢', '🤮', '🤧',
-  '🥵', '🥶', '🥴', '😵', '😵‍💫', '🤯', '🤠', '🥳',
-  '🥸', '😎', '🤓', '🧐', '😕', '🫤', '😟', '🙁',
-  '☹️', '😮', '😯', '😲', '😳', '🫪', '🥺', '🥹',
-  '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱',
-  '😖', '😣', '😞', '😓', '😩', '😫', '🥱', '😤',
-  '😡', '😠', '🤬', '😈', '👿', '💀', '☠️', '💩',
-  '🤡', '👹', '👺', '👻', '👽️', '👾', '🤖', '😺',
-  '😸', '😹', '😻', '😼', '😽', '🙀', '😿', '😾',
-  '🙈', '🙉', '🙊', '💌', '💘', '💝', '💖', '💗',
-  '💓', '💞', '💕', '💟', '❣️', '💔', '❤️‍🔥', '❤️‍🩹',
-  '❤️', '🩷', '🧡', '💛', '💚', '💙', '🩵', '💜',
-  '🤎', '🖤', '🩶', '🤍', '💋', '💯', '💢', '🫯',
-  '💥', '💫', '💦', '💨', '🕳️', '💬', '👁️‍🗨️', '🗨️',
-  '🗯️', '💭', '💤',
-  '🏧', '🚮', '🚰', '♿️', '🚹️', '🚺️', '🚻', '🚼️',
-  '🚾', '🛂', '🛃', '🛄', '🛅', '⚠️', '🚸', '⛔️',
-  '🚫', '🚳', '🚭️', '🚯', '🚱', '🚷', '📵', '🔞',
-  '☢️', '☣️', '⬆️', '↗️', '➡️', '↘️', '⬇️', '↙️',
-  '⬅️', '↖️', '↕️', '↔️', '↩️', '↪️', '⤴️', '⤵️',
-  '🔃', '🔄', '🔙', '🔚', '🔛', '🔜', '🔝', '🛐',
-  '⚛️', '🕉️', '✡️', '☸️', '☯️', '✝️', '☦️', '☪️',
-  '☮️', '🕎', '🔯', '🪯', '♈️', '♉️', '♊️', '♋️',
-  '♌️', '♍️', '♎️', '♏️', '♐️', '♑️', '♒️', '♓️',
-  '⛎️', '🔀', '🔁', '🔂', '▶️', '⏩️', '⏭️', '⏯️',
-  '◀️', '⏪️', '⏮️', '🔼', '⏫️', '🔽', '⏬️', '⏸️',
-  '⏹️', '⏺️', '⏏️', '🎦', '🔅', '🔆', '📶', '🛜',
-  '📳', '📴', '♀️', '♂️', '⚧️', '✖️', '➕️', '➖️',
-  '➗️', '🟰', '♾️', '‼️', '⁉️', '❓️', '❔️', '❕️',
-  '❗️', '〰️', '💱', '💲', '⚕️', '♻️', '⚜️', '🔱',
-  '📛', '🔰', '⭕️', '✅️', '☑️', '✔️', '❌️', '❎️',
-  '➰️', '➿️', '〽️', '✳️', '✴️', '❇️', '©️', '®️',
-  '™️', '🫟', '#️⃣', '*️⃣', '0️⃣', '1️⃣', '2️⃣', '3️⃣',
-  '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟', '🔠',
-  '🔡', '🔢', '🔣', '🔤', '🅰️', '🆎', '🅱️', '🆑',
-  '🆒', '🆓', 'ℹ️', '🆔', 'Ⓜ️', '🆕', '🆖', '🅾️',
-  '🆗', '🅿️', '🆘', '🆙', '🆚', '🈁', '🈂️', '🈷️',
-  '🈶', '🈯️', '🉐', '🈹', '🈚️', '🈲', '🉑', '🈸',
-  '🈴', '🈳', '㊗️', '㊙️', '🈺', '🈵', '🔴', '🟠',
-  '🟡', '🟢', '🔵', '🟣', '🟤', '⚫️', '⚪️', '🟥',
-  '🟧', '🟨', '🟩', '🟦', '🟪', '🟫', '⬛️', '⬜️',
-  '◼️', '◻️', '◾️', '◽️', '▪️', '▫️', '🔶', '🔷',
-  '🔸', '🔹', '🔺', '🔻', '💠', '🔘', '🔳', '🔲',
-];
 const emojiPageSize = 48;
 const emojiDefaultSize = 64;
 const emojiMinSize = 18;
 const emojiHandleSize = 8;
 const selectionMinSize = 18;
-const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?: number; active?: boolean }> }> = [
-  { id: 'pen', label: 'Brush', icon: Brush },
-  { id: 'line', label: 'Line', icon: Slash },
-  { id: 'arrow', label: 'Arrow', icon: ArrowUpRight },
-  { id: 'ellipse', label: 'Circle', icon: Circle },
-  { id: 'rect', label: 'Rectangle', icon: Square },
-  { id: 'mosaic', label: 'Mosaic', icon: CheckerboardIcon },
-  { id: 'text', label: 'Text', icon: Type },
-  { id: 'emoji', label: 'Emoji', icon: Smile },
-];
 
 function editorLog(_step: string) {}
-
-function CheckerboardIcon({ size = 18, active = false }: { size?: number; active?: boolean }) {
-  const darkClass = active ? 'bg-white' : 'bg-black';
-  const lightClass = active ? 'bg-black' : 'bg-white';
-  return (
-    <span
-      aria-hidden="true"
-      className="grid grid-cols-2 overflow-hidden rounded-sm border border-current"
-      style={{
-        width: size,
-        height: size,
-      }}
-    >
-      <span className={darkClass} />
-      <span className={lightClass} />
-      <span className={lightClass} />
-      <span className={darkClass} />
-    </span>
-  );
-}
 
 function ScreenshotEditor() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -864,360 +746,92 @@ function ScreenshotEditor() {
     >
       {!isPreload && (
         <>
-      <div
-        className="absolute bg-transparent shadow-[0_0_0_2px_rgba(0,102,204,0.95)]"
-        style={{
-          left: selectionOffset.left,
-          top: selectionOffset.top,
-          width: displaySize.width,
-          height: displaySize.height,
-          opacity: editorVisible ? 1 : 0,
+      <ScreenshotEditorCanvas
+        selectionOffset={selectionOffset}
+        displaySize={displaySize}
+        editorVisible={editorVisible}
+        screenshotDataUrl={screenshotDataUrl}
+        baseCanvasRef={baseCanvasRef}
+        draftCanvasRef={draftCanvasRef}
+        imageSize={imageSize}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={() => {
+          annotationDragRef.current = null;
+          draftRef.current = null;
+          dragStartRef.current = null;
+          setIsDragging(false);
+          setCanvasCursor(tool ? 'crosshair' : 'default');
+          renderDraft(null);
         }}
-      >
-        {screenshotDataUrl && (
-          <img
-            src={screenshotDataUrl}
-            alt=""
-            className="pointer-events-none absolute inset-0 h-full w-full select-none"
-            draggable={false}
-          />
-        )}
-        <canvas
-          ref={baseCanvasRef}
-          width={imageSize.width}
-          height={imageSize.height}
-          className="absolute inset-0 h-full w-full"
-        />
-        <canvas
-          ref={draftCanvasRef}
-          width={imageSize.width}
-          height={imageSize.height}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={() => {
-            annotationDragRef.current = null;
-            draftRef.current = null;
-            dragStartRef.current = null;
-            setIsDragging(false);
+        onPointerLeave={() => {
+          if (!isDragging) {
             setCanvasCursor(tool ? 'crosshair' : 'default');
-            renderDraft(null);
-          }}
-          onPointerLeave={() => {
-            if (!isDragging) {
-              setCanvasCursor(tool ? 'crosshair' : 'default');
-            }
-          }}
-          className="absolute inset-0 h-full w-full"
-          style={{ cursor: canvasCursor }}
-        />
-        {selectedControlRect && (
-          <div
-            className="pointer-events-none absolute z-20 border border-primary"
-            style={{
-              left: canvasRectToCss(selectedControlRect).x,
-              top: canvasRectToCss(selectedControlRect).y,
-              width: canvasRectToCss(selectedControlRect).width,
-              height: canvasRectToCss(selectedControlRect).height,
-              boxShadow: '0 0 0 1px rgba(255,255,255,0.9)',
-            }}
-          >
-            {resizeHandles(canvasRectToCss(selectedControlRect)).map((handle) => (
-              <span
-                key={handle.id}
-                className="absolute h-2 w-2 rounded-sm border border-primary bg-white shadow-sm"
-                style={{
-                  left: handle.x,
-                  top: handle.y,
-                  transform: 'translate(-50%, -50%)',
-                }}
-              />
-            ))}
-          </div>
-        )}
-        {textDraft && (
-          <textarea
-            ref={textAreaRef}
-            value={textDraft.value}
-            onChange={(event) => setTextDraft({ ...textDraft, value: event.target.value })}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault();
-                event.stopPropagation();
-                setTextDraft(null);
-              } else if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                event.stopPropagation();
-                commitTextDraft();
-              }
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
-            className="absolute z-30 min-h-10 min-w-32 resize rounded border border-primary bg-white/95 px-2 py-1 font-bold text-on-surface shadow-lg outline-none"
-            style={{
-              left: textDraft.cssPosition.x,
-              top: textDraft.cssPosition.y,
-              color,
-              fontSize,
-              lineHeight: 1.25,
-            }}
-          />
-        )}
-      </div>
-
-      <div
-        ref={toolbarRef}
-        className="absolute z-40 flex max-w-[calc(100vw-16px)] items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/95 p-1.5 shadow-xl backdrop-blur"
-        style={{
-          left: toolbarPosition.left,
-          top: toolbarPosition.top,
-          opacity: editorVisible ? 1 : 0,
-          pointerEvents: editorVisible ? 'auto' : 'none',
+          }
         }}
-      >
-        <div className="flex items-center gap-1">
-          {tools.map((item) => {
-            const Icon = item.icon;
-            const isActive = tool === item.id;
-            return (
-              <div key={item.id} className="relative shrink-0">
-                <button
-                  type="button"
-                  title={item.label}
-                  onClick={() => handleToolClick(item.id)}
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
-                    isActive
-                      ? 'border-primary bg-primary text-white'
-                      : 'border-outline-variant/30 bg-surface-container text-on-surface hover:bg-surface-container-high'
-                  }`}
-                >
-                  <Icon size={18} active={isActive} />
-                </button>
-                {isActive && item.id !== 'mosaic' && item.id !== 'text' && item.id !== 'emoji' && (
-                  <ToolOptionPanel label="Size" positionClass={popupPositionClass}>
-                    <input
-                      type="range"
-                      min="2"
-                      max="18"
-                      value={lineWidth}
-                      onChange={(event) => setLineWidth(Number(event.target.value))}
-                      className="w-full accent-primary"
-                    />
-                  </ToolOptionPanel>
-                )}
-                {isActive && item.id === 'mosaic' && (
-                  <ToolOptionPanel label="Brush" positionClass={popupPositionClass}>
-                    <input
-                      type="range"
-                      min="12"
-                      max="80"
-                      value={mosaicWidth}
-                      onChange={(event) => setMosaicWidth(Number(event.target.value))}
-                      className="w-full accent-primary"
-                    />
-                    <div className="mt-3 text-xs font-semibold text-on-surface-variant">Block</div>
-                    <input
-                      type="range"
-                      min="6"
-                      max="32"
-                      value={mosaicSize}
-                      onChange={(event) => setMosaicSize(Number(event.target.value))}
-                      className="mt-1 w-full accent-primary"
-                    />
-                  </ToolOptionPanel>
-                )}
-                {isActive && item.id === 'text' && (
-                  <ToolOptionPanel label="Text" positionClass={popupPositionClass}>
-                    <input
-                      type="range"
-                      min="14"
-                      max="64"
-                      value={fontSize}
-                      onChange={(event) => setFontSize(Number(event.target.value))}
-                      className="w-full accent-primary"
-                    />
-                  </ToolOptionPanel>
-                )}
-                {isActive && item.id === 'emoji' && emojiPickerOpen && (
-                  <div
-                    className={`absolute left-0 ${popupPositionClass} z-50 w-72 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-2 shadow-2xl`}
-                    onPointerDown={(event) => event.stopPropagation()}
-                  >
-                    <div className="grid grid-cols-8 gap-1">
-                      {visibleEmojiChoices.map((emoji) => (
-                        <button
-                          key={emoji}
-                          type="button"
-                          title={emoji}
-                          onClick={() => handleEmojiChoice(emoji)}
-                          className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none hover:bg-surface-container-high"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="mt-2 flex items-center justify-between border-t border-outline-variant/30 pt-2">
-                      <button
-                        type="button"
-                        title="Previous"
-                        disabled={emojiPage === 0}
-                        onClick={() => setEmojiPage((page) => Math.max(page - 1, 0))}
-                        className={toolbarButtonClass}
-                      >
-                        <ChevronLeft size={16} />
-                      </button>
-                      <div className="px-2 text-xs font-semibold text-on-surface-variant">
-                        {emojiPage + 1}/{emojiPageCount} · {emojiChoices.length}
-                      </div>
-                      <button
-                        type="button"
-                        title="Next"
-                        disabled={emojiPage >= emojiPageCount - 1}
-                        onClick={() => setEmojiPage((page) => Math.min(page + 1, emojiPageCount - 1))}
-                        className={toolbarButtonClass}
-                      >
-                        <ChevronRight size={16} />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        canvasCursor={canvasCursor}
+        selectedControlRect={selectedControlRect}
+        canvasRectToCss={canvasRectToCss}
+        resizeHandles={resizeHandles}
+        textDraft={textDraft}
+        textAreaRef={textAreaRef}
+        setTextDraft={setTextDraft}
+        commitTextDraft={commitTextDraft}
+        color={color}
+        fontSize={fontSize}
+      />
 
-        <div className="h-6 w-px shrink-0 bg-outline-variant/40" />
-
-        <div className="relative shrink-0">
-          <button
-            type="button"
-            title="Color"
-            onClick={() => {
-              setEmojiPickerOpen(false);
-              setColorPickerOpen((open) => !open);
-            }}
-            className="h-8 w-8 rounded-md border-2 border-outline-variant/60 shadow-inner"
-            style={{ backgroundColor: color }}
-          />
-          {colorPickerOpen && (
-            <div
-              className={`absolute left-0 ${popupPositionClass} z-50 w-56 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl`}
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <div
-                className="relative h-32 w-full cursor-crosshair overflow-hidden rounded-md border border-outline-variant/30"
-                style={{
-                  backgroundColor: hsvToHex({ h: hexToHsv(color).h, s: 1, v: 1 }),
-                }}
-                onPointerDown={(event) => {
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                  handleColorSquarePointer(event);
-                }}
-                onPointerMove={(event) => {
-                  if (event.buttons === 1) {
-                    handleColorSquarePointer(event);
-                  }
-                }}
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-white to-transparent" />
-                <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black" />
-                <div
-                  className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow"
-                  style={{
-                    left: `${hexToHsv(color).s * 100}%`,
-                    top: `${(1 - hexToHsv(color).v) * 100}%`,
-                  }}
-                />
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="360"
-                value={Math.round(hexToHsv(color).h)}
-                onChange={(event) => {
-                  const hsv = hexToHsv(color);
-                  handleColorChange(hsvToHex({ ...hsv, h: Number(event.target.value) }));
-                }}
-                className="mt-3 h-2 w-full accent-primary"
-                style={{
-                  background: 'linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)',
-                }}
-              />
-              <div className="mt-3 flex items-center gap-2">
-                <div className="h-8 w-8 rounded-md border border-outline-variant/40" style={{ backgroundColor: color }} />
-                <input
-                  value={hexInput}
-                  onChange={(event) => setHexInput(event.target.value)}
-                  onBlur={handleHexInputCommit}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      handleHexInputCommit();
-                    }
-                  }}
-                  className="h-8 min-w-0 flex-1 rounded-md border border-outline-variant/40 bg-surface-container px-2 text-xs font-bold uppercase outline-none focus:border-primary"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1">
-          <button type="button" title="Undo" onClick={undo} disabled={undoStack.length === 0} className={toolbarButtonClass}>
-            <Undo2 size={18} />
-          </button>
-          <button type="button" title="Redo" onClick={redo} disabled={redoStack.length === 0} className={toolbarButtonClass}>
-            <Redo2 size={18} />
-          </button>
-          <button
-            type="button"
-            title="Clear"
-            onClick={() => {
-              setSelectedAnnotationIndex(null);
-              commitAnnotations([]);
-            }}
-            className={toolbarButtonClass}
-          >
-            <Trash2 size={18} />
-          </button>
-          <button
-            type="button"
-            title="Cancel"
-            onClick={() => void handleCancel()}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <X size={18} />
-          </button>
-          <button
-            type="button"
-            title="Confirm"
-            disabled={isSaving || !imageLoaded}
-            onClick={() => void handleConfirm()}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-green-600 text-white transition-colors hover:bg-green-700 disabled:opacity-50"
-          >
-            <Check size={18} />
-          </button>
-        </div>
-      </div>
+      <ScreenshotEditorToolbar
+        toolbarRef={toolbarRef}
+        toolbarPosition={toolbarPosition}
+        editorVisible={editorVisible}
+        tool={tool}
+        onToolClick={handleToolClick}
+        popupPositionClass={popupPositionClass}
+        lineWidth={lineWidth}
+        setLineWidth={setLineWidth}
+        mosaicWidth={mosaicWidth}
+        setMosaicWidth={setMosaicWidth}
+        mosaicSize={mosaicSize}
+        setMosaicSize={setMosaicSize}
+        fontSize={fontSize}
+        setFontSize={setFontSize}
+        emojiPickerOpen={emojiPickerOpen}
+        visibleEmojiChoices={visibleEmojiChoices}
+        onEmojiChoice={handleEmojiChoice}
+        emojiPage={emojiPage}
+        emojiPageCount={emojiPageCount}
+        emojiCount={emojiChoices.length}
+        setEmojiPage={setEmojiPage}
+        color={color}
+        colorPickerOpen={colorPickerOpen}
+        setColorPickerOpen={setColorPickerOpen}
+        setEmojiPickerOpen={setEmojiPickerOpen}
+        handleColorSquarePointer={handleColorSquarePointer}
+        handleColorChange={handleColorChange}
+        hexInput={hexInput}
+        setHexInput={setHexInput}
+        handleHexInputCommit={handleHexInputCommit}
+        hexToHsv={hexToHsv}
+        hsvToHex={hsvToHex}
+        undo={undo}
+        redo={redo}
+        canUndo={undoStack.length > 0}
+        canRedo={redoStack.length > 0}
+        clearAnnotations={() => {
+          setSelectedAnnotationIndex(null);
+          commitAnnotations([]);
+        }}
+        onCancel={() => void handleCancel()}
+        onConfirm={() => void handleConfirm()}
+        isSaving={isSaving}
+        imageLoaded={imageLoaded}
+      />
 
       {error && <div className="fixed bottom-16 left-2 right-2 rounded bg-error/90 px-3 py-2 text-sm text-white">{error}</div>}
         </>
       )}
-    </div>
-  );
-}
-
-function ToolOptionPanel({
-  label,
-  positionClass,
-  children,
-}: {
-  label: string;
-  positionClass: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={`${toolOptionPanelClass} ${positionClass}`} onPointerDown={(event) => event.stopPropagation()}>
-      <div className="mb-1 text-xs font-semibold text-on-surface-variant">{label}</div>
-      {children}
     </div>
   );
 }
