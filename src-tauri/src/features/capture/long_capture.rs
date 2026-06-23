@@ -63,23 +63,15 @@ const SHIFT_SAMPLE_COLS: u32 = 64;
 /// Rows whose sampled pixels span less than this (weighted) luminance range are treated as
 /// blank/trivial and excluded from alignment scoring.
 const TRIVIAL_ROW_LUMA_RANGE: u32 = 48;
-/// Shifts within this many pixels of the best shift are treated as the same alignment (scrolling
-/// is continuous, so neighbours share most of the same run) and excluded from the runner-up.
-const SHIFT_NEIGHBOR_GUARD: u32 = 4;
-/// Minimum number of matched non-trivial rows required as absolute evidence for an alignment.
+/// Minimum number of matched non-trivial rows required to trust a frame's located position.
 const MIN_QUALITY_ROWS: u32 = 6;
-/// Half-width (rows) of the search window when re-anchoring a covered frame against the stitched
-/// image. The delta estimate is roughly right; this only corrects accumulated drift, so a small
-/// window suffices and keeps the search cheap.
-const RELOCATE_SEARCH_WINDOW: i64 = 48;
+/// Minimum rows the frame must overlap the stitch to be locatable; also caps how far the frame may
+/// hang off either end (i.e. the largest growth a single frame can add).
+const MIN_OVERLAP_ROWS: i64 = 24;
 /// Minimum match fraction (parts per thousand) of matched-vs-comparable rows for a trusted
-/// alignment. High enough to reject misaligned content (which produces conflicts), low enough to
-/// tolerate the few rows that legitimately differ at the edges between two frames.
+/// located position. High enough to reject misaligned content, low enough to tolerate the few
+/// rows that legitimately differ at the edges.
 const MIN_MATCH_PERMILLE: u32 = 750;
-const BOUNDARY_COMPARE_ROWS_PERCENT: f64 = 100.0;
-/// Per-channel tolerance when checking whether a frame equals an already-stitched region. Keeps
-/// boundary re-detection robust against anti-aliasing jitter between two captures of the same content.
-const PIXEL_MATCH_TOLERANCE: u8 = 6;
 
 fn long_log(message: impl AsRef<str>) {
     eprintln!(
@@ -132,6 +124,9 @@ struct LongCaptureSession {
     /// track the real scroll velocity instead of a fixed guess, which matters for disambiguating
     /// periodic content (tables/lists/code).
     last_shift: u32,
+    /// Consecutive frames that failed absolute location. Diagnostic only; successful location
+    /// resets it.
+    failed_locate_count: u32,
     /// Set while a real-wheel capture worker is waiting/capturing after a scroll.
     capture_pending: Arc<AtomicBool>,
     /// Set when the session ends; the scroll watcher thread observes this and exits.
@@ -206,6 +201,7 @@ pub fn start_long_capture(
         current_y: 0,
         last_frame: frame,
         last_shift: 0,
+        failed_locate_count: 0,
         capture_pending: capture_pending.clone(),
         stop: stop.clone(),
     };
@@ -394,8 +390,10 @@ fn run_real_scroll_watcher(
                 } else {
                     1.0
                 };
-                throttle_emitted_for_tap
-                    .store((emitted + allowed_physical).round() as i64, Ordering::SeqCst);
+                throttle_emitted_for_tap.store(
+                    (emitted + allowed_physical).round() as i64,
+                    Ordering::SeqCst,
+                );
 
                 last_scroll_millis_for_tap.store(now, Ordering::SeqCst);
                 last_scroll_delta_for_tap.store(delta_y.signum().round() as i64, Ordering::SeqCst);
@@ -495,7 +493,8 @@ fn scale_scroll_event(event: &core_graphics::event::CGEvent, factor: f64) {
         event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1, scaled);
     }
 
-    let fixed = event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1);
+    let fixed =
+        event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1);
     if fixed != 0.0 {
         event.set_double_value_field(
             EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1,
@@ -606,8 +605,7 @@ fn sample_and_stitch_frame(
         let session = guard
             .get_mut(session_id)
             .ok_or_else(|| FlickError::Message("long capture session not found".into()))?;
-        let shift_hint = free_scroll_shift_hint(session, &frame);
-        let preview_update = append_frame_from_free_scroll(session, frame, direction, shift_hint);
+        let preview_update = append_frame_from_free_scroll(session, frame, direction);
         if matches!(preview_update, PreviewUpdate::None) {
             // Truly nothing changed (no movement or low confidence): skip emitting to keep the
             // front-end render loop light. `OffsetOnly` still emits so the preview viewport
@@ -727,9 +725,7 @@ pub fn prepare_long_capture_edit(
         session.stop.store(true, Ordering::SeqCst);
     }
     if let Some((label, window)) = screenshot_editor_window(&app, &session_id) {
-        long_log(format!(
-            "prepare_edit: editor label={label} restore cursor"
-        ));
+        long_log(format!("prepare_edit: editor label={label} restore cursor"));
         let _ = window.set_ignore_cursor_events(false);
     }
     platform::set_overlay_mouse_passthrough(&app, false);
@@ -767,7 +763,9 @@ pub fn open_long_capture_edit_window(
             "open_edit_window: existing window found label={label}; cleanup old capture window"
         ));
         cleanup_long_capture_capture_window(&app, &state, &session_id);
-        long_log(format!("open_edit_window: show existing window label={label}"));
+        long_log(format!(
+            "open_edit_window: show existing window label={label}"
+        ));
         let _ = window.show();
         let _ = window.set_focus();
         long_log("open_edit_window: existing window focused");
@@ -813,7 +811,9 @@ pub fn open_long_capture_edit_window(
         .build()?;
     long_log(format!("open_edit_window: build complete label={label}"));
     let _ = window.set_position(LogicalPosition::new(x, y));
-    long_log(format!("open_edit_window: cleanup old capture window before frontend show label={label}"));
+    long_log(format!(
+        "open_edit_window: cleanup old capture window before frontend show label={label}"
+    ));
     cleanup_long_capture_capture_window(&app, &state, &session_id);
     long_log(format!(
         "open_edit_window: opened hidden label=screenshot-editor-long-{session_id} size={}x{}",
@@ -1062,227 +1062,98 @@ fn long_capture_target_pid(state: &State<'_, AppState>) -> Option<i32> {
     }
 }
 
-fn append_frame_with_delta(
-    session: &mut LongCaptureSession,
-    frame: ImageBuffer<Rgba<u8>, Vec<u8>>,
-    signed_delta: i64,
-) -> PreviewUpdate {
-    long_log(format!(
-        "append_delta: start signed_delta={} stitched={}x{} last={}x{} frame={}x{}",
-        signed_delta,
-        session.stitched.width(),
-        session.stitched.height(),
-        session.last_frame.width(),
-        session.last_frame.height(),
-        frame.width(),
-        frame.height()
-    ));
-    if frame.width() != session.last_frame.width() {
-        long_log("append_delta: width changed, replacing stitched image");
-        return reset_stitched_to_frame(session, frame);
-    }
-
-    if frame.dimensions() == session.last_frame.dimensions()
-        && frame.as_raw() == session.last_frame.as_raw()
-    {
-        session.last_frame = frame;
-        long_log("append_delta: frame unchanged, assuming scroll boundary");
-        return PreviewUpdate::None;
-    }
-
-    if signed_delta == 0 {
-        session.last_frame = frame;
-        long_log("append_delta: zero delta, not appending");
-        return PreviewUpdate::None;
-    }
-
-    let new_y = session.current_y + signed_delta;
-    if let Some(boundary_y) = unchanged_scroll_boundary_y(session, &frame, signed_delta) {
-        let moved = boundary_y != session.current_y;
-        session.current_y = boundary_y;
-        session.last_frame = frame;
-        long_log(format!(
-            "append_delta: frame matches stitched boundary y={boundary_y}, not appending moved={moved}"
-        ));
-        return if moved {
-            PreviewUpdate::OffsetOnly
-        } else {
-            PreviewUpdate::None
-        };
-    }
-
-    long_log(format!(
-        "append_delta: merge signed_delta={signed_delta} new_y={new_y} current_y={}",
-        session.current_y
-    ));
-    merge_frame_by_range(session, frame, new_y)
-}
-
-/// Stitch a freely-scrolled frame.
-///
-/// Under free scrolling there is no reliable wheel-delta prior, so both the direction and the
-/// magnitude of the shift are recovered from the image. `direction_hint` (sign of the most
-/// recent wheel delta, may be 0) only biases which direction is tried first and seeds the
-/// search window; the result comes from the projection match. A low-confidence match (no
-/// overlap, repetitive texture) is dropped rather than stitched, to avoid corrupting the image.
 fn append_frame_from_free_scroll(
     session: &mut LongCaptureSession,
     frame: ImageBuffer<Rgba<u8>, Vec<u8>>,
     direction_hint: i64,
-    shift_hint: u32,
 ) -> PreviewUpdate {
-    long_log(format!(
-        "append_free: start direction_hint={direction_hint} shift_hint={shift_hint} stitched={}x{} last={}x{} frame={}x{}",
-        session.stitched.width(),
-        session.stitched.height(),
-        session.last_frame.width(),
-        session.last_frame.height(),
-        frame.width(),
-        frame.height()
-    ));
-
-    if frame.dimensions() != session.last_frame.dimensions() {
-        long_log("append_free: dimensions changed, replacing stitched image");
+    if frame.width() != session.stitched.width() {
+        long_log("append_free: width changed, replacing stitched image");
         return reset_stitched_to_frame(session, frame);
     }
 
-    // Try the hinted direction first; if it isn't confident, try the other one. On macOS a
-    // negative wheel delta moves content down on screen.
-    let hint_down = direction_hint < 0;
-    let primary = detect_scroll_shift(&session.last_frame, &frame, hint_down, shift_hint);
-    let (content_down, measurement) = if primary.confident || direction_hint != 0 {
-        if primary.confident {
-            (hint_down, primary)
-        } else {
-            let alt = detect_scroll_shift(&session.last_frame, &frame, !hint_down, shift_hint);
-            if alt.confident {
-                (!hint_down, alt)
-            } else {
-                (hint_down, primary)
-            }
-        }
-    } else {
-        // No directional hint at all: probe both and keep the more confident one.
-        let down = detect_scroll_shift(&session.last_frame, &frame, true, shift_hint);
-        let up = detect_scroll_shift(&session.last_frame, &frame, false, shift_hint);
-        match (down.confident, up.confident) {
-            (true, false) => (true, down),
-            (false, true) => (false, up),
-            _ => (true, down),
-        }
-    };
+    let frame_sig = RowSignatures::from_frame(&frame);
+    let stitched_sig = RowSignatures::from_frame(&session.stitched);
 
-    if !measurement.confident {
-        // The relative shift was not trustworthy. First try to re-anchor this frame directly
-        // against the stitched image (recovers an exact position inside covered content). If that
-        // also fails, advance `last_frame` to this frame anyway so the *next* frame is compared
-        // against recent content — freezing the reference here would make every subsequent frame
-        // diverge further and permanently stall scrolling. We leave `current_y` unchanged in that
-        // case; the next confident frame re-establishes the coordinate.
-        if let Some(anchored_y) = relocate_frame_in_stitched(session, &frame, session.current_y) {
-            let moved = anchored_y != session.current_y;
-            session.current_y = anchored_y;
-            session.last_frame = frame;
-            long_log(format!(
-                "append_free: low-confidence shift={} re-anchored to y={anchored_y} moved={moved}",
-                measurement.shift
-            ));
-            return if moved {
-                PreviewUpdate::OffsetOnly
-            } else {
-                PreviewUpdate::None
-            };
-        }
-        session.last_frame = frame;
+    // Hint the search toward where the frame should be, biased by the last position and the wheel
+    // direction (macOS: negative delta scrolls content down → frame top moves to larger y).
+    let dir = if direction_hint < 0 {
+        1
+    } else if direction_hint > 0 {
+        -1
+    } else {
+        0
+    };
+    let hint_top_y = session.current_y
+        + dir * i64::from(session.last_shift.max(1)).min(i64::from(frame.height()));
+
+    let located = locate_frame_in_stitched(
+        &stitched_sig,
+        session.stitched_range.top,
+        &frame_sig,
+        hint_top_y,
+    );
+
+    let Some(location) = located.location else {
+        // No confident overlap with the stitch (scrolled past the captured region). Drop the
+        // frame without touching the stitch or current_y; a later overlapping frame re-anchors.
+        session.failed_locate_count = session.failed_locate_count.saturating_add(1);
         long_log(format!(
-            "append_free: low-confidence shift={} dropped (advancing reference)",
-            measurement.shift
+            "append_free: no confident location, frame dropped failures={} reason={} direction_hint={} dir={} last_shift={} hint_top_y={} current_y={} stitched=[{}, {}) frame_h={} stitched_h={} frame_nontrivial={} stitched_nontrivial={} search_offset=[{}, {}] hint_offset={} best_top_y={} best_offset={} best_matched={} best_conflicts={} best_comparable={} best_match_permille={}",
+            session.failed_locate_count,
+            located.diagnostics.reject_reason,
+            direction_hint,
+            dir,
+            session.last_shift,
+            hint_top_y,
+            session.current_y,
+            session.stitched_range.top,
+            session.stitched_range.bottom,
+            located.diagnostics.frame_h,
+            located.diagnostics.stitched_h,
+            located.diagnostics.frame_nontrivial,
+            located.diagnostics.stitched_nontrivial,
+            located.diagnostics.lo,
+            located.diagnostics.hi,
+            located.diagnostics.hint_offset,
+            located.diagnostics.best_top_y,
+            located.diagnostics.best_offset,
+            located.diagnostics.best_matched,
+            located.diagnostics.best_conflicts,
+            located.diagnostics.best_comparable,
+            located.diagnostics.best_match_permille,
         ));
         return PreviewUpdate::None;
-    }
-
-    // Remember the magnitude so the next frame's search is seeded with the actual scroll speed.
-    if measurement.shift > 0 {
-        session.last_shift = measurement.shift;
-    }
-    let signed_delta = if content_down {
-        i64::from(measurement.shift)
-    } else {
-        -i64::from(measurement.shift)
     };
+    session.failed_locate_count = 0;
+
+    let new_y = location.top_y;
+    // Track scroll speed for the next frame's search hint.
+    let moved = (new_y - session.current_y).unsigned_abs();
+    if moved > 0 {
+        session.last_shift = moved.min(u64::from(frame.height())) as u32;
+    }
     long_log(format!(
-        "append_free: content_down={content_down} shift={} signed_delta={signed_delta}",
-        measurement.shift
+        "append_free: located top_y={new_y} current_y={} matched={} conflicts={} stitched=[{}, {}) direction_hint={} dir={} last_shift={} hint_top_y={} hint_error={}",
+        session.current_y,
+        location.matched,
+        location.conflicts,
+        session.stitched_range.top,
+        session.stitched_range.bottom,
+        direction_hint,
+        dir,
+        session.last_shift,
+        hint_top_y,
+        new_y - hint_top_y
     ));
-    append_frame_with_delta(session, frame, signed_delta)
+
+    merge_frame_by_range(session, frame, new_y)
 }
 
-fn unchanged_scroll_boundary_y(
-    session: &LongCaptureSession,
-    frame: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    signed_delta: i64,
-) -> Option<i64> {
-    if frame.dimensions() != session.last_frame.dimensions()
-        || frame.width() != session.stitched.width()
-        || session.stitched.height() < frame.height()
-    {
-        return None;
-    }
-
-    if signed_delta < 0 && session.current_y == session.stitched_range.top {
-        let matches = frame_matches_stitched_region(
-            frame,
-            &session.stitched,
-            (session.stitched_range.top - session.stitched_range.top) as u32,
-            BOUNDARY_COMPARE_ROWS_PERCENT,
-        );
-        long_log(format!("boundary_check: top exact_match={matches}"));
-        if matches {
-            return Some(session.stitched_range.top);
-        }
-    }
-
-    if signed_delta > 0
-        && session.current_y + i64::from(frame.height()) == session.stitched_range.bottom
-    {
-        let bottom_y = session.stitched_range.bottom - i64::from(frame.height());
-        let matches = frame_matches_stitched_region(
-            frame,
-            &session.stitched,
-            (bottom_y - session.stitched_range.top) as u32,
-            BOUNDARY_COMPARE_ROWS_PERCENT,
-        );
-        long_log(format!("boundary_check: bottom exact_match={matches}"));
-        if matches {
-            return Some(bottom_y);
-        }
-    }
-
-    None
-}
-
-/// Result of measuring the vertical shift between two consecutive frames.
-#[derive(Clone, Copy, Debug)]
-struct ShiftMeasurement {
-    /// Detected vertical shift in pixels (0 = no movement).
-    shift: u32,
-    /// Whether the measurement is trustworthy enough to stitch with.
-    ///
-    /// Free scrolling has no reliable wheel-delta prior, so the shift is recovered purely
-    /// from the image. A measurement is rejected when the best candidate is not clearly
-    /// better than the runner-up (repetitive textures) or when no overlap remains (the user
-    /// scrolled faster than a frame height).
-    confident: bool,
-}
-
-/// Per-row signature of a frame used for vertical-shift detection.
-///
-/// Each row gets a content hash plus a "trivial" flag. Hashing (rather than summing luminance)
-/// means two visually different rows that happen to share a brightness total are still
-/// distinguished. The trivial flag marks blank/near-uniform rows (whitespace, solid fills):
-/// those rows match each other for free at *any* shift and carry no alignment information, so
-/// the matcher must not count them — otherwise a large shift that lines up a band of blank rows
-/// scores perfectly and wins, which is exactly the failure we are fixing.
+/// Per-row content signature of an image. Each row gets a hash (FNV-1a over quantized RGB of
+/// sampled columns) plus a "trivial" flag for blank/near-uniform rows. Used to locate a frame
+/// inside the stitched image: matching rows by hash, ignoring blank rows that carry no position
+/// information.
 struct RowSignatures {
     hashes: Vec<u64>,
     trivial: Vec<bool>,
@@ -1331,267 +1202,197 @@ impl RowSignatures {
     fn len(&self) -> u32 {
         self.hashes.len() as u32
     }
+
+    fn nontrivial_rows(&self) -> u32 {
+        self.trivial.iter().filter(|trivial| !**trivial).count() as u32
+    }
 }
 
-/// How well two frames align at a candidate `shift`.
-///
-/// Direction convention (both frames share the selection's coordinate system, row 0 at the top):
-/// - `content_down` (scrolled down, looking at later content): the *bottom* of the previous frame
-///   overlaps the *top* of the current frame, i.e. `previous[r + shift] == current[r]`.
-/// - `!content_down` (scrolled up, looking back): the *bottom* of the current frame overlaps the
-///   *top* of the previous frame, i.e. `previous[r] == current[r + shift]`.
-///
-/// Scoring combines two signals so it works on both dense and sparse/periodic content:
-/// - `matched`: overlapping rows where both are non-trivial and their hashes are equal.
-/// - `conflicts`: overlapping rows that actively contradict the alignment — a non-trivial row
-///   lined up against a blank one, or two non-trivial rows whose hashes differ. A rigid scroll
-///   lines blank up with blank and content with content, so its conflicts are ~0; a period-off
-///   alignment of repetitive content matches the same content rows but slams content bands into
-///   whitespace gaps, producing many conflicts. Ranking by `matched - conflicts` therefore picks
-///   the true translation even when a wrong shift matches just as many rows outright.
-#[derive(Clone, Copy)]
-struct AlignScore {
+/// Result of locating a freshly captured frame inside the stitched image.
+struct FrameLocation {
+    /// Long-capture y-coordinate of the frame's top row. May be negative (frame extends above the
+    /// stitched top) or place the frame's bottom below the stitched bottom — those are the cases
+    /// that grow the stitch.
+    top_y: i64,
+    /// How many non-trivial frame rows matched the stitched image at this position.
     matched: u32,
+    /// How many non-trivial rows actively conflicted (content vs blank, or differing hashes).
     conflicts: u32,
 }
 
-impl AlignScore {
-    /// Match fraction in parts-per-thousand: matched / (matched + conflicts). This is the ranking
-    /// key. Unlike raw counts it does not reward a small shift for having more overlapping rows —
-    /// a true translation and a "barely moved" alignment both score ~1000, and the tie is then
-    /// broken toward the hint (the real scroll velocity), which is what stops the detector from
-    /// collapsing onto shift≈0 while the user is still scrolling.
-    fn match_permille(self) -> u32 {
-        let comparable = self.matched + self.conflicts;
-        if comparable == 0 {
-            0
-        } else {
-            self.matched * 1000 / comparable
-        }
-    }
+struct LocateResult {
+    location: Option<FrameLocation>,
+    diagnostics: LocateDiagnostics,
 }
 
-fn align_score(
-    previous: &RowSignatures,
-    current: &RowSignatures,
-    content_down: bool,
-    shift: u32,
-) -> AlignScore {
-    let height = previous.len().min(current.len());
-    let overlap = height.saturating_sub(shift);
-    let min_overlap = (height / 4).max(1);
-    if overlap < min_overlap {
-        return AlignScore {
-            matched: 0,
-            conflicts: 0,
-        };
-    }
-    let mut matched = 0_u32;
-    let mut conflicts = 0_u32;
-    let mut row = 0;
-    while row < overlap {
-        let (previous_row, current_row) = if content_down {
-            (row + shift, row)
-        } else {
-            (row, row + shift)
-        };
-        let (pr, cr) = (previous_row as usize, current_row as usize);
-        let (p_trivial, c_trivial) = (previous.trivial[pr], current.trivial[cr]);
-        if p_trivial && c_trivial {
-            // Blank against blank: no evidence either way, neutral.
-        } else if p_trivial != c_trivial {
-            // Content lined up against whitespace — the frames are not aligned here.
-            conflicts += 1;
-        } else if previous.hashes[pr] == current.hashes[cr] {
-            matched += 1;
-        } else {
-            conflicts += 1;
-        }
-        row += 1;
-    }
-    AlignScore { matched, conflicts }
+struct LocateDiagnostics {
+    frame_h: i64,
+    stitched_h: i64,
+    frame_nontrivial: u32,
+    stitched_nontrivial: u32,
+    lo: i64,
+    hi: i64,
+    hint_offset: i64,
+    best_top_y: i64,
+    best_offset: i64,
+    best_matched: u32,
+    best_conflicts: u32,
+    best_comparable: u32,
+    best_match_permille: u32,
+    reject_reason: &'static str,
 }
 
-/// Detect the vertical shift between two same-sized frames purely from image content.
+/// Locate `frame` inside the stitched image by sliding its row signatures over the stitch and
+/// picking the position with the best (matched - conflicts) score.
 ///
-/// `hint` only seeds and narrows the search; the returned shift is the one that maximizes the
-/// number of matched non-trivial rows. A match is accepted only when it explains most of the
-/// comparable rows and clearly beats any competing (non-adjacent) alignment.
-fn detect_scroll_shift(
-    previous: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    current: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    content_down: bool,
-    hint: u32,
-) -> ShiftMeasurement {
-    if previous.dimensions() != current.dimensions() {
-        return ShiftMeasurement {
-            shift: 0,
-            confident: false,
-        };
-    }
-    if previous.as_raw() == current.as_raw() {
-        return ShiftMeasurement {
-            shift: 0,
-            confident: true,
-        };
-    }
-
-    let previous_sig = RowSignatures::from_frame(previous);
-    let current_sig = RowSignatures::from_frame(current);
-    let height = previous_sig.len().min(current_sig.len());
-    let max_shift = (height.saturating_mul(3) / 4).min(height.saturating_sub(1));
-    if max_shift == 0 {
-        return ShiftMeasurement {
-            shift: 0,
-            confident: true,
-        };
-    }
-
-    // Scan the whole range — maximizing matched rows is cheap (hash compares) and a windowed
-    // search around the hint risks missing the true shift when scrolling is fast.
-    let best = scan_alignment_range(&previous_sig, &current_sig, content_down, 0, max_shift, hint);
-
-    long_log(format!(
-        "detect_shift: content_down={content_down} hint={} best={} quality={} matched={} conflicts={} runner_up_quality={} confident={}",
-        hint.min(max_shift),
-        best.shift,
-        best.quality,
-        best.matched,
-        best.conflicts,
-        best.runner_up_quality,
-        best.confident
-    ));
-
-    ShiftMeasurement {
-        shift: best.shift,
-        confident: best.confident,
-    }
-}
-
-struct AlignmentResult {
-    shift: u32,
-    quality: u32,
-    matched: u32,
-    conflicts: u32,
-    runner_up_quality: u32,
-    confident: bool,
-}
-
-fn scan_alignment_range(
-    previous: &RowSignatures,
-    current: &RowSignatures,
-    content_down: bool,
-    lo: u32,
-    hi: u32,
-    hint: u32,
-) -> AlignmentResult {
-    // Rank by match *fraction*, not raw matched count. Raw counts grow with overlap, so the
-    // smallest shift always wins and the detector collapses onto shift≈0 while the user is still
-    // scrolling. Among shifts that have enough absolute evidence (`matched >= MIN_QUALITY_ROWS`),
-    // pick the highest match fraction; ties (a true scroll and a barely-moved alignment both score
-    // ~1000) are broken toward the hint, i.e. the real scroll velocity.
-    let mut best_shift = 0_u32;
-    let mut best = AlignScore {
-        matched: 0,
-        conflicts: 0,
+/// This is the heart of the stitcher: instead of accumulating per-frame deltas (which drift when
+/// scrolling back and forth), every frame is positioned *absolutely* against the already-stitched
+/// content. `hint_top_y` (the previous frame's position, give or take) biases ties so periodic or
+/// blank content resolves to the nearest plausible spot. The frame is allowed to hang off either
+/// end of the stitch by up to `frame_height - MIN_OVERLAP_ROWS`, which is exactly the case that
+/// extends the stitch. Returns `None` when no position overlaps the stitch confidently (the user
+/// scrolled past the captured region — that frame is dropped, and a later overlapping frame
+/// re-anchors automatically).
+fn locate_frame_in_stitched(
+    stitched_sig: &RowSignatures,
+    stitched_top: i64,
+    frame_sig: &RowSignatures,
+    hint_top_y: i64,
+) -> LocateResult {
+    let frame_h = frame_sig.len() as i64;
+    let stitched_h = stitched_sig.len() as i64;
+    let frame_nontrivial = frame_sig.nontrivial_rows();
+    let stitched_nontrivial = stitched_sig.nontrivial_rows();
+    let mut diagnostics = LocateDiagnostics {
+        frame_h,
+        stitched_h,
+        frame_nontrivial,
+        stitched_nontrivial,
+        lo: 0,
+        hi: 0,
+        hint_offset: hint_top_y - stitched_top,
+        best_top_y: stitched_top,
+        best_offset: 0,
+        best_matched: 0,
+        best_conflicts: 0,
+        best_comparable: 0,
+        best_match_permille: 0,
+        reject_reason: "not_evaluated",
     };
-    let mut have_best = false;
-    for shift in lo..=hi {
-        let score = align_score(previous, current, content_down, shift);
-        if score.matched < MIN_QUALITY_ROWS {
-            continue;
-        }
-        let better = !have_best
-            || score.match_permille() > best.match_permille()
-            || (score.match_permille() == best.match_permille()
-                && shift.abs_diff(hint) < best_shift.abs_diff(hint));
-        if better {
-            best = score;
-            best_shift = shift;
-            have_best = true;
-        }
+
+    if frame_h == 0 || stitched_h == 0 {
+        diagnostics.reject_reason = "empty_frame_or_stitch";
+        return LocateResult {
+            location: None,
+            diagnostics,
+        };
     }
 
-    // Runner-up: the highest match fraction among shifts that are neither adjacent to the winner
-    // nor to the hint, with enough absolute evidence. The hint is the expected scroll, so a strong
-    // alignment near it is not a competitor; only a strong unrelated alignment signals ambiguity.
-    let mut runner_up_permille = 0_u32;
-    for shift in lo..=hi {
-        if shift.abs_diff(best_shift) <= SHIFT_NEIGHBOR_GUARD
-            || shift.abs_diff(hint) <= SHIFT_NEIGHBOR_GUARD
-        {
-            continue;
-        }
-        let score = align_score(previous, current, content_down, shift);
-        if score.matched < MIN_QUALITY_ROWS {
-            continue;
-        }
-        if score.match_permille() > runner_up_permille {
-            runner_up_permille = score.match_permille();
-        }
+    // `offset` is the stitched row index aligned with the frame's top row. Allow the frame to hang
+    // off either end, keeping at least MIN_OVERLAP_ROWS in common so there is evidence to match on.
+    let min_overlap = (MIN_OVERLAP_ROWS as i64).min(frame_h).max(1);
+    let lo = -(frame_h - min_overlap);
+    let hi = stitched_h - min_overlap;
+    diagnostics.lo = lo;
+    diagnostics.hi = hi;
+    if hi < lo {
+        diagnostics.reject_reason = "invalid_search_window";
+        return LocateResult {
+            location: None,
+            diagnostics,
+        };
     }
 
-    // Confident when the winner has enough absolute evidence and a high match fraction. We do not
-    // additionally require it to strictly beat the runner-up: with conflicts already penalizing
-    // misalignment and ties broken toward the hint, an equal-fraction alignment elsewhere is the
-    // unavoidable ambiguity of truly periodic content, which the hint has already resolved.
-    let enough_absolute = have_best && best.matched >= MIN_QUALITY_ROWS;
-    let high_fraction = best.match_permille() >= MIN_MATCH_PERMILLE;
-    let confident = enough_absolute && high_fraction;
-
-    AlignmentResult {
-        shift: best_shift,
-        quality: best.match_permille(),
-        matched: best.matched,
-        conflicts: best.conflicts,
-        runner_up_quality: runner_up_permille,
-        confident,
-    }
-}
-
-fn frame_matches_stitched_region(
-    frame: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    stitched: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    stitched_y: u32,
-    rows_percent: f64,
-) -> bool {
-    if stitched_y.saturating_add(frame.height()) > stitched.height()
-        || frame.width() != stitched.width()
-    {
-        return false;
-    }
-
-    let rows_percent = rows_percent.clamp(0.0, 100.0);
-    let rows_to_compare = if rows_percent >= 100.0 {
-        frame.height()
-    } else {
-        ((frame.height() as f64) * (rows_percent / 100.0))
-            .ceil()
-            .max(1.0) as u32
-    }
-    .min(frame.height());
-
-    let mut row = 0;
-    while row < rows_to_compare {
-        let mut col = 0;
-        while col < frame.width() {
-            let a = frame.get_pixel(col, row).0;
-            let b = stitched.get_pixel(col, stitched_y + row).0;
-            // Tolerant comparison: under free scrolling the same content re-rendered in a later
-            // frame can differ by a few levels per channel (HiDPI font anti-aliasing, subpixel
-            // rounding), so a strict equality check would spuriously reject a true match.
-            if a[0].abs_diff(b[0]) > PIXEL_MATCH_TOLERANCE
-                || a[1].abs_diff(b[1]) > PIXEL_MATCH_TOLERANCE
-                || a[2].abs_diff(b[2]) > PIXEL_MATCH_TOLERANCE
-            {
-                return false;
+    let hint_offset = hint_top_y - stitched_top;
+    let mut best: Option<FrameLocation> = None;
+    let mut best_offset = 0_i64;
+    for offset in lo..=hi {
+        let mut matched = 0_u32;
+        let mut conflicts = 0_u32;
+        // Overlapping rows: frame row r aligns with stitched row (offset + r).
+        let r_start = (-offset).max(0);
+        let r_end = (stitched_h - offset).min(frame_h);
+        let mut r = r_start;
+        while r < r_end {
+            let f = r as usize;
+            let s = (offset + r) as usize;
+            let (ft, st) = (frame_sig.trivial[f], stitched_sig.trivial[s]);
+            if ft && st {
+                // blank vs blank: neutral
+            } else if ft != st {
+                conflicts += 1;
+            } else if frame_sig.hashes[f] == stitched_sig.hashes[s] {
+                matched += 1;
+            } else {
+                conflicts += 1;
             }
-            col += 1;
+            r += 1;
         }
-        row += 1;
+
+        let score = matched as i64 - conflicts as i64;
+        let best_score = best
+            .as_ref()
+            .map(|b| b.matched as i64 - b.conflicts as i64)
+            .unwrap_or(i64::MIN);
+        let better = score > best_score
+            || (score == best_score
+                && score > 0
+                && (offset - hint_offset).abs() < (best_offset - hint_offset).abs());
+        if better {
+            best = Some(FrameLocation {
+                top_y: stitched_top + offset,
+                matched,
+                conflicts,
+            });
+            best_offset = offset;
+        }
     }
 
-    true
+    let Some(best) = best else {
+        diagnostics.reject_reason = "no_candidate";
+        return LocateResult {
+            location: None,
+            diagnostics,
+        };
+    };
+    // Trust the location only if it has enough matched rows and few conflicts relative to matches.
+    let comparable = best.matched + best.conflicts;
+    diagnostics.best_top_y = best.top_y;
+    diagnostics.best_offset = best_offset;
+    diagnostics.best_matched = best.matched;
+    diagnostics.best_conflicts = best.conflicts;
+    diagnostics.best_comparable = comparable;
+    diagnostics.best_match_permille = if comparable > 0 {
+        best.matched.saturating_mul(1000) / comparable
+    } else {
+        0
+    };
+    if best.matched < MIN_QUALITY_ROWS {
+        diagnostics.reject_reason = "too_few_matched_rows";
+        return LocateResult {
+            location: None,
+            diagnostics,
+        };
+    }
+    if comparable == 0 {
+        diagnostics.reject_reason = "no_comparable_rows";
+        return LocateResult {
+            location: None,
+            diagnostics,
+        };
+    }
+    if best.matched * 1000 < comparable * MIN_MATCH_PERMILLE {
+        diagnostics.reject_reason = "match_ratio_too_low";
+        return LocateResult {
+            location: None,
+            diagnostics,
+        };
+    }
+    diagnostics.reject_reason = "accepted";
+    LocateResult {
+        location: Some(best),
+        diagnostics,
+    }
 }
 
 fn reset_stitched_to_frame(
@@ -1602,6 +1403,7 @@ fn reset_stitched_to_frame(
     session.stitched_range = CaptureRange::from_top_height(0, frame.height());
     session.current_y = 0;
     session.last_frame = frame;
+    session.failed_locate_count = 0;
     PreviewUpdate::Replace
 }
 
@@ -1612,68 +1414,6 @@ fn reset_stitched_to_frame(
 /// and accumulates, which corrupts the stitch position. Here we slide the frame's row signatures
 /// over the stitched image (near the delta-estimated position) and snap `current_y` to the best
 /// match, eliminating drift. Returns `None` if no confident match is found, leaving the estimate.
-fn relocate_frame_in_stitched(
-    session: &LongCaptureSession,
-    frame: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    estimated_y: i64,
-) -> Option<i64> {
-    if frame.width() != session.stitched.width() {
-        return None;
-    }
-    let frame_sig = RowSignatures::from_frame(frame);
-    let stitched_sig = RowSignatures::from_frame(&session.stitched);
-    let frame_h = frame_sig.len() as i64;
-    let stitched_h = stitched_sig.len() as i64;
-    let stitched_top = session.stitched_range.top;
-
-    // Search a window around the delta-estimated position; the estimate is roughly right, we only
-    // correct accumulated drift of a few pixels.
-    let est_offset = estimated_y - stitched_top; // row in stitched where the frame top should sit
-    let lo = (est_offset - RELOCATE_SEARCH_WINDOW).max(0);
-    let hi = (est_offset + RELOCATE_SEARCH_WINDOW).min(stitched_h - frame_h);
-    if hi < lo {
-        return None;
-    }
-
-    let mut best_offset = est_offset;
-    let mut best_matched = 0_u32;
-    let mut best_comparable = 0_u32;
-    for offset in lo..=hi {
-        let mut matched = 0_u32;
-        let mut comparable = 0_u32;
-        let mut row = 0_i64;
-        while row < frame_h {
-            let s = (offset + row) as usize;
-            let f = row as usize;
-            if !frame_sig.trivial[f] && !stitched_sig.trivial[s] {
-                comparable += 1;
-                if frame_sig.hashes[f] == stitched_sig.hashes[s] {
-                    matched += 1;
-                }
-            }
-            row += 1;
-        }
-        let better = matched > best_matched
-            || (matched == best_matched
-                && best_matched > 0
-                && (offset - est_offset).abs() < (best_offset - est_offset).abs());
-        if better {
-            best_matched = matched;
-            best_comparable = comparable;
-            best_offset = offset;
-        }
-    }
-
-    // Only trust the relocation if it's a strong, high-fraction match.
-    if best_matched < MIN_QUALITY_ROWS
-        || best_comparable == 0
-        || best_matched * 1000 < best_comparable * MIN_MATCH_PERMILLE
-    {
-        return None;
-    }
-    Some(stitched_top + best_offset)
-}
-
 fn merge_frame_by_range(
     session: &mut LongCaptureSession,
     frame: ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -1689,16 +1429,10 @@ fn merge_frame_by_range(
     ));
 
     if old_range.contains(frame_range) {
-        // Re-anchor against the stitched image to cancel accumulated drift; fall back to the
-        // delta estimate if no confident match.
-        let anchored_y = relocate_frame_in_stitched(session, &frame, frame_y).unwrap_or(frame_y);
-        if anchored_y != frame_y {
-            long_log(format!(
-                "merge_range: relocated covered frame est_y={frame_y} -> anchored_y={anchored_y}"
-            ));
-        }
-        let moved = anchored_y != session.current_y;
-        session.current_y = anchored_y;
+        // `frame_y` is already an absolute position from locating the frame in the stitch, so we
+        // just move the viewport there — no drift to correct.
+        let moved = frame_y != session.current_y;
+        session.current_y = frame_y;
         session.last_frame = frame;
         long_log(format!(
             "merge_range: frame already covered, no stitched growth moved={moved}"
@@ -1800,17 +1534,6 @@ fn frame_rows(
 /// what disambiguates periodic content (the alignment nearest the hint is the true scroll). Until
 /// a shift has been measured, fall back to a modest fraction of the frame height.
 #[cfg(target_os = "macos")]
-fn free_scroll_shift_hint(
-    session: &LongCaptureSession,
-    frame: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-) -> u32 {
-    if session.last_shift > 0 {
-        session.last_shift
-    } else {
-        ((frame.height() as f64) * 0.15).round().max(1.0) as u32
-    }
-}
-
 fn build_update(
     session: &LongCaptureSession,
     preview_update: PreviewUpdate,
@@ -1842,7 +1565,14 @@ fn build_update(
                 "build_update: preview replace len={}",
                 preview_data_url.len()
             ));
-            (preview_data_url, String::new(), 0, String::new(), 0, "replace")
+            (
+                preview_data_url,
+                String::new(),
+                0,
+                String::new(),
+                0,
+                "replace",
+            )
         }
         PreviewUpdate::Append { rows, image } => {
             let preview = preview_image(&image);
@@ -1851,7 +1581,14 @@ fn build_update(
                 "build_update: preview append rows={rows} len={}",
                 append_data_url.len()
             ));
-            (String::new(), append_data_url, rows, String::new(), 0, "append")
+            (
+                String::new(),
+                append_data_url,
+                rows,
+                String::new(),
+                0,
+                "append",
+            )
         }
         PreviewUpdate::Prepend { rows, image } => {
             let preview = preview_image(&image);
@@ -1860,11 +1597,23 @@ fn build_update(
                 "build_update: preview prepend rows={rows} len={}",
                 prepend_data_url.len()
             ));
-            (String::new(), String::new(), 0, prepend_data_url, rows, "prepend")
+            (
+                String::new(),
+                String::new(),
+                0,
+                prepend_data_url,
+                rows,
+                "prepend",
+            )
         }
-        PreviewUpdate::OffsetOnly => {
-            (String::new(), String::new(), 0, String::new(), 0, "offset_only")
-        }
+        PreviewUpdate::OffsetOnly => (
+            String::new(),
+            String::new(),
+            0,
+            String::new(),
+            0,
+            "offset_only",
+        ),
         PreviewUpdate::None => (String::new(), String::new(), 0, String::new(), 0, "none"),
     };
     long_log(format!(
@@ -1966,422 +1715,9 @@ mod tests {
             current_y: 0,
             last_frame: frame,
             last_shift: 0,
+            failed_locate_count: 0,
             capture_pending: Arc::new(AtomicBool::new(false)),
             stop: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    #[test]
-    fn delta_scroll_appends_bottom_without_duplication_or_gaps() {
-        let frame_height = 300;
-        let page = synthetic_page(120, 1000);
-        let mut session = session_with(frame_at(&page, 0, frame_height), frame_height);
-
-        // Scroll the page down in 150px steps and feed each frame in.
-        for top in (150..=600).step_by(150) {
-            let frame = frame_at(&page, top, frame_height);
-            append_frame_with_delta(&mut session, frame, 150);
-        }
-
-        // After scrolling to top=600 with a 300px window, the stitched image should cover
-        // rows [0, 900) of the original page, exactly and without duplication.
-        assert_eq!(session.stitched.height(), 900);
-        for y in 0..session.stitched.height() {
-            for x in 0..session.stitched.width() {
-                assert_eq!(
-                    session.stitched.get_pixel(x, y),
-                    page.get_pixel(x, y),
-                    "mismatch at ({x}, {y})"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn delta_scroll_inside_covered_range_does_not_grow() {
-        let frame_height = 300;
-        let page = synthetic_page(120, 1000);
-        let mut session = session_with(frame_at(&page, 0, frame_height), frame_height);
-        append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), 150);
-        append_frame_with_delta(&mut session, frame_at(&page, 300, frame_height), 150);
-
-        assert_eq!(
-            session.stitched_range,
-            CaptureRange {
-                top: 0,
-                bottom: 600
-            }
-        );
-        assert_eq!(session.current_y, 300);
-
-        append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), -150);
-
-        assert_eq!(
-            session.stitched_range,
-            CaptureRange {
-                top: 0,
-                bottom: 600
-            }
-        );
-        assert_eq!(session.current_y, 150);
-        assert_eq!(session.stitched.height(), 600);
-    }
-
-    #[test]
-    fn unchanged_boundary_frame_does_not_prepend_when_scrolling_past_origin() {
-        let frame_height = 300;
-        let page = synthetic_page(120, 1000);
-        let mut session = session_with(frame_at(&page, 0, frame_height), frame_height);
-
-        append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), 150);
-        append_frame_with_delta(&mut session, frame_at(&page, 300, frame_height), 150);
-        append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), -150);
-        append_frame_with_delta(&mut session, frame_at(&page, 0, frame_height), -150);
-        append_frame_with_delta(&mut session, frame_at(&page, 0, frame_height), -150);
-
-        assert_eq!(
-            session.stitched_range,
-            CaptureRange {
-                top: 0,
-                bottom: 600
-            }
-        );
-        assert_eq!(session.current_y, 0);
-    }
-
-    #[test]
-    fn scrolling_back_into_covered_region_reports_offset_change() {
-        let frame_height = 300;
-        let page = synthetic_page(120, 1000);
-        let mut session = session_with(frame_at(&page, 0, frame_height), frame_height);
-
-        // Grow downward so [0, 600) is covered with current_y at 300.
-        append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), 150);
-        append_frame_with_delta(&mut session, frame_at(&page, 300, frame_height), 150);
-        assert_eq!(session.current_y, 300);
-
-        // Scroll back up into already-covered content: the image must not grow, but the
-        // viewport offset moved, so the update must be OffsetOnly (not None) so the front-end
-        // preview can follow.
-        let update = append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), -150);
-        assert!(
-            matches!(update, PreviewUpdate::OffsetOnly),
-            "expected OffsetOnly when scrolling back into covered region"
-        );
-        assert_eq!(session.current_y, 150);
-        assert_eq!(
-            session.stitched_range,
-            CaptureRange { top: 0, bottom: 600 },
-            "stitched image must not grow when revisiting covered rows"
-        );
-
-        // Scrolling back down through covered content also reports an offset change.
-        let update = append_frame_with_delta(&mut session, frame_at(&page, 300, frame_height), 150);
-        assert!(matches!(update, PreviewUpdate::OffsetOnly));
-        assert_eq!(session.current_y, 300);
-    }
-
-    #[test]
-    fn relocate_corrects_accumulated_drift_in_covered_region() {
-        // Build a stitch covering rows [0, 600) of a non-periodic page.
-        let frame_height = 300;
-        let page = monotonic_page(120, 1000);
-        let mut session = session_with(frame_at(&page, 0, frame_height), frame_height);
-        append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), 150);
-        append_frame_with_delta(&mut session, frame_at(&page, 300, frame_height), 150);
-        assert_eq!(session.stitched_range, CaptureRange { top: 0, bottom: 600 });
-
-        // The true frame sits at page row 200, i.e. stitched y=200. Feed a drifted estimate (212)
-        // and confirm relocation snaps back to the real position rather than trusting the drift.
-        let frame = frame_at(&page, 200, frame_height);
-        let anchored = relocate_frame_in_stitched(&session, &frame, 212);
-        assert_eq!(anchored, Some(200), "relocation must cancel the 12px drift");
-    }
-
-    /// A page whose per-row luminance is strictly monotonic (and thus non-periodic), so the
-    /// vertical-shift detector has a single unambiguous alignment. `synthetic_page` repeats every
-    /// 256 rows in its row projection, which is unrealistic for real screenshots and confuses a
-    /// 1-D projection match, so shift tests use this instead.
-    fn monotonic_page(width: u32, height: u32) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-        ImageBuffer::from_fn(width, height, |x, y| {
-            let v = ((y * 251 + x * 7) % 65536) as u32;
-            Rgba([(v >> 8) as u8, (v & 0xff) as u8, ((y * 3) & 0xff) as u8, 255])
-        })
-    }
-
-    #[test]
-    fn detect_scroll_shift_recovers_known_shift_both_directions() {
-        let page = monotonic_page(120, 1000);
-        let frame_height = 254;
-        let previous = frame_at(&page, 200, frame_height);
-
-        // Scrolled down: the new frame reveals later content (rows 240..494). With content_down,
-        // previous.row[r + shift] matches current.row[r] → 200 + r + shift = 240 + r → shift 40.
-        let current_down = frame_at(&page, 240, frame_height);
-        let down = detect_scroll_shift(&previous, &current_down, true, 30);
-        assert!(down.confident, "down shift should be confident");
-        assert_eq!(down.shift, 40, "down shift magnitude");
-
-        // Scrolled up: the new frame reveals earlier content (rows 160..414). With !content_down,
-        // previous.row[r] matches current.row[r + shift] → 200 + r = 160 + r + shift → shift 40.
-        let current_up = frame_at(&page, 160, frame_height);
-        let up = detect_scroll_shift(&previous, &current_up, false, 30);
-        assert!(up.confident, "up shift should be confident");
-        assert_eq!(up.shift, 40, "up shift magnitude");
-
-        // Querying the wrong direction must not produce a confident nonzero shift for the pair.
-        let down_wrong = detect_scroll_shift(&previous, &current_up, true, 30);
-        assert!(
-            !down_wrong.confident || down_wrong.shift == 0,
-            "querying the wrong direction must not yield a confident nonzero shift"
-        );
-    }
-
-    /// A mostly-blank page: solid white except for a thin band of distinctive content every
-    /// `content_period` rows. This is the case that broke the projection matcher — blank rows
-    /// align for free at any shift, so a naive "least difference" match snaps to a wrong large
-    /// shift that happens to line up whitespace.
-    fn sparse_page(width: u32, height: u32, content_period: u32) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-        ImageBuffer::from_fn(width, height, |x, y| {
-            if y % content_period < 3 {
-                let v = ((y * 131 + x * 17) % 65536) as u32;
-                Rgba([(v >> 8) as u8, (v & 0xff) as u8, ((x * 5) & 0xff) as u8, 255])
-            } else {
-                Rgba([255, 255, 255, 255])
-            }
-        })
-    }
-
-    #[test]
-    fn detect_scroll_shift_ignores_blank_rows() {
-        // The frame is mostly whitespace with content bands every 40 rows. A small real scroll
-        // (shift 12) must be recovered from the content bands, not be hijacked by the many blank
-        // rows that match each other at large shifts.
-        let page = sparse_page(120, 1000, 40);
-        let frame_height = 254;
-        let previous = frame_at(&page, 200, frame_height);
-        let current = frame_at(&page, 212, frame_height); // scrolled down 12px
-
-        let measurement = detect_scroll_shift(&previous, &current, true, 10);
-        assert!(
-            measurement.confident,
-            "content bands should give a confident match"
-        );
-        assert_eq!(
-            measurement.shift, 12,
-            "shift must come from content rows, not blank-row alignment"
-        );
-    }
-
-    /// A list/table-like page: a content band every `period` rows, but each band's content is
-    /// distinct (real lists have different text per row). The *layout* is periodic, the *content*
-    /// is not — so a period-off alignment slams differing content together and racks up conflicts.
-    fn periodic_page(width: u32, height: u32, period: u32) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-        ImageBuffer::from_fn(width, height, |x, y| {
-            let phase = y % period;
-            if phase < 4 {
-                let band = y / period; // distinct content per band
-                let v = ((band * 2657 + phase * 97 + x * 13) % 65536) as u32;
-                Rgba([(v >> 8) as u8, (v & 0xff) as u8, ((band * 53 + x * 11) & 0xff) as u8, 255])
-            } else {
-                Rgba([255, 255, 255, 255])
-            }
-        })
-    }
-
-    #[test]
-    fn detect_scroll_shift_resolves_periodic_layout_with_distinct_content() {
-        // Bands every 24 rows but each band differs. A period-off shift would line content bands
-        // up with the wrong (different) bands and against whitespace, so the quality metric — not
-        // the hint — must still pick the true 18px shift.
-        let page = periodic_page(120, 1000, 24);
-        let frame_height = 254;
-        let previous = frame_at(&page, 240, frame_height);
-        let current = frame_at(&page, 258, frame_height); // real scroll: 18px down
-
-        let measurement = detect_scroll_shift(&previous, &current, true, 18);
-        assert!(
-            measurement.confident,
-            "distinct-content bands should resolve confidently from the alignment quality"
-        );
-        assert_eq!(measurement.shift, 18, "must pick the true translation");
-    }
-
-    #[test]
-    fn detect_scroll_shift_does_not_collapse_to_tiny_shift() {
-        // Reproduces the "scrolls but barely moves" bug. A tiny shift always overlaps more rows
-        // than the true large shift, so ranking by raw matched count collapses onto ~0. Ranking
-        // by match *fraction* must recover the true large shift in both directions.
-        let page = monotonic_page(120, 1000);
-        let frame_height = 254;
-        let previous = frame_at(&page, 300, frame_height);
-
-        // Scrolled down 90px: only shift 90 has a high match fraction; tiny shifts mismatch.
-        let down = detect_scroll_shift(&previous, &frame_at(&page, 390, frame_height), true, 80);
-        assert!(down.confident);
-        assert_eq!(down.shift, 90, "down: must not collapse onto a tiny shift");
-
-        // Scrolled up 90px.
-        let up = detect_scroll_shift(&previous, &frame_at(&page, 210, frame_height), false, 80);
-        assert!(up.confident);
-        assert_eq!(up.shift, 90, "up: must not collapse onto a tiny shift");
-    }
-
-    #[test]
-    fn detect_scroll_shift_rejects_non_overlapping_frames() {
-        // Two completely unrelated frames (scrolled far past a frame height) share no real
-        // alignment, so the detector must not confidently report a shift.
-        let page = monotonic_page(120, 2000);
-        let frame_height = 254;
-        let previous = frame_at(&page, 0, frame_height);
-        let current = frame_at(&page, 1500, frame_height);
-        let measurement = detect_scroll_shift(&previous, &current, true, 30);
-        assert!(
-            !measurement.confident,
-            "non-overlapping frames must be rejected, got shift={}",
-            measurement.shift
-        );
-    }
-
-    #[test]
-    fn boundary_region_match_can_compare_partial_rows() {
-        let frame_height = 100;
-        let page = synthetic_page(20, frame_height);
-        let frame = frame_at(&page, 0, frame_height);
-        let mut stitched = frame.clone();
-        stitched.put_pixel(0, 75, Rgba([0, 0, 0, 255]));
-
-        assert!(frame_matches_stitched_region(&frame, &stitched, 0, 50.0));
-        assert!(!frame_matches_stitched_region(&frame, &stitched, 0, 100.0));
-    }
-
-    #[test]
-    fn free_scroll_recovers_shift_from_image_at_boundary() {
-        let frame_height = 400;
-        // Non-periodic content so the row-hash match has a single unambiguous alignment.
-        let page = monotonic_page(120, 1000);
-        let mut session = session_with(frame_at(&page, 0, frame_height), frame_height);
-
-        // direction_hint < 0 means content moved down on screen (macOS convention). The actual
-        // shift (200) is recovered from the row-hash match, not from the hint.
-        append_frame_from_free_scroll(&mut session, frame_at(&page, 200, frame_height), -1, 180);
-        append_frame_from_free_scroll(&mut session, frame_at(&page, 0, frame_height), 1, 180);
-
-        let mut boundary_frame = frame_at(&page, 0, frame_height);
-        boundary_frame.put_pixel(0, 0, Rgba([0, 0, 0, 255]));
-        append_frame_from_free_scroll(&mut session, boundary_frame, 1, 180);
-
-        assert_eq!(
-            session.stitched_range,
-            CaptureRange {
-                top: 0,
-                bottom: 600
-            }
-        );
-        assert_eq!(session.current_y, 0);
-    }
-
-    #[test]
-    fn bottom_first_capture_can_prepend_new_rows_when_scrolling_above_origin() {
-        let frame_height = 300;
-        let page = synthetic_page(120, 1000);
-        let mut session = session_with(frame_at(&page, 300, frame_height), frame_height);
-
-        append_frame_with_delta(&mut session, frame_at(&page, 450, frame_height), 150);
-        append_frame_with_delta(&mut session, frame_at(&page, 600, frame_height), 150);
-        append_frame_with_delta(&mut session, frame_at(&page, 450, frame_height), -150);
-        append_frame_with_delta(&mut session, frame_at(&page, 300, frame_height), -150);
-        append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), -150);
-
-        assert_eq!(
-            session.stitched_range,
-            CaptureRange {
-                top: -150,
-                bottom: 600
-            }
-        );
-        assert_eq!(session.current_y, -150);
-        assert_eq!(session.stitched.height(), 750);
-        for y in 0..session.stitched.height() {
-            for x in 0..session.stitched.width() {
-                assert_eq!(
-                    session.stitched.get_pixel(x, y),
-                    page.get_pixel(x, 150 + y),
-                    "mismatch at ({x}, {y})"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn delta_scroll_preserves_existing_overlap_rows() {
-        let frame_height = 300;
-        let page = synthetic_page(120, 1000);
-        let mut session = session_with(frame_at(&page, 0, frame_height), frame_height);
-        let mut frame = frame_at(&page, 150, frame_height);
-
-        for y in 0..150 {
-            for x in 0..frame.width() {
-                frame.put_pixel(x, y, Rgba([255, 0, 0, 255]));
-            }
-        }
-
-        append_frame_with_delta(&mut session, frame, 150);
-
-        assert_eq!(
-            session.stitched_range,
-            CaptureRange {
-                top: 0,
-                bottom: 450
-            }
-        );
-        for y in 0..300 {
-            for x in 0..session.stitched.width() {
-                assert_eq!(
-                    session.stitched.get_pixel(x, y),
-                    page.get_pixel(x, y),
-                    "existing row was overwritten at ({x}, {y})"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn reverse_scroll_prepends_missing_top_rows() {
-        let frame_height = 300;
-        let page = synthetic_page(120, 1000);
-        let mut session = session_with(frame_at(&page, 300, frame_height), frame_height);
-        session.current_y = 300;
-        session.stitched_range = CaptureRange {
-            top: 300,
-            bottom: 600,
-        };
-
-        let frame = frame_at(&page, 150, frame_height);
-        let update = merge_frame_by_range(&mut session, frame, 150);
-
-        // Scrolling up must grow incrementally (Prepend), not re-send the whole preview
-        // (Replace) — that asymmetry is what made scrolling up heavy and laggy.
-        assert!(
-            matches!(update, PreviewUpdate::Prepend { rows: 150, .. }),
-            "scrolling up should produce an incremental Prepend"
-        );
-        assert_eq!(
-            session.stitched_range,
-            CaptureRange {
-                top: 150,
-                bottom: 600,
-            }
-        );
-        assert_eq!(session.stitched.height(), 450);
-        for y in 0..session.stitched.height() {
-            for x in 0..session.stitched.width() {
-                assert_eq!(
-                    session.stitched.get_pixel(x, y),
-                    page.get_pixel(x, 150 + y),
-                    "mismatch at ({x}, {y})"
-                );
-            }
         }
     }
 }

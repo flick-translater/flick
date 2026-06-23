@@ -830,7 +830,7 @@ function ScreenshotEditor() {
     }
     longUpdateSignatureRef.current = signature;
     editorLog(
-      `long update: frame=${update.width}x${update.frame_height} total=${update.total_height} offset=${update.scroll_offset} min=${update.min_offset} max=${update.max_offset} preview_len=${update.preview_data_url.length} preview_append_len=${previewAppendDataUrl.length} preview_append_rows=${previewAppendRows} current_len=${update.current_frame_data_url.length}`,
+      `long update: frame=${update.width}x${update.frame_height} total=${update.total_height} offset=${update.scroll_offset} min=${update.min_offset} max=${update.max_offset} preview_len=${update.preview_data_url.length} preview_append_len=${previewAppendDataUrl.length} preview_append_rows=${previewAppendRows} preview_prepend_len=${previewPrependDataUrl.length} preview_prepend_rows=${previewPrependRows} current_len=${update.current_frame_data_url.length}`,
     );
     setLongScreenshot((previous) => {
       let previewSegments = previous.previewSegments;
