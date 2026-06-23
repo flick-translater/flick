@@ -48,6 +48,16 @@ const LONG_PREVIEW_WIDTH: u32 = 240;
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(60);
 /// How long scrolling must be quiet (covering trackpad inertia) before the sampling loop stops.
 const SCROLL_IDLE_STOP: Duration = Duration::from_millis(280);
+/// Length of one scroll-throttle budget window. Deliberately shorter than `SAMPLE_INTERVAL` so a
+/// The throttle window matches the sampling interval, so one captured frame corresponds to one
+/// budget window. (A previous shorter window let two windows' budgets land inside a single frame,
+/// doubling the effective per-frame motion and overrunning `max_shift` on fast flings.)
+const THROTTLE_WINDOW_MS: i64 = 60;
+/// Physical pixels of scroll allowed per window, as a fraction of the (physical) frame height.
+/// `max_shift` is ~0.75·height, so 0.40·height keeps even a frame that straddles a window boundary
+/// (~1.5 budgets ≈ 0.60·height) safely under `max_shift`, guaranteeing the frames still overlap.
+/// Lower = safer against drops but more scroll "drag"; higher = less drag.
+const THROTTLE_MAX_SHIFT_FRACTION: f64 = 0.40;
 /// Number of columns sampled per row when building its content hash.
 const SHIFT_SAMPLE_COLS: u32 = 64;
 /// Rows whose sampled pixels span less than this (weighted) luminance range are treated as
@@ -58,6 +68,10 @@ const TRIVIAL_ROW_LUMA_RANGE: u32 = 48;
 const SHIFT_NEIGHBOR_GUARD: u32 = 4;
 /// Minimum number of matched non-trivial rows required as absolute evidence for an alignment.
 const MIN_QUALITY_ROWS: u32 = 6;
+/// Half-width (rows) of the search window when re-anchoring a covered frame against the stitched
+/// image. The delta estimate is roughly right; this only corrects accumulated drift, so a small
+/// window suffices and keeps the search cheap.
+const RELOCATE_SEARCH_WINDOW: i64 = 48;
 /// Minimum match fraction (parts per thousand) of matched-vs-comparable rows for a trusted
 /// alignment. High enough to reject misaligned content (which produces conflicts), low enough to
 /// tolerate the few rows that legitimately differ at the edges between two frames.
@@ -124,9 +138,28 @@ struct LongCaptureSession {
     stop: Arc<AtomicBool>,
 }
 
+/// Most recently observed capture scale (physical pixels per logical point), ×1000, written by
+/// the sampling loop and read by the event-tap throttle. Scroll-wheel deltas arrive in logical
+/// points but the stitcher works in physical pixels, so the throttle needs this to size its
+/// budget in the same units the shift detector uses. Starts at 1000 (scale 1.0) until measured.
+#[cfg(target_os = "macos")]
+static CAPTURE_SCALE_X1000: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1000);
+
+#[cfg(target_os = "macos")]
+fn capture_scale() -> f64 {
+    (CAPTURE_SCALE_X1000.load(Ordering::SeqCst) as f64 / 1000.0).clamp(0.5, 4.0)
+}
+
 enum PreviewUpdate {
     Replace,
     Append {
+        rows: u32,
+        image: ImageBuffer<Rgba<u8>, Vec<u8>>,
+    },
+    /// New rows added at the top (scrolling up). Sent incrementally so the growing preview isn't
+    /// re-encoded every frame, which is what made scrolling up heavy and laggy versus scrolling
+    /// down (which already used `Append`).
+    Prepend {
         rows: u32,
         image: ImageBuffer<Rgba<u8>, Vec<u8>>,
     },
@@ -291,6 +324,17 @@ fn run_real_scroll_watcher(
     // the user scrolls it directly. Kept in the signature for cross-platform symmetry.
     let _ = target_pid;
 
+    // Scroll-speed throttle state. We cap how much the page may scroll per throttle window so a
+    // fast fling can't move further than the stitcher can follow between frames. `window_start`
+    // marks the current budget window; `emitted` is how much scroll (PHYSICAL pixels) has already
+    // been let through this window. Budgeting in physical pixels matches `max_shift`, which is
+    // what the detector can actually recover. The window is short (half the sampling interval) so
+    // a single captured frame straddles at most ~2 windows, keeping per-frame motion well under
+    // `max_shift` even across a window boundary.
+    let selection_height_logical = selection.height.max(1) as f64;
+    let throttle_window_start_for_tap = Arc::new(AtomicI64::new(0));
+    let throttle_emitted_for_tap = Arc::new(AtomicI64::new(0));
+
     let tap = match CGEventTap::new(
         CGEventTapLocation::HID,
         CGEventTapPlacement::HeadInsertEventTap,
@@ -311,22 +355,63 @@ fn run_real_scroll_watcher(
             );
 
             if matches!(event_type, CGEventType::ScrollWheel) && inside_selection {
-                // Free-scroll model: let the wheel event pass through so the user scrolls the
-                // real target window. We only record that scrolling is happening (and its
-                // direction) so the sampling loop knows when to grab frames.
+                // Free-scroll model: the wheel event passes through to the real target window so
+                // the user scrolls it directly. But we throttle the scroll speed: within each
+                // sampling window the page may move at most `max_delta_per_window`, so a fast
+                // fling can't outrun the stitcher and drop content.
                 let delta_y = scroll_delta_y(event);
-                if delta_y != 0.0 {
-                    last_scroll_millis_for_tap.store(monotonic_millis(), Ordering::SeqCst);
-                    last_scroll_delta_for_tap
-                        .store(delta_y.signum().round() as i64, Ordering::SeqCst);
-                    ensure_sampling_running(
-                        app_for_tap.clone(),
-                        session_for_tap.clone(),
-                        capture_pending_for_tap.clone(),
-                        stop_for_tap.clone(),
-                        last_scroll_millis_for_tap.clone(),
-                        last_scroll_delta_for_tap.clone(),
-                    );
+                if delta_y == 0.0 {
+                    return CallbackResult::Keep;
+                }
+
+                let now = monotonic_millis();
+                // Reset the budget at the start of each throttle window (== one sampling frame).
+                let window_start = throttle_window_start_for_tap.load(Ordering::SeqCst);
+                if now - window_start >= THROTTLE_WINDOW_MS {
+                    throttle_window_start_for_tap.store(now, Ordering::SeqCst);
+                    throttle_emitted_for_tap.store(0, Ordering::SeqCst);
+                }
+
+                // Budget in physical pixels: the page may move at most this far per window before
+                // the next frame is captured. `max_shift ≈ height * 0.75`; the safety factor keeps
+                // it under that even if a frame straddles a window boundary.
+                let scale = capture_scale();
+                let max_physical_per_window =
+                    (selection_height_logical * scale * THROTTLE_MAX_SHIFT_FRACTION).max(1.0);
+                let emitted = throttle_emitted_for_tap.load(Ordering::SeqCst) as f64;
+                let budget_physical = (max_physical_per_window - emitted).max(0.0);
+                // Convert this event's logical delta to physical pixels for budgeting.
+                let magnitude_physical = delta_y.abs() * scale;
+
+                if budget_physical <= 0.0 {
+                    // Budget spent; swallow the event. The remaining scroll continues next window.
+                    return CallbackResult::Drop;
+                }
+
+                let allowed_physical = magnitude_physical.min(budget_physical);
+                let factor = if magnitude_physical > 0.0 {
+                    allowed_physical / magnitude_physical
+                } else {
+                    1.0
+                };
+                throttle_emitted_for_tap
+                    .store((emitted + allowed_physical).round() as i64, Ordering::SeqCst);
+
+                last_scroll_millis_for_tap.store(now, Ordering::SeqCst);
+                last_scroll_delta_for_tap.store(delta_y.signum().round() as i64, Ordering::SeqCst);
+                ensure_sampling_running(
+                    app_for_tap.clone(),
+                    session_for_tap.clone(),
+                    capture_pending_for_tap.clone(),
+                    stop_for_tap.clone(),
+                    last_scroll_millis_for_tap.clone(),
+                    last_scroll_delta_for_tap.clone(),
+                );
+
+                if factor < 1.0 {
+                    // Throttled: scale the event down to the remaining budget before it reaches
+                    // the target window.
+                    scale_scroll_event(event, factor);
                 }
                 return CallbackResult::Keep;
             }
@@ -393,6 +478,37 @@ fn scroll_delta_y(event: &core_graphics::event::CGEvent) -> f64 {
         return fixed_delta;
     }
     event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1) as f64
+}
+
+/// Scale every vertical-axis delta field of a scroll event by `factor` (0..1). All three delta
+/// representations are scaled together so the target app sees a consistent, throttled scroll
+/// regardless of which field it reads.
+#[cfg(target_os = "macos")]
+fn scale_scroll_event(event: &core_graphics::event::CGEvent, factor: f64) {
+    let factor = factor.clamp(0.0, 1.0);
+
+    let point = event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
+    if point != 0 {
+        let scaled = ((point as f64) * factor).round() as i64;
+        // Preserve direction even when rounding would hit zero, so the wheel still registers.
+        let scaled = if scaled == 0 { point.signum() } else { scaled };
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1, scaled);
+    }
+
+    let fixed = event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1);
+    if fixed != 0.0 {
+        event.set_double_value_field(
+            EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1,
+            fixed * factor,
+        );
+    }
+
+    let line = event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
+    if line != 0 {
+        let scaled = ((line as f64) * factor).round() as i64;
+        let scaled = if scaled == 0 { line.signum() } else { scaled };
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1, scaled);
+    }
 }
 
 /// Ensure exactly one sampling loop is running for this session.
@@ -475,6 +591,13 @@ fn sample_and_stitch_frame(
     let capture_started = Instant::now();
     let frame = capture_live_frame_with_editor_hidden(&selection)?;
     let capture_ms = capture_started.elapsed().as_millis();
+
+    // Publish the capture scale (physical px per logical point) so the throttle can size its
+    // budget in physical pixels — the same units the shift detector and `max_shift` use.
+    if selection.height > 0 {
+        let scale = (frame.height() as f64) / (selection.height as f64);
+        CAPTURE_SCALE_X1000.store((scale * 1000.0).round() as i64, Ordering::SeqCst);
+    }
 
     let update = {
         let mut guard = sessions()
@@ -1050,11 +1173,29 @@ fn append_frame_from_free_scroll(
     };
 
     if !measurement.confident {
-        // No trustworthy overlap (scrolled too fast or ambiguous content). Keep the frame as
-        // the new reference so the next frame can re-anchor, but do not grow the stitch.
+        // The relative shift was not trustworthy. First try to re-anchor this frame directly
+        // against the stitched image (recovers an exact position inside covered content). If that
+        // also fails, advance `last_frame` to this frame anyway so the *next* frame is compared
+        // against recent content — freezing the reference here would make every subsequent frame
+        // diverge further and permanently stall scrolling. We leave `current_y` unchanged in that
+        // case; the next confident frame re-establishes the coordinate.
+        if let Some(anchored_y) = relocate_frame_in_stitched(session, &frame, session.current_y) {
+            let moved = anchored_y != session.current_y;
+            session.current_y = anchored_y;
+            session.last_frame = frame;
+            long_log(format!(
+                "append_free: low-confidence shift={} re-anchored to y={anchored_y} moved={moved}",
+                measurement.shift
+            ));
+            return if moved {
+                PreviewUpdate::OffsetOnly
+            } else {
+                PreviewUpdate::None
+            };
+        }
         session.last_frame = frame;
         long_log(format!(
-            "append_free: low-confidence shift={} dropped (no stitch)",
+            "append_free: low-confidence shift={} dropped (advancing reference)",
             measurement.shift
         ));
         return PreviewUpdate::None;
@@ -1464,6 +1605,75 @@ fn reset_stitched_to_frame(
     PreviewUpdate::Replace
 }
 
+/// Re-anchor a frame against the already-stitched image instead of trusting accumulated deltas.
+///
+/// When scrolling back through covered content, `current_y` is otherwise maintained purely by
+/// summing per-frame shifts; any small mis-measurement at a direction change drifts permanently
+/// and accumulates, which corrupts the stitch position. Here we slide the frame's row signatures
+/// over the stitched image (near the delta-estimated position) and snap `current_y` to the best
+/// match, eliminating drift. Returns `None` if no confident match is found, leaving the estimate.
+fn relocate_frame_in_stitched(
+    session: &LongCaptureSession,
+    frame: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+    estimated_y: i64,
+) -> Option<i64> {
+    if frame.width() != session.stitched.width() {
+        return None;
+    }
+    let frame_sig = RowSignatures::from_frame(frame);
+    let stitched_sig = RowSignatures::from_frame(&session.stitched);
+    let frame_h = frame_sig.len() as i64;
+    let stitched_h = stitched_sig.len() as i64;
+    let stitched_top = session.stitched_range.top;
+
+    // Search a window around the delta-estimated position; the estimate is roughly right, we only
+    // correct accumulated drift of a few pixels.
+    let est_offset = estimated_y - stitched_top; // row in stitched where the frame top should sit
+    let lo = (est_offset - RELOCATE_SEARCH_WINDOW).max(0);
+    let hi = (est_offset + RELOCATE_SEARCH_WINDOW).min(stitched_h - frame_h);
+    if hi < lo {
+        return None;
+    }
+
+    let mut best_offset = est_offset;
+    let mut best_matched = 0_u32;
+    let mut best_comparable = 0_u32;
+    for offset in lo..=hi {
+        let mut matched = 0_u32;
+        let mut comparable = 0_u32;
+        let mut row = 0_i64;
+        while row < frame_h {
+            let s = (offset + row) as usize;
+            let f = row as usize;
+            if !frame_sig.trivial[f] && !stitched_sig.trivial[s] {
+                comparable += 1;
+                if frame_sig.hashes[f] == stitched_sig.hashes[s] {
+                    matched += 1;
+                }
+            }
+            row += 1;
+        }
+        let better = matched > best_matched
+            || (matched == best_matched
+                && best_matched > 0
+                && (offset - est_offset).abs() < (best_offset - est_offset).abs());
+        if better {
+            best_matched = matched;
+            best_comparable = comparable;
+            best_offset = offset;
+        }
+    }
+
+    // Only trust the relocation if it's a strong, high-fraction match.
+    if best_matched < MIN_QUALITY_ROWS
+        || best_comparable == 0
+        || best_matched * 1000 < best_comparable * MIN_MATCH_PERMILLE
+    {
+        return None;
+    }
+    Some(stitched_top + best_offset)
+}
+
 fn merge_frame_by_range(
     session: &mut LongCaptureSession,
     frame: ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -1479,8 +1689,16 @@ fn merge_frame_by_range(
     ));
 
     if old_range.contains(frame_range) {
-        let moved = frame_y != session.current_y;
-        session.current_y = frame_y;
+        // Re-anchor against the stitched image to cancel accumulated drift; fall back to the
+        // delta estimate if no confident match.
+        let anchored_y = relocate_frame_in_stitched(session, &frame, frame_y).unwrap_or(frame_y);
+        if anchored_y != frame_y {
+            long_log(format!(
+                "merge_range: relocated covered frame est_y={frame_y} -> anchored_y={anchored_y}"
+            ));
+        }
+        let moved = anchored_y != session.current_y;
+        session.current_y = anchored_y;
         session.last_frame = frame;
         long_log(format!(
             "merge_range: frame already covered, no stitched growth moved={moved}"
@@ -1507,11 +1725,14 @@ fn merge_frame_by_range(
         old_range.top - new_range.top,
     );
 
-    if grows_top {
+    let top_prepend = if grows_top {
         let new_rows = (old_range.top - frame_range.top) as u32;
         let prepended = frame_rows(&frame, 0, new_rows);
         image::imageops::overlay(&mut grown, &prepended, 0, frame_range.top - new_range.top);
-    }
+        Some((new_rows, prepended))
+    } else {
+        None
+    };
 
     let bottom_append = if grows_bottom {
         let new_rows = (new_range.bottom - old_range.bottom) as u32;
@@ -1523,12 +1744,19 @@ fn merge_frame_by_range(
         None
     };
 
-    let preview_update = if grows_top {
-        long_log(format!(
-            "merge_range: prepend top old_top={} new_top={}",
-            old_range.top, new_range.top
-        ));
+    let preview_update = if grows_top && grows_bottom {
+        // Grew at both ends in one frame (rare): fall back to a full replace.
+        long_log("merge_range: grew both ends, full replace");
         PreviewUpdate::Replace
+    } else if let Some((new_rows, prepended)) = top_prepend {
+        long_log(format!(
+            "merge_range: prepend top old_top={} new_top={} new_rows={}",
+            old_range.top, new_range.top, new_rows
+        ));
+        PreviewUpdate::Prepend {
+            rows: new_rows,
+            image: prepended,
+        }
     } else if let Some((new_rows, appended)) = bottom_append {
         long_log(format!(
             "merge_range: append bottom old_bottom={} new_bottom={} new_rows={}",
@@ -1599,56 +1827,65 @@ fn build_update(
     let current_started = Instant::now();
     let current_frame_data_url = image_to_data_url(&session.last_frame)?;
     let current_ms = current_started.elapsed().as_millis();
-    let preview_started = Instant::now();
-    let (preview_data_url, preview_append_data_url, preview_append_rows, preview_kind) =
-        match preview_update {
-            PreviewUpdate::Replace => {
-                let preview = preview_image(&session.stitched);
-                let preview_resize_ms = preview_started.elapsed().as_millis();
-                let preview_encode_started = Instant::now();
-                let preview_data_url = image_to_data_url(&preview)?;
-                let preview_encode_ms = preview_encode_started.elapsed().as_millis();
-                long_log(format!(
-                    "build_update: preview replace resize_ms={} encode_ms={} len={}",
-                    preview_resize_ms,
-                    preview_encode_ms,
-                    preview_data_url.len()
-                ));
-                (preview_data_url, String::new(), 0, "replace")
-            }
-            PreviewUpdate::Append { rows, image } => {
-                let preview = preview_image(&image);
-                let preview_resize_ms = preview_started.elapsed().as_millis();
-                let preview_encode_started = Instant::now();
-                let append_data_url = image_to_data_url(&preview)?;
-                let preview_encode_ms = preview_encode_started.elapsed().as_millis();
-                long_log(format!(
-                    "build_update: preview append rows={} resize_ms={} encode_ms={} len={}",
-                    rows,
-                    preview_resize_ms,
-                    preview_encode_ms,
-                    append_data_url.len()
-                ));
-                (String::new(), append_data_url, rows, "append")
-            }
-            PreviewUpdate::OffsetOnly => (String::new(), String::new(), 0, "offset_only"),
-            PreviewUpdate::None => (String::new(), String::new(), 0, "none"),
-        };
+    let (
+        preview_data_url,
+        preview_append_data_url,
+        preview_append_rows,
+        preview_prepend_data_url,
+        preview_prepend_rows,
+        preview_kind,
+    ) = match preview_update {
+        PreviewUpdate::Replace => {
+            let preview = preview_image(&session.stitched);
+            let preview_data_url = image_to_data_url(&preview)?;
+            long_log(format!(
+                "build_update: preview replace len={}",
+                preview_data_url.len()
+            ));
+            (preview_data_url, String::new(), 0, String::new(), 0, "replace")
+        }
+        PreviewUpdate::Append { rows, image } => {
+            let preview = preview_image(&image);
+            let append_data_url = image_to_data_url(&preview)?;
+            long_log(format!(
+                "build_update: preview append rows={rows} len={}",
+                append_data_url.len()
+            ));
+            (String::new(), append_data_url, rows, String::new(), 0, "append")
+        }
+        PreviewUpdate::Prepend { rows, image } => {
+            let preview = preview_image(&image);
+            let prepend_data_url = image_to_data_url(&preview)?;
+            long_log(format!(
+                "build_update: preview prepend rows={rows} len={}",
+                prepend_data_url.len()
+            ));
+            (String::new(), String::new(), 0, prepend_data_url, rows, "prepend")
+        }
+        PreviewUpdate::OffsetOnly => {
+            (String::new(), String::new(), 0, String::new(), 0, "offset_only")
+        }
+        PreviewUpdate::None => (String::new(), String::new(), 0, String::new(), 0, "none"),
+    };
     long_log(format!(
-        "build_update: encode current_ms={} preview_kind={} total_ms={} current_len={} preview_len={} preview_append_len={} preview_append_rows={}",
+        "build_update: encode current_ms={} preview_kind={} total_ms={} current_len={} preview_len={} append_len={} append_rows={} prepend_len={} prepend_rows={}",
         current_ms,
         preview_kind,
         total_started.elapsed().as_millis(),
         current_frame_data_url.len(),
         preview_data_url.len(),
         preview_append_data_url.len(),
-        preview_append_rows
+        preview_append_rows,
+        preview_prepend_data_url.len(),
+        preview_prepend_rows
     ));
     Ok(LongCaptureUpdate {
         current_frame_data_url,
         preview_data_url,
         preview_append_data_url,
         preview_append_rows,
+        preview_prepend_data_url,
+        preview_prepend_rows,
         width: session.stitched.width(),
         frame_height: session.last_frame.height(),
         total_height: session.stitched.height(),
@@ -1842,6 +2079,23 @@ mod tests {
         let update = append_frame_with_delta(&mut session, frame_at(&page, 300, frame_height), 150);
         assert!(matches!(update, PreviewUpdate::OffsetOnly));
         assert_eq!(session.current_y, 300);
+    }
+
+    #[test]
+    fn relocate_corrects_accumulated_drift_in_covered_region() {
+        // Build a stitch covering rows [0, 600) of a non-periodic page.
+        let frame_height = 300;
+        let page = monotonic_page(120, 1000);
+        let mut session = session_with(frame_at(&page, 0, frame_height), frame_height);
+        append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), 150);
+        append_frame_with_delta(&mut session, frame_at(&page, 300, frame_height), 150);
+        assert_eq!(session.stitched_range, CaptureRange { top: 0, bottom: 600 });
+
+        // The true frame sits at page row 200, i.e. stitched y=200. Feed a drifted estimate (212)
+        // and confirm relocation snaps back to the real position rather than trusting the drift.
+        let frame = frame_at(&page, 200, frame_height);
+        let anchored = relocate_frame_in_stitched(&session, &frame, 212);
+        assert_eq!(anchored, Some(200), "relocation must cancel the 12px drift");
     }
 
     /// A page whose per-row luminance is strictly monotonic (and thus non-periodic), so the
@@ -2104,8 +2358,14 @@ mod tests {
         };
 
         let frame = frame_at(&page, 150, frame_height);
-        merge_frame_by_range(&mut session, frame, 150);
+        let update = merge_frame_by_range(&mut session, frame, 150);
 
+        // Scrolling up must grow incrementally (Prepend), not re-send the whole preview
+        // (Replace) — that asymmetry is what made scrolling up heavy and laggy.
+        assert!(
+            matches!(update, PreviewUpdate::Prepend { rows: 150, .. }),
+            "scrolling up should produce an incremental Prepend"
+        );
         assert_eq!(
             session.stitched_range,
             CaptureRange {

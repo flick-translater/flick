@@ -30,6 +30,10 @@ pub struct LongCaptureUpdate {
     pub preview_data_url: String,
     pub preview_append_data_url: String,
     pub preview_append_rows: u32,
+    /// New rows added at the *top* of the stitched image (scrolling up). Encoded incrementally
+    /// like `preview_append_*` so scrolling up doesn't re-send the whole growing preview.
+    pub preview_prepend_data_url: String,
+    pub preview_prepend_rows: u32,
     pub width: u32,
     pub frame_height: u32,
     pub total_height: u32,

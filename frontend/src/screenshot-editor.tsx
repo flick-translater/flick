@@ -63,6 +63,8 @@ type LongCaptureUpdate = {
   preview_data_url: string;
   preview_append_data_url?: string;
   preview_append_rows?: number;
+  preview_prepend_data_url?: string;
+  preview_prepend_rows?: number;
   width: number;
   frame_height: number;
   total_height: number;
@@ -811,12 +813,16 @@ function ScreenshotEditor() {
   function applyLongCaptureUpdate(update: LongCaptureUpdate) {
     const previewAppendDataUrl = update.preview_append_data_url ?? '';
     const previewAppendRows = update.preview_append_rows ?? 0;
+    const previewPrependDataUrl = update.preview_prepend_data_url ?? '';
+    const previewPrependRows = update.preview_prepend_rows ?? 0;
     const signature = [
       update.total_height,
       update.scroll_offset,
       update.preview_data_url,
       previewAppendDataUrl,
       previewAppendRows,
+      previewPrependDataUrl,
+      previewPrependRows,
       update.current_frame_data_url,
     ].join(':');
     if (longUpdateSignatureRef.current === signature) {
@@ -844,6 +850,17 @@ function ScreenshotEditor() {
             dataUrl: previewAppendDataUrl,
             rows: previewAppendRows,
           },
+        ];
+      } else if (previewPrependDataUrl && previewPrependRows > 0) {
+        // Scrolling up adds rows at the top — insert at the head so the preview grows upward
+        // incrementally instead of re-sending the whole image.
+        previewSegments = [
+          {
+            id: ++previewSegmentIdRef.current,
+            dataUrl: previewPrependDataUrl,
+            rows: previewPrependRows,
+          },
+          ...previous.previewSegments,
         ];
       }
       return {
