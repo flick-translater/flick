@@ -235,25 +235,6 @@ pub fn set_window_capture_sharing(window: &tauri::WebviewWindow, include_in_capt
     }
 }
 
-pub fn scroll_for_long_capture(
-    delta_y: f64,
-    selection: &SelectionRect,
-    target_pid: Option<i32>,
-) -> Result<(), FlickError> {
-    #[cfg(target_os = "macos")]
-    {
-        return macos_platform::scroll_for_long_capture(delta_y, selection, target_pid);
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    {
-        let _ = selection;
-        let _ = delta_y;
-        let _ = target_pid;
-        Ok(())
-    }
-}
-
 pub fn capture_image(
     capture_service: &ScreenCaptureService,
     selection: &SelectionRect,

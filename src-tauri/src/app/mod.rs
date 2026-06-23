@@ -118,7 +118,6 @@ pub fn run() {
             commands::capture::cancel_capture_edit,
             commands::capture::capture_editor_ready,
             commands::capture::start_long_capture,
-            commands::capture::scroll_long_capture,
             commands::capture::get_long_capture_image,
             commands::capture::save_long_capture,
             commands::capture::confirm_long_capture,

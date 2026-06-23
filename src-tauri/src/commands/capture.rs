@@ -118,16 +118,6 @@ pub fn start_long_capture(
 }
 
 #[tauri::command]
-pub fn scroll_long_capture(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    delta_y: f64,
-) -> Result<LongCaptureUpdate, FlickError> {
-    capture::scroll_long_capture(app, state, session_id, delta_y)
-}
-
-#[tauri::command]
 pub fn get_long_capture_image(session_id: String) -> Result<String, FlickError> {
     capture::get_long_capture_image(session_id)
 }

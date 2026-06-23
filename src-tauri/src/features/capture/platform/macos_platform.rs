@@ -14,15 +14,10 @@ use std::{
 
 use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
 use core_graphics::event::{
-    CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
-    CallbackResult, ScrollEventUnit,
+    CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+    CallbackResult,
 };
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-use core_graphics::geometry::CGPoint;
-use objc2_app_kit::{
-    NSApplicationActivationOptions, NSEvent, NSRunningApplication, NSWindow, NSWindowSharingType,
-    NSWorkspace,
-};
+use objc2_app_kit::{NSEvent, NSWindow, NSWindowSharingType};
 use objc2_foundation::NSInteger;
 use tauri::{AppHandle, Manager, State};
 
@@ -279,93 +274,6 @@ pub fn set_window_capture_sharing(window: &tauri::WebviewWindow, include_in_capt
             );
         })
         .ok();
-}
-
-pub fn scroll_for_long_capture(
-    delta_y: f64,
-    selection: &SelectionRect,
-    target_pid: Option<i32>,
-) -> Result<(), FlickError> {
-    eprintln!(
-        "[long-capture/macos] scroll_for_long_capture: delta_y={delta_y} target_pid={target_pid:?} selection=({},{} {}x{}) create event source start",
-        selection.x, selection.y, selection.width, selection.height
-    );
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| FlickError::Message("failed to create macOS event source".into()))?;
-    let current_pid = NSRunningApplication::currentApplication().processIdentifier();
-    let frontmost_pid = NSWorkspace::sharedWorkspace()
-        .frontmostApplication()
-        .map(|frontmost| frontmost.processIdentifier());
-    eprintln!(
-        "[long-capture/macos] scroll_for_long_capture: current_pid={current_pid} frontmost_pid={frontmost_pid:?} target_pid={target_pid:?}"
-    );
-    activate_long_scroll_target(target_pid, current_pid);
-
-    let location = current_scroll_event_location(source.clone(), selection);
-
-    let pixel_wheel = (-delta_y).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
-    eprintln!(
-        "[long-capture/macos] scroll_for_long_capture: post pixel wheel={pixel_wheel} location={},{} target_pid={target_pid:?} start",
-        location.x, location.y
-    );
-    let packets = 4;
-    let packet_wheel = pixel_wheel / packets;
-    let remainder = pixel_wheel % packets;
-    for index in 0..packets {
-        let wheel = packet_wheel + if index == packets - 1 { remainder } else { 0 };
-        if wheel == 0 {
-            continue;
-        }
-        let pixel_event =
-            CGEvent::new_scroll_event(source.clone(), ScrollEventUnit::PIXEL, 1, wheel, 0, 0)
-                .map_err(|_| {
-                    FlickError::Message("failed to create macOS pixel scroll event".into())
-                })?;
-        pixel_event.set_location(location);
-        eprintln!(
-            "[long-capture/macos] scroll_for_long_capture: post pixel packet={} wheel={wheel}",
-            index + 1
-        );
-        post_long_scroll_event(&pixel_event);
-        std::thread::sleep(Duration::from_millis(12));
-    }
-    eprintln!("[long-capture/macos] scroll_for_long_capture: post pixel HID complete");
-
-    Ok(())
-}
-
-fn current_scroll_event_location(source: CGEventSource, selection: &SelectionRect) -> CGPoint {
-    if let Ok(event) = CGEvent::new(source) {
-        return event.location();
-    }
-
-    CGPoint::new(
-        selection.x as f64 + selection.width as f64 / 2.0,
-        selection.y as f64 + selection.height as f64 / 2.0,
-    )
-}
-
-fn post_long_scroll_event(event: &CGEvent) {
-    eprintln!("[long-capture/macos] post_long_scroll_event: post HID");
-    event.post(CGEventTapLocation::HID);
-}
-
-fn activate_long_scroll_target(target_pid: Option<i32>, current_pid: i32) {
-    let Some(pid) = target_pid.filter(|pid| *pid > 0 && *pid != current_pid) else {
-        eprintln!(
-            "[long-capture/macos] activate_long_scroll_target: skip target_pid={target_pid:?} current_pid={current_pid}"
-        );
-        return;
-    };
-
-    eprintln!("[long-capture/macos] activate_long_scroll_target: pid={pid} start");
-    if let Some(target_app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
-        let activated = target_app.activateWithOptions(NSApplicationActivationOptions(0));
-        eprintln!("[long-capture/macos] activate_long_scroll_target: pid={pid} result={activated}");
-        std::thread::sleep(Duration::from_millis(120));
-    } else {
-        eprintln!("[long-capture/macos] activate_long_scroll_target: pid={pid} not found");
-    }
 }
 
 fn run_native_capture_loop(app: AppHandle, session_id: u64) {

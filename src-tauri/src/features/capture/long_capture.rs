@@ -36,18 +36,36 @@ use crate::{
 
 use super::{history, platform, session};
 
-/// Hide the editor window before a live capture for this long so the OS has time to
-/// composite the frame without the editor on top of it.
+/// Hide the editor window before the initial live capture so the OS composites the frame
+/// without the editor on top of it. (Only used for the one-shot initial frame; the streaming
+/// sampling loop relies on session-wide capture exclusion instead.)
 const WINDOW_HIDE_DELAY: Duration = Duration::from_millis(70);
-const PRE_SCROLL_HIDE_DELAY: Duration = Duration::from_millis(50);
-const SCROLL_SETTLE_DELAY: Duration = Duration::from_millis(180);
 const FINALIZE_CAPTURE_WAIT_TIMEOUT: Duration = Duration::from_millis(1500);
 const FINALIZE_CAPTURE_WAIT_POLL: Duration = Duration::from_millis(25);
 const LONG_PREVIEW_WIDTH: u32 = 240;
-const CONTROLLED_SCROLL_STEP_RATIO: f64 = 0.72;
-const SHIFT_SAMPLE_COLS: u32 = 24;
-const SHIFT_SAMPLE_ROWS: u32 = 64;
+/// Target interval between frame samples while the user is scrolling. Small enough that even
+/// fast scrolling keeps consecutive frames overlapping, so the stitcher can recover the shift.
+const SAMPLE_INTERVAL: Duration = Duration::from_millis(60);
+/// How long scrolling must be quiet (covering trackpad inertia) before the sampling loop stops.
+const SCROLL_IDLE_STOP: Duration = Duration::from_millis(280);
+/// Number of columns sampled per row when building its content hash.
+const SHIFT_SAMPLE_COLS: u32 = 64;
+/// Rows whose sampled pixels span less than this (weighted) luminance range are treated as
+/// blank/trivial and excluded from alignment scoring.
+const TRIVIAL_ROW_LUMA_RANGE: u32 = 48;
+/// Shifts within this many pixels of the best shift are treated as the same alignment (scrolling
+/// is continuous, so neighbours share most of the same run) and excluded from the runner-up.
+const SHIFT_NEIGHBOR_GUARD: u32 = 4;
+/// Minimum number of matched non-trivial rows required as absolute evidence for an alignment.
+const MIN_QUALITY_ROWS: u32 = 6;
+/// Minimum match fraction (parts per thousand) of matched-vs-comparable rows for a trusted
+/// alignment. High enough to reject misaligned content (which produces conflicts), low enough to
+/// tolerate the few rows that legitimately differ at the edges between two frames.
+const MIN_MATCH_PERMILLE: u32 = 750;
 const BOUNDARY_COMPARE_ROWS_PERCENT: f64 = 100.0;
+/// Per-channel tolerance when checking whether a frame equals an already-stitched region. Keeps
+/// boundary re-detection robust against anti-aliasing jitter between two captures of the same content.
+const PIXEL_MATCH_TOLERANCE: u8 = 6;
 
 fn long_log(message: impl AsRef<str>) {
     eprintln!(
@@ -95,6 +113,11 @@ struct LongCaptureSession {
     current_y: i64,
     /// The most recently captured single frame.
     last_frame: ImageBuffer<Rgba<u8>, Vec<u8>>,
+    /// Magnitude (pixels) of the last confidently-detected scroll shift. Used to seed the next
+    /// frame's shift search, since scroll speed is continuous frame-to-frame. This makes the hint
+    /// track the real scroll velocity instead of a fixed guess, which matters for disambiguating
+    /// periodic content (tables/lists/code).
+    last_shift: u32,
     /// Set while a real-wheel capture worker is waiting/capturing after a scroll.
     capture_pending: Arc<AtomicBool>,
     /// Set when the session ends; the scroll watcher thread observes this and exits.
@@ -107,6 +130,11 @@ enum PreviewUpdate {
         rows: u32,
         image: ImageBuffer<Rgba<u8>, Vec<u8>>,
     },
+    /// The stitched image did not grow, but `current_y` (the viewport position within the
+    /// stitched image) moved — e.g. scrolling back up into already-captured content. The
+    /// front-end still needs this so its preview viewport tracks the scroll.
+    OffsetOnly,
+    /// Nothing changed at all; no update should be emitted.
     None,
 }
 
@@ -144,6 +172,7 @@ pub fn start_long_capture(
         stitched_range: CaptureRange::from_top_height(0, frame.height()),
         current_y: 0,
         last_frame: frame,
+        last_shift: 0,
         capture_pending: capture_pending.clone(),
         stop: stop.clone(),
     };
@@ -171,108 +200,6 @@ pub fn start_long_capture(
         last_scroll_delta,
         target_pid,
     );
-    Ok(update)
-}
-
-pub fn scroll_long_capture(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    delta_y: f64,
-) -> Result<LongCaptureUpdate, FlickError> {
-    long_log(format!(
-        "scroll: enter session={session_id} delta_y={delta_y}"
-    ));
-    let selection = {
-        let guard = sessions()
-            .lock()
-            .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?;
-        guard
-            .get(&session_id)
-            .map(|session| session.selection.clone())
-            .ok_or_else(|| FlickError::Message("long capture session not found".into()))?
-    };
-    long_log(format!(
-        "scroll: selection x={} y={} width={} height={}",
-        selection.x, selection.y, selection.width, selection.height
-    ));
-
-    let editor_window = screenshot_editor_window(&app, &session_id);
-    long_log(format!(
-        "scroll: editor window found={} label={}",
-        editor_window.is_some(),
-        editor_window
-            .as_ref()
-            .map(|(label, _)| label.as_str())
-            .unwrap_or("<none>")
-    ));
-    if let Some((_, window)) = editor_window.as_ref() {
-        long_log("scroll: hide editor window start");
-        let _ = window.hide();
-        long_log("scroll: hide editor window complete");
-    }
-    long_log("scroll: hide overlay start");
-    platform::hide_overlay_for_live_capture(&app, &state);
-    long_log("scroll: hide overlay complete");
-    thread::sleep(PRE_SCROLL_HIDE_DELAY);
-    long_log("scroll: platform scroll start");
-    let target_pid = long_capture_target_pid(&state);
-    long_log(format!("scroll: target pid={target_pid:?}"));
-    if let Err(error) = platform::scroll_for_long_capture(delta_y, &selection, target_pid) {
-        long_log(format!("scroll: platform scroll failed: {error}"));
-        platform::restore_overlay_after_live_capture(&app, &state, &selection);
-        if let Some((_, window)) = editor_window.as_ref() {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-        return Err(error);
-    }
-    long_log("scroll: platform scroll complete");
-    thread::sleep(SCROLL_SETTLE_DELAY);
-    long_log("scroll: capture live frame start");
-    let frame = capture_live_frame_with_editor_hidden(&selection)?;
-    long_log(format!(
-        "scroll: capture live frame complete {}x{}",
-        frame.width(),
-        frame.height()
-    ));
-    long_log("scroll: restore overlay start");
-    platform::restore_overlay_after_live_capture(&app, &state, &selection);
-    long_log("scroll: restore overlay complete");
-    if let Some((_, window)) = editor_window.as_ref() {
-        long_log("scroll: show editor window start");
-        let _ = window.show();
-        let _ = window.set_focus();
-        long_log("scroll: show editor window complete");
-    }
-    let mut guard = sessions()
-        .lock()
-        .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?;
-    let session = guard
-        .get_mut(&session_id)
-        .ok_or_else(|| FlickError::Message("long capture session not found".into()))?;
-    let before_height = session.stitched.height();
-    let expected_shift = expected_shift_pixels(session, &frame, delta_y.abs().max(1.0));
-    let signed_delta = if delta_y >= 0.0 {
-        i64::from(expected_shift)
-    } else {
-        -i64::from(expected_shift)
-    };
-    let preview_update = append_frame_with_delta(session, frame, signed_delta);
-    long_log(format!(
-        "scroll: append complete before_height={} after_height={} last_frame={}x{}",
-        before_height,
-        session.stitched.height(),
-        session.last_frame.width(),
-        session.last_frame.height()
-    ));
-    let update = build_update(session, preview_update)?;
-    long_log(format!(
-        "scroll: update built total_height={} offset={} preview_len={}",
-        update.total_height,
-        update.scroll_offset,
-        update.preview_data_url.len()
-    ));
     Ok(update)
 }
 
@@ -344,6 +271,13 @@ fn run_real_scroll_watcher(
     target_pid: Option<i32>,
 ) {
     platform::set_overlay_mouse_passthrough(&app, true);
+    // Exclude the overlay and editor window from screen capture for the whole session, instead
+    // of toggling it per frame. The sampling loop captures continuously while the user scrolls,
+    // so per-frame hide/show would add latency and flicker on every single frame.
+    platform::set_overlay_capture_sharing(&app, false);
+    if let Some((_, window)) = screenshot_editor_window(&app, &session_id) {
+        platform::set_window_capture_sharing(&window, false);
+    }
     let event_types = vec![CGEventType::MouseMoved, CGEventType::ScrollWheel];
     let app_for_tap = app.clone();
     let session_for_tap = session_id.clone();
@@ -353,8 +287,9 @@ fn run_real_scroll_watcher(
     let cursor_passthrough_for_tap = cursor_passthrough.clone();
     let last_scroll_millis_for_tap = last_scroll_millis.clone();
     let last_scroll_delta_for_tap = last_scroll_delta.clone();
-    let ignore_controlled_scroll = Arc::new(AtomicBool::new(false));
-    let ignore_controlled_scroll_for_tap = ignore_controlled_scroll.clone();
+    // `target_pid` is unused now that we no longer synthesize scroll events into a target app;
+    // the user scrolls it directly. Kept in the signature for cross-platform symmetry.
+    let _ = target_pid;
 
     let tap = match CGEventTap::new(
         CGEventTapLocation::HID,
@@ -376,29 +311,24 @@ fn run_real_scroll_watcher(
             );
 
             if matches!(event_type, CGEventType::ScrollWheel) && inside_selection {
-                if ignore_controlled_scroll_for_tap.load(Ordering::SeqCst) {
-                    return CallbackResult::Keep;
-                }
+                // Free-scroll model: let the wheel event pass through so the user scrolls the
+                // real target window. We only record that scrolling is happening (and its
+                // direction) so the sampling loop knows when to grab frames.
                 let delta_y = scroll_delta_y(event);
-                last_scroll_millis_for_tap.store(monotonic_millis(), Ordering::SeqCst);
-                last_scroll_delta_for_tap.store(delta_y.signum().round() as i64, Ordering::SeqCst);
-                if !capture_pending_for_tap.load(Ordering::SeqCst) {
-                    long_log(format!(
-                        "real_scroll_watcher: controlled wheel trigger session={session_for_tap} delta_y={delta_y} location={},{} pending=false",
-                        location.x, location.y
-                    ));
+                if delta_y != 0.0 {
+                    last_scroll_millis_for_tap.store(monotonic_millis(), Ordering::SeqCst);
+                    last_scroll_delta_for_tap
+                        .store(delta_y.signum().round() as i64, Ordering::SeqCst);
+                    ensure_sampling_running(
+                        app_for_tap.clone(),
+                        session_for_tap.clone(),
+                        capture_pending_for_tap.clone(),
+                        stop_for_tap.clone(),
+                        last_scroll_millis_for_tap.clone(),
+                        last_scroll_delta_for_tap.clone(),
+                    );
                 }
-                schedule_real_scroll_capture(
-                    app_for_tap.clone(),
-                    session_for_tap.clone(),
-                    capture_pending_for_tap.clone(),
-                    stop_for_tap.clone(),
-                    last_scroll_millis_for_tap.clone(),
-                    last_scroll_delta_for_tap.clone(),
-                    target_pid,
-                    ignore_controlled_scroll.clone(),
-                );
-                return CallbackResult::Drop;
+                return CallbackResult::Keep;
             }
 
             CallbackResult::Keep
@@ -434,6 +364,11 @@ fn run_real_scroll_watcher(
 
     set_editor_cursor_passthrough(&app, &session_id, false);
     platform::set_overlay_mouse_passthrough(&app, false);
+    // Restore capture sharing that was disabled for the whole session above.
+    platform::set_overlay_capture_sharing(&app, true);
+    if let Some((_, window)) = screenshot_editor_window(&app, &session_id) {
+        platform::set_window_capture_sharing(&window, true);
+    }
     long_log("real_scroll_watcher: stopped");
 }
 
@@ -460,87 +395,73 @@ fn scroll_delta_y(event: &core_graphics::event::CGEvent) -> f64 {
     event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1) as f64
 }
 
+/// Ensure exactly one sampling loop is running for this session.
+///
+/// Called from the event tap on every wheel event. The `capture_pending` flag doubles as a
+/// "sampling loop active" guard so concurrent wheel events don't spawn duplicate loops.
 #[cfg(target_os = "macos")]
-fn schedule_real_scroll_capture(
+fn ensure_sampling_running(
     app: AppHandle,
     session_id: String,
     capture_pending: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     last_scroll_millis: Arc<AtomicI64>,
     last_scroll_delta: Arc<AtomicI64>,
-    target_pid: Option<i32>,
-    ignore_controlled_scroll: Arc<AtomicBool>,
 ) {
     if capture_pending
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
+        // A sampling loop is already running; it will keep grabbing frames while scrolling
+        // continues, so there's nothing to do.
         return;
     }
 
     thread::spawn(move || {
+        long_log("sampling: loop start");
         loop {
-            let wait_started = Instant::now();
-            loop {
-                if stop.load(Ordering::SeqCst) {
-                    capture_pending.store(false, Ordering::SeqCst);
-                    return;
-                }
-                let elapsed_since_scroll =
-                    monotonic_millis() - last_scroll_millis.load(Ordering::SeqCst);
-                let remaining = SCROLL_SETTLE_DELAY
-                    .as_millis()
-                    .saturating_sub(elapsed_since_scroll.max(0) as u128);
-                if remaining == 0 {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(remaining.min(20) as u64));
-            }
-            let captured_scroll_millis = last_scroll_millis.load(Ordering::SeqCst);
-            long_log(format!(
-                "real_scroll_capture: debounce complete waited_ms={} scroll_marker={captured_scroll_millis}",
-                wait_started.elapsed().as_millis()
-            ));
             if stop.load(Ordering::SeqCst) {
-                capture_pending.store(false, Ordering::SeqCst);
-                return;
+                break;
+            }
+
+            let idle_ms = monotonic_millis() - last_scroll_millis.load(Ordering::SeqCst);
+            // Stop sampling once scrolling (including trackpad inertia) has been quiet long
+            // enough. The loop restarts on the next wheel event.
+            if idle_ms > SCROLL_IDLE_STOP.as_millis() as i64 {
+                long_log(format!("sampling: idle {idle_ms}ms, stopping loop"));
+                break;
             }
 
             let direction = last_scroll_delta.load(Ordering::SeqCst);
-            if let Err(error) = capture_after_controlled_scroll(
-                app.clone(),
-                &session_id,
-                direction,
-                target_pid,
-                ignore_controlled_scroll.clone(),
-            ) {
-                long_log(format!("real_scroll_watcher: capture failed {error}"));
+            let tick_started = Instant::now();
+            if let Err(error) = sample_and_stitch_frame(&app, &session_id, direction) {
+                long_log(format!("sampling: frame failed {error}"));
             }
 
-            let latest_scroll_millis = last_scroll_millis.load(Ordering::SeqCst);
-            if latest_scroll_millis <= captured_scroll_millis || stop.load(Ordering::SeqCst) {
-                capture_pending.store(false, Ordering::SeqCst);
-                return;
+            // Pace the loop to the target sampling interval, accounting for the time already
+            // spent capturing and stitching this frame.
+            let spent = tick_started.elapsed();
+            if let Some(remaining) = SAMPLE_INTERVAL.checked_sub(spent) {
+                thread::sleep(remaining);
             }
-            long_log(format!(
-                "real_scroll_capture: scroll changed during capture; continue latest_marker={latest_scroll_millis} captured_marker={captured_scroll_millis}"
-            ));
         }
+        capture_pending.store(false, Ordering::SeqCst);
+        long_log("sampling: loop stopped");
     });
 }
 
+/// Capture one live frame of the selection and stitch it onto the running image.
+///
+/// Under the free-scroll model the window/overlay capture exclusion is set once for the whole
+/// session (see [`run_real_scroll_watcher`]), so this hot path does no per-frame window
+/// hiding, no synthesized scrolling, and no settle delays — just capture, measure, stitch.
 #[cfg(target_os = "macos")]
-fn capture_after_controlled_scroll(
-    app: AppHandle,
+fn sample_and_stitch_frame(
+    app: &AppHandle,
     session_id: &str,
     direction: i64,
-    target_pid: Option<i32>,
-    ignore_controlled_scroll: Arc<AtomicBool>,
 ) -> Result<(), FlickError> {
     let total_started = Instant::now();
-    long_log(format!(
-        "real_scroll_capture: start controlled session={session_id} direction={direction}"
-    ));
     let selection = {
         let guard = sessions()
             .lock()
@@ -550,78 +471,32 @@ fn capture_after_controlled_scroll(
             .map(|session| session.selection.clone())
             .ok_or_else(|| FlickError::Message("long capture session not found".into()))?
     };
-    if direction == 0 {
-        long_log("real_scroll_capture: zero direction, skip");
-        return Ok(());
-    }
 
-    let logical_step = controlled_scroll_step_points(&selection);
-    let content_down = wheel_direction_moves_content_down(direction);
-    let scroll_delta_y = controlled_scroll_delta_y(direction, logical_step);
-    long_log(format!(
-        "real_scroll_capture: controlled scroll logical_step={logical_step:.1} delta_y={scroll_delta_y:.1} content_down={content_down} target_pid={target_pid:?}"
-    ));
-    ignore_controlled_scroll.store(true, Ordering::SeqCst);
-    let scroll_result = platform::scroll_for_long_capture(scroll_delta_y, &selection, target_pid);
-    thread::sleep(Duration::from_millis(30));
-    ignore_controlled_scroll.store(false, Ordering::SeqCst);
-    scroll_result?;
-    thread::sleep(SCROLL_SETTLE_DELAY);
-
-    let editor_window = screenshot_editor_window(&app, session_id);
-    if let Some((_, window)) = editor_window.as_ref() {
-        long_log("real_scroll_capture: exclude editor window from capture start");
-        platform::set_window_capture_sharing(window, false);
-        long_log("real_scroll_capture: exclude editor window from capture complete");
-    }
-    long_log("real_scroll_capture: exclude overlay from capture start");
-    platform::set_overlay_capture_sharing(&app, false);
-    long_log("real_scroll_capture: exclude overlay from capture complete");
-    thread::sleep(WINDOW_HIDE_DELAY);
     let capture_started = Instant::now();
-    let frame_result = capture_live_frame_with_editor_hidden(&selection);
+    let frame = capture_live_frame_with_editor_hidden(&selection)?;
     let capture_ms = capture_started.elapsed().as_millis();
-    long_log("real_scroll_capture: restore capture sharing start");
-    platform::set_overlay_capture_sharing(&app, true);
-    if let Some((_, window)) = editor_window.as_ref() {
-        platform::set_window_capture_sharing(window, true);
-    }
-    long_log("real_scroll_capture: restore capture sharing complete");
-    let frame = frame_result?;
-    long_log(format!(
-        "real_scroll_capture: captured frame {}x{} capture_ms={}",
-        frame.width(),
-        frame.height(),
-        capture_ms
-    ));
 
     let update = {
-        let stitch_started = Instant::now();
         let mut guard = sessions()
             .lock()
             .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?;
         let session = guard
             .get_mut(session_id)
             .ok_or_else(|| FlickError::Message("long capture session not found".into()))?;
-        // macOS real wheel events report negative axis-1 deltas for scrolling down.
-        let expected_shift = expected_shift_pixels(session, &frame, logical_step);
-        let preview_update =
-            append_frame_with_expected_shift(session, frame, content_down, expected_shift);
-        let stitch_ms = stitch_started.elapsed().as_millis();
-        long_log(format!("real_scroll_capture: stitch_ms={stitch_ms}"));
-        let update_started = Instant::now();
-        let update = build_update(session, preview_update)?;
-        long_log(format!(
-            "real_scroll_capture: build_update_ms={}",
-            update_started.elapsed().as_millis()
-        ));
-        update
+        let shift_hint = free_scroll_shift_hint(session, &frame);
+        let preview_update = append_frame_from_free_scroll(session, frame, direction, shift_hint);
+        if matches!(preview_update, PreviewUpdate::None) {
+            // Truly nothing changed (no movement or low confidence): skip emitting to keep the
+            // front-end render loop light. `OffsetOnly` still emits so the preview viewport
+            // tracks scrolling back through already-captured content.
+            long_log(format!("sampling: no change capture_ms={capture_ms}"));
+            return Ok(());
+        }
+        build_update(session, preview_update)?
     };
-    let emit_started = Instant::now();
-    emit_long_capture_update(&app, session_id, update)?;
+    emit_long_capture_update(app, session_id, update)?;
     long_log(format!(
-        "real_scroll_capture: update emitted emit_ms={} total_ms={}",
-        emit_started.elapsed().as_millis(),
+        "sampling: stitched capture_ms={capture_ms} total_ms={}",
         total_started.elapsed().as_millis()
     ));
     Ok(())
@@ -1100,12 +975,17 @@ fn append_frame_with_delta(
 
     let new_y = session.current_y + signed_delta;
     if let Some(boundary_y) = unchanged_scroll_boundary_y(session, &frame, signed_delta) {
+        let moved = boundary_y != session.current_y;
         session.current_y = boundary_y;
         session.last_frame = frame;
         long_log(format!(
-            "append_delta: frame matches stitched boundary y={boundary_y}, not appending"
+            "append_delta: frame matches stitched boundary y={boundary_y}, not appending moved={moved}"
         ));
-        return PreviewUpdate::None;
+        return if moved {
+            PreviewUpdate::OffsetOnly
+        } else {
+            PreviewUpdate::None
+        };
     }
 
     long_log(format!(
@@ -1115,16 +995,21 @@ fn append_frame_with_delta(
     merge_frame_by_range(session, frame, new_y)
 }
 
-fn append_frame_with_expected_shift(
+/// Stitch a freely-scrolled frame.
+///
+/// Under free scrolling there is no reliable wheel-delta prior, so both the direction and the
+/// magnitude of the shift are recovered from the image. `direction_hint` (sign of the most
+/// recent wheel delta, may be 0) only biases which direction is tried first and seeds the
+/// search window; the result comes from the projection match. A low-confidence match (no
+/// overlap, repetitive texture) is dropped rather than stitched, to avoid corrupting the image.
+fn append_frame_from_free_scroll(
     session: &mut LongCaptureSession,
     frame: ImageBuffer<Rgba<u8>, Vec<u8>>,
-    content_down: bool,
-    expected_shift: u32,
+    direction_hint: i64,
+    shift_hint: u32,
 ) -> PreviewUpdate {
     long_log(format!(
-        "append_controlled: start content_down={} expected_shift={} stitched={}x{} last={}x{} frame={}x{}",
-        content_down,
-        expected_shift,
+        "append_free: start direction_hint={direction_hint} shift_hint={shift_hint} stitched={}x{} last={}x{} frame={}x{}",
         session.stitched.width(),
         session.stitched.height(),
         session.last_frame.width(),
@@ -1132,17 +1017,61 @@ fn append_frame_with_expected_shift(
         frame.width(),
         frame.height()
     ));
-    let expected_shift = expected_shift.min(frame.height());
-    let detected_shift =
-        detect_scroll_shift(&session.last_frame, &frame, content_down, expected_shift);
-    let signed_delta = if content_down {
-        i64::from(detected_shift)
+
+    if frame.dimensions() != session.last_frame.dimensions() {
+        long_log("append_free: dimensions changed, replacing stitched image");
+        return reset_stitched_to_frame(session, frame);
+    }
+
+    // Try the hinted direction first; if it isn't confident, try the other one. On macOS a
+    // negative wheel delta moves content down on screen.
+    let hint_down = direction_hint < 0;
+    let primary = detect_scroll_shift(&session.last_frame, &frame, hint_down, shift_hint);
+    let (content_down, measurement) = if primary.confident || direction_hint != 0 {
+        if primary.confident {
+            (hint_down, primary)
+        } else {
+            let alt = detect_scroll_shift(&session.last_frame, &frame, !hint_down, shift_hint);
+            if alt.confident {
+                (!hint_down, alt)
+            } else {
+                (hint_down, primary)
+            }
+        }
     } else {
-        -i64::from(detected_shift)
+        // No directional hint at all: probe both and keep the more confident one.
+        let down = detect_scroll_shift(&session.last_frame, &frame, true, shift_hint);
+        let up = detect_scroll_shift(&session.last_frame, &frame, false, shift_hint);
+        match (down.confident, up.confident) {
+            (true, false) => (true, down),
+            (false, true) => (false, up),
+            _ => (true, down),
+        }
+    };
+
+    if !measurement.confident {
+        // No trustworthy overlap (scrolled too fast or ambiguous content). Keep the frame as
+        // the new reference so the next frame can re-anchor, but do not grow the stitch.
+        session.last_frame = frame;
+        long_log(format!(
+            "append_free: low-confidence shift={} dropped (no stitch)",
+            measurement.shift
+        ));
+        return PreviewUpdate::None;
+    }
+
+    // Remember the magnitude so the next frame's search is seeded with the actual scroll speed.
+    if measurement.shift > 0 {
+        session.last_shift = measurement.shift;
+    }
+    let signed_delta = if content_down {
+        i64::from(measurement.shift)
+    } else {
+        -i64::from(measurement.shift)
     };
     long_log(format!(
-        "append_controlled: detected_shift={} signed_delta={}",
-        detected_shift, signed_delta
+        "append_free: content_down={content_down} shift={} signed_delta={signed_delta}",
+        measurement.shift
     ));
     append_frame_with_delta(session, frame, signed_delta)
 }
@@ -1191,78 +1120,292 @@ fn unchanged_scroll_boundary_y(
     None
 }
 
-fn detect_scroll_shift(
-    previous: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    current: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    content_down: bool,
-    expected_shift: u32,
-) -> u32 {
-    if previous.dimensions() != current.dimensions() {
-        return expected_shift;
-    }
-    if previous.as_raw() == current.as_raw() {
-        return 0;
-    }
-
-    let max_shift = expected_shift.min(current.height().saturating_sub(1));
-    let mut best_shift = 0_u32;
-    let mut best_score = u64::MAX;
-    for shift in 0..=max_shift {
-        let score = shift_match_score(previous, current, content_down, shift);
-        if score < best_score
-            || (score == best_score
-                && shift.abs_diff(expected_shift) < best_shift.abs_diff(expected_shift))
-        {
-            best_score = score;
-            best_shift = shift;
-        }
-    }
-    long_log(format!(
-        "detect_shift: content_down={} expected={} best={} score={}",
-        content_down, expected_shift, best_shift, best_score
-    ));
-    best_shift
+/// Result of measuring the vertical shift between two consecutive frames.
+#[derive(Clone, Copy, Debug)]
+struct ShiftMeasurement {
+    /// Detected vertical shift in pixels (0 = no movement).
+    shift: u32,
+    /// Whether the measurement is trustworthy enough to stitch with.
+    ///
+    /// Free scrolling has no reliable wheel-delta prior, so the shift is recovered purely
+    /// from the image. A measurement is rejected when the best candidate is not clearly
+    /// better than the runner-up (repetitive textures) or when no overlap remains (the user
+    /// scrolled faster than a frame height).
+    confident: bool,
 }
 
-fn shift_match_score(
-    previous: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    current: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+/// Per-row signature of a frame used for vertical-shift detection.
+///
+/// Each row gets a content hash plus a "trivial" flag. Hashing (rather than summing luminance)
+/// means two visually different rows that happen to share a brightness total are still
+/// distinguished. The trivial flag marks blank/near-uniform rows (whitespace, solid fills):
+/// those rows match each other for free at *any* shift and carry no alignment information, so
+/// the matcher must not count them — otherwise a large shift that lines up a band of blank rows
+/// scores perfectly and wins, which is exactly the failure we are fixing.
+struct RowSignatures {
+    hashes: Vec<u64>,
+    trivial: Vec<bool>,
+}
+
+impl RowSignatures {
+    fn from_frame(frame: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> Self {
+        let width = frame.width();
+        let height = frame.height();
+        let col_step = (width / SHIFT_SAMPLE_COLS).max(1);
+        let raw = frame.as_raw();
+        let row_stride = (width * 4) as usize;
+        let mut hashes = Vec::with_capacity(height as usize);
+        let mut trivial = Vec::with_capacity(height as usize);
+        for row in 0..height {
+            let base = row as usize * row_stride;
+            // FNV-1a over quantized RGB of the sampled columns gives a content-sensitive hash.
+            let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+            let mut min_luma = u32::MAX;
+            let mut max_luma = 0_u32;
+            let mut col = 0;
+            while col < width {
+                let idx = base + (col as usize) * 4;
+                // Quantize to 5 bits per channel so anti-aliasing jitter doesn't change the hash.
+                let r = raw[idx] >> 3;
+                let g = raw[idx + 1] >> 3;
+                let b = raw[idx + 2] >> 3;
+                for byte in [r, g, b] {
+                    hash ^= u64::from(byte);
+                    hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+                }
+                let luma =
+                    u32::from(raw[idx]) * 2 + u32::from(raw[idx + 1]) * 5 + u32::from(raw[idx + 2]);
+                min_luma = min_luma.min(luma);
+                max_luma = max_luma.max(luma);
+                col += col_step;
+            }
+            // A row whose sampled pixels span only a tiny luminance range is "blank" — it has no
+            // distinguishing structure to anchor an alignment on.
+            trivial.push(max_luma.saturating_sub(min_luma) < TRIVIAL_ROW_LUMA_RANGE);
+            hashes.push(hash);
+        }
+        Self { hashes, trivial }
+    }
+
+    fn len(&self) -> u32 {
+        self.hashes.len() as u32
+    }
+}
+
+/// How well two frames align at a candidate `shift`.
+///
+/// Direction convention (both frames share the selection's coordinate system, row 0 at the top):
+/// - `content_down` (scrolled down, looking at later content): the *bottom* of the previous frame
+///   overlaps the *top* of the current frame, i.e. `previous[r + shift] == current[r]`.
+/// - `!content_down` (scrolled up, looking back): the *bottom* of the current frame overlaps the
+///   *top* of the previous frame, i.e. `previous[r] == current[r + shift]`.
+///
+/// Scoring combines two signals so it works on both dense and sparse/periodic content:
+/// - `matched`: overlapping rows where both are non-trivial and their hashes are equal.
+/// - `conflicts`: overlapping rows that actively contradict the alignment — a non-trivial row
+///   lined up against a blank one, or two non-trivial rows whose hashes differ. A rigid scroll
+///   lines blank up with blank and content with content, so its conflicts are ~0; a period-off
+///   alignment of repetitive content matches the same content rows but slams content bands into
+///   whitespace gaps, producing many conflicts. Ranking by `matched - conflicts` therefore picks
+///   the true translation even when a wrong shift matches just as many rows outright.
+#[derive(Clone, Copy)]
+struct AlignScore {
+    matched: u32,
+    conflicts: u32,
+}
+
+impl AlignScore {
+    /// Match fraction in parts-per-thousand: matched / (matched + conflicts). This is the ranking
+    /// key. Unlike raw counts it does not reward a small shift for having more overlapping rows —
+    /// a true translation and a "barely moved" alignment both score ~1000, and the tie is then
+    /// broken toward the hint (the real scroll velocity), which is what stops the detector from
+    /// collapsing onto shift≈0 while the user is still scrolling.
+    fn match_permille(self) -> u32 {
+        let comparable = self.matched + self.conflicts;
+        if comparable == 0 {
+            0
+        } else {
+            self.matched * 1000 / comparable
+        }
+    }
+}
+
+fn align_score(
+    previous: &RowSignatures,
+    current: &RowSignatures,
     content_down: bool,
     shift: u32,
-) -> u64 {
-    let overlap_height = previous.height().saturating_sub(shift).max(1);
-    let row_step = (overlap_height / SHIFT_SAMPLE_ROWS).max(1);
-    let col_step = (previous.width() / SHIFT_SAMPLE_COLS).max(1);
-    let mut total = 0_u64;
-    let mut samples = 0_u64;
-
+) -> AlignScore {
+    let height = previous.len().min(current.len());
+    let overlap = height.saturating_sub(shift);
+    let min_overlap = (height / 4).max(1);
+    if overlap < min_overlap {
+        return AlignScore {
+            matched: 0,
+            conflicts: 0,
+        };
+    }
+    let mut matched = 0_u32;
+    let mut conflicts = 0_u32;
     let mut row = 0;
-    while row < overlap_height {
-        let (previous_y, current_y) = if content_down {
+    while row < overlap {
+        let (previous_row, current_row) = if content_down {
             (row + shift, row)
         } else {
             (row, row + shift)
         };
-        let mut col = 0;
-        while col < previous.width() {
-            let previous_pixel = previous.get_pixel(col, previous_y).0;
-            let current_pixel = current.get_pixel(col, current_y).0;
-            total +=
-                (i32::from(previous_pixel[0]) - i32::from(current_pixel[0])).unsigned_abs() as u64;
-            total +=
-                (i32::from(previous_pixel[1]) - i32::from(current_pixel[1])).unsigned_abs() as u64;
-            total +=
-                (i32::from(previous_pixel[2]) - i32::from(current_pixel[2])).unsigned_abs() as u64;
-            samples += 3;
-            col += col_step;
+        let (pr, cr) = (previous_row as usize, current_row as usize);
+        let (p_trivial, c_trivial) = (previous.trivial[pr], current.trivial[cr]);
+        if p_trivial && c_trivial {
+            // Blank against blank: no evidence either way, neutral.
+        } else if p_trivial != c_trivial {
+            // Content lined up against whitespace — the frames are not aligned here.
+            conflicts += 1;
+        } else if previous.hashes[pr] == current.hashes[cr] {
+            matched += 1;
+        } else {
+            conflicts += 1;
         }
-        row += row_step;
+        row += 1;
+    }
+    AlignScore { matched, conflicts }
+}
+
+/// Detect the vertical shift between two same-sized frames purely from image content.
+///
+/// `hint` only seeds and narrows the search; the returned shift is the one that maximizes the
+/// number of matched non-trivial rows. A match is accepted only when it explains most of the
+/// comparable rows and clearly beats any competing (non-adjacent) alignment.
+fn detect_scroll_shift(
+    previous: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+    current: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+    content_down: bool,
+    hint: u32,
+) -> ShiftMeasurement {
+    if previous.dimensions() != current.dimensions() {
+        return ShiftMeasurement {
+            shift: 0,
+            confident: false,
+        };
+    }
+    if previous.as_raw() == current.as_raw() {
+        return ShiftMeasurement {
+            shift: 0,
+            confident: true,
+        };
     }
 
-    if samples == 0 {
-        return u64::MAX;
+    let previous_sig = RowSignatures::from_frame(previous);
+    let current_sig = RowSignatures::from_frame(current);
+    let height = previous_sig.len().min(current_sig.len());
+    let max_shift = (height.saturating_mul(3) / 4).min(height.saturating_sub(1));
+    if max_shift == 0 {
+        return ShiftMeasurement {
+            shift: 0,
+            confident: true,
+        };
     }
-    total / samples
+
+    // Scan the whole range — maximizing matched rows is cheap (hash compares) and a windowed
+    // search around the hint risks missing the true shift when scrolling is fast.
+    let best = scan_alignment_range(&previous_sig, &current_sig, content_down, 0, max_shift, hint);
+
+    long_log(format!(
+        "detect_shift: content_down={content_down} hint={} best={} quality={} matched={} conflicts={} runner_up_quality={} confident={}",
+        hint.min(max_shift),
+        best.shift,
+        best.quality,
+        best.matched,
+        best.conflicts,
+        best.runner_up_quality,
+        best.confident
+    ));
+
+    ShiftMeasurement {
+        shift: best.shift,
+        confident: best.confident,
+    }
+}
+
+struct AlignmentResult {
+    shift: u32,
+    quality: u32,
+    matched: u32,
+    conflicts: u32,
+    runner_up_quality: u32,
+    confident: bool,
+}
+
+fn scan_alignment_range(
+    previous: &RowSignatures,
+    current: &RowSignatures,
+    content_down: bool,
+    lo: u32,
+    hi: u32,
+    hint: u32,
+) -> AlignmentResult {
+    // Rank by match *fraction*, not raw matched count. Raw counts grow with overlap, so the
+    // smallest shift always wins and the detector collapses onto shift≈0 while the user is still
+    // scrolling. Among shifts that have enough absolute evidence (`matched >= MIN_QUALITY_ROWS`),
+    // pick the highest match fraction; ties (a true scroll and a barely-moved alignment both score
+    // ~1000) are broken toward the hint, i.e. the real scroll velocity.
+    let mut best_shift = 0_u32;
+    let mut best = AlignScore {
+        matched: 0,
+        conflicts: 0,
+    };
+    let mut have_best = false;
+    for shift in lo..=hi {
+        let score = align_score(previous, current, content_down, shift);
+        if score.matched < MIN_QUALITY_ROWS {
+            continue;
+        }
+        let better = !have_best
+            || score.match_permille() > best.match_permille()
+            || (score.match_permille() == best.match_permille()
+                && shift.abs_diff(hint) < best_shift.abs_diff(hint));
+        if better {
+            best = score;
+            best_shift = shift;
+            have_best = true;
+        }
+    }
+
+    // Runner-up: the highest match fraction among shifts that are neither adjacent to the winner
+    // nor to the hint, with enough absolute evidence. The hint is the expected scroll, so a strong
+    // alignment near it is not a competitor; only a strong unrelated alignment signals ambiguity.
+    let mut runner_up_permille = 0_u32;
+    for shift in lo..=hi {
+        if shift.abs_diff(best_shift) <= SHIFT_NEIGHBOR_GUARD
+            || shift.abs_diff(hint) <= SHIFT_NEIGHBOR_GUARD
+        {
+            continue;
+        }
+        let score = align_score(previous, current, content_down, shift);
+        if score.matched < MIN_QUALITY_ROWS {
+            continue;
+        }
+        if score.match_permille() > runner_up_permille {
+            runner_up_permille = score.match_permille();
+        }
+    }
+
+    // Confident when the winner has enough absolute evidence and a high match fraction. We do not
+    // additionally require it to strictly beat the runner-up: with conflicts already penalizing
+    // misalignment and ties broken toward the hint, an equal-fraction alignment elsewhere is the
+    // unavoidable ambiguity of truly periodic content, which the hint has already resolved.
+    let enough_absolute = have_best && best.matched >= MIN_QUALITY_ROWS;
+    let high_fraction = best.match_permille() >= MIN_MATCH_PERMILLE;
+    let confident = enough_absolute && high_fraction;
+
+    AlignmentResult {
+        shift: best_shift,
+        quality: best.match_permille(),
+        matched: best.matched,
+        conflicts: best.conflicts,
+        runner_up_quality: runner_up_permille,
+        confident,
+    }
 }
 
 fn frame_matches_stitched_region(
@@ -1291,7 +1434,15 @@ fn frame_matches_stitched_region(
     while row < rows_to_compare {
         let mut col = 0;
         while col < frame.width() {
-            if frame.get_pixel(col, row) != stitched.get_pixel(col, stitched_y + row) {
+            let a = frame.get_pixel(col, row).0;
+            let b = stitched.get_pixel(col, stitched_y + row).0;
+            // Tolerant comparison: under free scrolling the same content re-rendered in a later
+            // frame can differ by a few levels per channel (HiDPI font anti-aliasing, subpixel
+            // rounding), so a strict equality check would spuriously reject a true match.
+            if a[0].abs_diff(b[0]) > PIXEL_MATCH_TOLERANCE
+                || a[1].abs_diff(b[1]) > PIXEL_MATCH_TOLERANCE
+                || a[2].abs_diff(b[2]) > PIXEL_MATCH_TOLERANCE
+            {
                 return false;
             }
             col += 1;
@@ -1328,10 +1479,17 @@ fn merge_frame_by_range(
     ));
 
     if old_range.contains(frame_range) {
+        let moved = frame_y != session.current_y;
         session.current_y = frame_y;
         session.last_frame = frame;
-        long_log("merge_range: frame already covered, no stitched growth");
-        return PreviewUpdate::None;
+        long_log(format!(
+            "merge_range: frame already covered, no stitched growth moved={moved}"
+        ));
+        return if moved {
+            PreviewUpdate::OffsetOnly
+        } else {
+            PreviewUpdate::None
+        };
     }
 
     let grows_top = frame_range.top < old_range.top;
@@ -1407,49 +1565,22 @@ fn frame_rows(
     })
 }
 
-fn controlled_scroll_step_points(selection: &SelectionRect) -> f64 {
-    (selection.height as f64 * CONTROLLED_SCROLL_STEP_RATIO)
-        .round()
-        .max(1.0)
-}
-
-fn wheel_direction_moves_content_down(direction: i64) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        direction < 0
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        direction < 0
-    }
-}
-
+/// Coarse seed for the shift search under free scrolling.
+///
+/// Scroll speed is continuous frame-to-frame, so the best predictor of this frame's shift is the
+/// last confidently-detected one. This keeps the hint tracking the real scroll velocity, which is
+/// what disambiguates periodic content (the alignment nearest the hint is the true scroll). Until
+/// a shift has been measured, fall back to a modest fraction of the frame height.
 #[cfg(target_os = "macos")]
-fn controlled_scroll_delta_y(direction: i64, logical_step: f64) -> f64 {
-    if direction < 0 {
-        logical_step
-    } else {
-        -logical_step
-    }
-}
-
-fn expected_shift_pixels(
+fn free_scroll_shift_hint(
     session: &LongCaptureSession,
     frame: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    logical_step: f64,
 ) -> u32 {
-    let scale = if session.selection.height == 0 {
-        1.0
+    if session.last_shift > 0 {
+        session.last_shift
     } else {
-        frame.height() as f64 / session.selection.height as f64
-    };
-    let expected = (logical_step * scale).round().max(1.0) as u32;
-    let clamped = expected.min(frame.height());
-    long_log(format!(
-        "append_controlled: scale={scale:.3} logical_step={logical_step:.1} expected_shift_px={expected} clamped={clamped}"
-    ));
-    clamped
+        ((frame.height() as f64) * 0.15).round().max(1.0) as u32
+    }
 }
 
 fn build_update(
@@ -1500,6 +1631,7 @@ fn build_update(
                 ));
                 (String::new(), append_data_url, rows, "append")
             }
+            PreviewUpdate::OffsetOnly => (String::new(), String::new(), 0, "offset_only"),
             PreviewUpdate::None => (String::new(), String::new(), 0, "none"),
         };
     long_log(format!(
@@ -1596,6 +1728,7 @@ mod tests {
             stitched_range: CaptureRange::from_top_height(0, frame.height()),
             current_y: 0,
             last_frame: frame,
+            last_shift: 0,
             capture_pending: Arc::new(AtomicBool::new(false)),
             stop: Arc::new(AtomicBool::new(false)),
         }
@@ -1680,6 +1813,183 @@ mod tests {
     }
 
     #[test]
+    fn scrolling_back_into_covered_region_reports_offset_change() {
+        let frame_height = 300;
+        let page = synthetic_page(120, 1000);
+        let mut session = session_with(frame_at(&page, 0, frame_height), frame_height);
+
+        // Grow downward so [0, 600) is covered with current_y at 300.
+        append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), 150);
+        append_frame_with_delta(&mut session, frame_at(&page, 300, frame_height), 150);
+        assert_eq!(session.current_y, 300);
+
+        // Scroll back up into already-covered content: the image must not grow, but the
+        // viewport offset moved, so the update must be OffsetOnly (not None) so the front-end
+        // preview can follow.
+        let update = append_frame_with_delta(&mut session, frame_at(&page, 150, frame_height), -150);
+        assert!(
+            matches!(update, PreviewUpdate::OffsetOnly),
+            "expected OffsetOnly when scrolling back into covered region"
+        );
+        assert_eq!(session.current_y, 150);
+        assert_eq!(
+            session.stitched_range,
+            CaptureRange { top: 0, bottom: 600 },
+            "stitched image must not grow when revisiting covered rows"
+        );
+
+        // Scrolling back down through covered content also reports an offset change.
+        let update = append_frame_with_delta(&mut session, frame_at(&page, 300, frame_height), 150);
+        assert!(matches!(update, PreviewUpdate::OffsetOnly));
+        assert_eq!(session.current_y, 300);
+    }
+
+    /// A page whose per-row luminance is strictly monotonic (and thus non-periodic), so the
+    /// vertical-shift detector has a single unambiguous alignment. `synthetic_page` repeats every
+    /// 256 rows in its row projection, which is unrealistic for real screenshots and confuses a
+    /// 1-D projection match, so shift tests use this instead.
+    fn monotonic_page(width: u32, height: u32) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+        ImageBuffer::from_fn(width, height, |x, y| {
+            let v = ((y * 251 + x * 7) % 65536) as u32;
+            Rgba([(v >> 8) as u8, (v & 0xff) as u8, ((y * 3) & 0xff) as u8, 255])
+        })
+    }
+
+    #[test]
+    fn detect_scroll_shift_recovers_known_shift_both_directions() {
+        let page = monotonic_page(120, 1000);
+        let frame_height = 254;
+        let previous = frame_at(&page, 200, frame_height);
+
+        // Scrolled down: the new frame reveals later content (rows 240..494). With content_down,
+        // previous.row[r + shift] matches current.row[r] → 200 + r + shift = 240 + r → shift 40.
+        let current_down = frame_at(&page, 240, frame_height);
+        let down = detect_scroll_shift(&previous, &current_down, true, 30);
+        assert!(down.confident, "down shift should be confident");
+        assert_eq!(down.shift, 40, "down shift magnitude");
+
+        // Scrolled up: the new frame reveals earlier content (rows 160..414). With !content_down,
+        // previous.row[r] matches current.row[r + shift] → 200 + r = 160 + r + shift → shift 40.
+        let current_up = frame_at(&page, 160, frame_height);
+        let up = detect_scroll_shift(&previous, &current_up, false, 30);
+        assert!(up.confident, "up shift should be confident");
+        assert_eq!(up.shift, 40, "up shift magnitude");
+
+        // Querying the wrong direction must not produce a confident nonzero shift for the pair.
+        let down_wrong = detect_scroll_shift(&previous, &current_up, true, 30);
+        assert!(
+            !down_wrong.confident || down_wrong.shift == 0,
+            "querying the wrong direction must not yield a confident nonzero shift"
+        );
+    }
+
+    /// A mostly-blank page: solid white except for a thin band of distinctive content every
+    /// `content_period` rows. This is the case that broke the projection matcher — blank rows
+    /// align for free at any shift, so a naive "least difference" match snaps to a wrong large
+    /// shift that happens to line up whitespace.
+    fn sparse_page(width: u32, height: u32, content_period: u32) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+        ImageBuffer::from_fn(width, height, |x, y| {
+            if y % content_period < 3 {
+                let v = ((y * 131 + x * 17) % 65536) as u32;
+                Rgba([(v >> 8) as u8, (v & 0xff) as u8, ((x * 5) & 0xff) as u8, 255])
+            } else {
+                Rgba([255, 255, 255, 255])
+            }
+        })
+    }
+
+    #[test]
+    fn detect_scroll_shift_ignores_blank_rows() {
+        // The frame is mostly whitespace with content bands every 40 rows. A small real scroll
+        // (shift 12) must be recovered from the content bands, not be hijacked by the many blank
+        // rows that match each other at large shifts.
+        let page = sparse_page(120, 1000, 40);
+        let frame_height = 254;
+        let previous = frame_at(&page, 200, frame_height);
+        let current = frame_at(&page, 212, frame_height); // scrolled down 12px
+
+        let measurement = detect_scroll_shift(&previous, &current, true, 10);
+        assert!(
+            measurement.confident,
+            "content bands should give a confident match"
+        );
+        assert_eq!(
+            measurement.shift, 12,
+            "shift must come from content rows, not blank-row alignment"
+        );
+    }
+
+    /// A list/table-like page: a content band every `period` rows, but each band's content is
+    /// distinct (real lists have different text per row). The *layout* is periodic, the *content*
+    /// is not — so a period-off alignment slams differing content together and racks up conflicts.
+    fn periodic_page(width: u32, height: u32, period: u32) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+        ImageBuffer::from_fn(width, height, |x, y| {
+            let phase = y % period;
+            if phase < 4 {
+                let band = y / period; // distinct content per band
+                let v = ((band * 2657 + phase * 97 + x * 13) % 65536) as u32;
+                Rgba([(v >> 8) as u8, (v & 0xff) as u8, ((band * 53 + x * 11) & 0xff) as u8, 255])
+            } else {
+                Rgba([255, 255, 255, 255])
+            }
+        })
+    }
+
+    #[test]
+    fn detect_scroll_shift_resolves_periodic_layout_with_distinct_content() {
+        // Bands every 24 rows but each band differs. A period-off shift would line content bands
+        // up with the wrong (different) bands and against whitespace, so the quality metric — not
+        // the hint — must still pick the true 18px shift.
+        let page = periodic_page(120, 1000, 24);
+        let frame_height = 254;
+        let previous = frame_at(&page, 240, frame_height);
+        let current = frame_at(&page, 258, frame_height); // real scroll: 18px down
+
+        let measurement = detect_scroll_shift(&previous, &current, true, 18);
+        assert!(
+            measurement.confident,
+            "distinct-content bands should resolve confidently from the alignment quality"
+        );
+        assert_eq!(measurement.shift, 18, "must pick the true translation");
+    }
+
+    #[test]
+    fn detect_scroll_shift_does_not_collapse_to_tiny_shift() {
+        // Reproduces the "scrolls but barely moves" bug. A tiny shift always overlaps more rows
+        // than the true large shift, so ranking by raw matched count collapses onto ~0. Ranking
+        // by match *fraction* must recover the true large shift in both directions.
+        let page = monotonic_page(120, 1000);
+        let frame_height = 254;
+        let previous = frame_at(&page, 300, frame_height);
+
+        // Scrolled down 90px: only shift 90 has a high match fraction; tiny shifts mismatch.
+        let down = detect_scroll_shift(&previous, &frame_at(&page, 390, frame_height), true, 80);
+        assert!(down.confident);
+        assert_eq!(down.shift, 90, "down: must not collapse onto a tiny shift");
+
+        // Scrolled up 90px.
+        let up = detect_scroll_shift(&previous, &frame_at(&page, 210, frame_height), false, 80);
+        assert!(up.confident);
+        assert_eq!(up.shift, 90, "up: must not collapse onto a tiny shift");
+    }
+
+    #[test]
+    fn detect_scroll_shift_rejects_non_overlapping_frames() {
+        // Two completely unrelated frames (scrolled far past a frame height) share no real
+        // alignment, so the detector must not confidently report a shift.
+        let page = monotonic_page(120, 2000);
+        let frame_height = 254;
+        let previous = frame_at(&page, 0, frame_height);
+        let current = frame_at(&page, 1500, frame_height);
+        let measurement = detect_scroll_shift(&previous, &current, true, 30);
+        assert!(
+            !measurement.confident,
+            "non-overlapping frames must be rejected, got shift={}",
+            measurement.shift
+        );
+    }
+
+    #[test]
     fn boundary_region_match_can_compare_partial_rows() {
         let frame_height = 100;
         let page = synthetic_page(20, frame_height);
@@ -1692,33 +2002,26 @@ mod tests {
     }
 
     #[test]
-    fn controlled_scroll_uses_detected_shift_at_boundary() {
+    fn free_scroll_recovers_shift_from_image_at_boundary() {
         let frame_height = 400;
-        let page = synthetic_page(120, 1000);
+        // Non-periodic content so the row-hash match has a single unambiguous alignment.
+        let page = monotonic_page(120, 1000);
         let mut session = session_with(frame_at(&page, 0, frame_height), frame_height);
 
-        append_frame_with_expected_shift(
-            &mut session,
-            frame_at(&page, 288, frame_height),
-            true,
-            288,
-        );
-        append_frame_with_expected_shift(
-            &mut session,
-            frame_at(&page, 0, frame_height),
-            false,
-            288,
-        );
+        // direction_hint < 0 means content moved down on screen (macOS convention). The actual
+        // shift (200) is recovered from the row-hash match, not from the hint.
+        append_frame_from_free_scroll(&mut session, frame_at(&page, 200, frame_height), -1, 180);
+        append_frame_from_free_scroll(&mut session, frame_at(&page, 0, frame_height), 1, 180);
 
         let mut boundary_frame = frame_at(&page, 0, frame_height);
         boundary_frame.put_pixel(0, 0, Rgba([0, 0, 0, 255]));
-        append_frame_with_expected_shift(&mut session, boundary_frame, false, 288);
+        append_frame_from_free_scroll(&mut session, boundary_frame, 1, 180);
 
         assert_eq!(
             session.stitched_range,
             CaptureRange {
                 top: 0,
-                bottom: 688
+                bottom: 600
             }
         );
         assert_eq!(session.current_y, 0);
