@@ -287,10 +287,16 @@ pub fn show_screenshot_editor_window(
 }
 
 pub fn preload_screenshot_editor_window(app: &AppHandle) -> tauri::Result<()> {
-    if app
-        .get_webview_window(PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL)
-        .is_some()
-    {
+    if let Some(window) = app.get_webview_window(PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL) {
+        // The window survived from a previous capture and still shows that session's painted content
+        // (e.g. the last long-capture thumbnail). It stays hidden until the next session navigates and
+        // shows it — at which point the stale paint would flash beside the new selection. Reset it to
+        // the blank preload page now, while hidden, so there is nothing stale to reveal.
+        if let Ok(mut blank_url) = window.url() {
+            blank_url.set_path("screenshot-editor.html");
+            blank_url.set_query(Some("preload=1"));
+            let _ = window.navigate(blank_url);
+        }
         return Ok(());
     }
 

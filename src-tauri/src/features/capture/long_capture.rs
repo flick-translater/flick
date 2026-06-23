@@ -15,9 +15,11 @@ use chrono::{SecondsFormat, Utc};
 use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
 #[cfg(target_os = "macos")]
 use core_graphics::event::{
-    CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
-    CallbackResult, EventField,
+    CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+    CallbackResult, EventField, ScrollEventUnit,
 };
+#[cfg(target_os = "macos")]
+use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use image::{
     ImageBuffer, ImageEncoder, Rgba,
     codecs::png::{CompressionType, FilterType as PngFilterType},
@@ -43,15 +45,10 @@ const WINDOW_HIDE_DELAY: Duration = Duration::from_millis(70);
 const FINALIZE_CAPTURE_WAIT_TIMEOUT: Duration = Duration::from_millis(1500);
 const FINALIZE_CAPTURE_WAIT_POLL: Duration = Duration::from_millis(25);
 const LONG_PREVIEW_WIDTH: u32 = 240;
-/// Target interval between frame samples while the user is scrolling. Small enough that even
-/// fast scrolling keeps consecutive frames overlapping, so the stitcher can recover the shift.
-// Sampling cadence. Capturing + stitching one frame costs ~40-50ms, so the practical floor is
-// around there; 30ms targets "as fast as processing allows" rather than idling between frames.
-// Denser sampling halves the per-frame scroll displacement, which keeps the inter-frame overlap
-// large enough to align reliably even when the user scrolls fast.
-const SAMPLE_INTERVAL: Duration = Duration::from_millis(30);
-/// How long scrolling must be quiet (covering trackpad inertia) before the sampling loop stops.
-const SCROLL_IDLE_STOP: Duration = Duration::from_millis(280);
+/// If the stream delivers no frame for this long, the page was likely still (and may have jumped),
+/// so the next frame drops its stale predecessor and starts a fresh stitch base instead of measuring
+/// a bogus delta across the gap. Stream-driven, not wheel-driven, so it works during inertia too.
+const STREAM_PREV_RESET_GAP_MS: i64 = 250;
 /// Number of columns sampled per row when building its content hash.
 const SHIFT_SAMPLE_COLS: u32 = 64;
 /// Number of equal-width segments a row is divided into for its luminance feature vector. Each
@@ -65,8 +62,17 @@ const ROW_FEATURE_LEN: usize = ROW_FEATURE_SEGMENTS * 2;
 /// Minimum per-frame scroll (px) accepted while a scroll direction is known. Below this, a match is
 /// almost certainly the self-similar near-neighbor artifact (the page offset by ~1 line still
 /// correlates at ~1000‰) rather than real motion, and accepting it self-locks the search at a crawl.
-/// Kept small so genuinely slow (e.g. inertia tail) scrolling still registers; ±1..±3 px is dropped.
-const MIN_SCROLL_DELTA: i64 = 4;
+/// Near-duplicate frames (the page barely moved between two stream samples) carry a tiny delta that
+/// is sub-pixel/anti-alias jitter, not real motion; committing them stitches the same content again
+/// (the "slow-scroll duplicate" bug — at 60fps a slowly scrolling page produces many such frames).
+/// The gate below drops `|delta| < MIN_SCROLL_DELTA`. Set to 20: below ~20px on a Retina (2x) capture
+/// the inter-frame change is within the jitter band and not trustworthy real motion; at/above it the
+/// frame carries genuinely new content, so stitching it is not a duplicate. Slow scrolling simply
+/// accumulates across a few dropped frames until it has moved ≥20px, then stitches once.
+const MIN_SCROLL_DELTA: i64 = 20;
+/// Do not commit very small edge growth as its own stitched strip. These rows usually come from
+/// sub-pixel/compositor settling around a stop point; a later larger frame will include them again.
+const MIN_STITCH_GROW_ROWS: u32 = 16;
 /// Zero-mean normalized cross-correlation (ZNCC) above this threshold counts two rows as the same
 /// content. It is invariant to overall brightness/contrast shifts, so the absolute jitter from
 /// smooth scrolling on Retina displays does not break the match.
@@ -82,6 +88,39 @@ const MIN_QUALITY_ROWS: u32 = 6;
 /// trustworthy (a handful of rows can correlate by chance), small enough that a fast scroll leaving
 /// only a sliver of overlap can still be aligned.
 const MIN_OVERLAP_ROWS: i64 = 80;
+/// Factor applied to each forwarded wheel delta, slowing the page so per-frame scroll stays within the
+/// stitcher's alignable range. Lower = slower page / safer against big-jump seams / more "drag";
+/// higher = closer to native speed. ~0.35 brought the per-frame delta down from ~180px to a range the
+/// aligner handles without snapping to the search boundary.
+const SCROLL_SPEED_FACTOR: f64 = 0.35;
+/// Hard cap on the pixels a single forwarded wheel event may move the page. Scaling lowers the
+/// average speed, but one hard fling event can still carry a delta whose ×factor outruns capture for
+/// that frame (the residual big jump); clamping each event's forwarded magnitude削平s those peaks.
+const MAX_SCROLL_PX_PER_EVENT: f64 = 120.0;
+/// Sliding window for the scroll-rate limit. Must be ≥ the worst-case frame capture interval so that
+/// ANY single captured frame falls entirely within one window — then the per-window budget directly
+/// bounds per-frame scroll motion. A shorter window let one frame span several windows and accumulate
+/// multiples of the budget, which let big jumps through.
+const RATE_WINDOW_MS: i64 = 150;
+/// Absolute cap on scroll pixels per window. This is the hard speed ceiling: ≤ 200px per 150ms window
+/// (≈1300 px/s). Applied together with the frame-fraction cap below (whichever is smaller wins), so
+/// short selections are also protected.
+const RATE_MAX_PX_PER_WINDOW: f64 = 200.0;
+/// Scroll budget per window as a fraction of the selection's (logical) height — protects short
+/// selections where a fixed px cap would be too large a fraction of the frame. The factor folds in
+/// the ≈2× Retina logical→physical scale (0.5 ≈ 25% of the physical frame per window).
+const RATE_MAX_FRAME_FRACTION: f64 = 0.5;
+/// Sentinel written to a synthetic scroll event's user-data field so the event tap recognizes its own
+/// posted events and ignores them (prevents the synth → tap → synth re-entrancy loop).
+const SYNTHETIC_SCROLL_TAG: i64 = 0x466c_6b53; // "FlkS"
+/// Minimum overlap *to accept* a delta, as a fraction of frame height (the search floor above is
+/// smaller so the search can still range wide). A fast fling can move nearly a whole frame between
+/// two stream frames; the search then snaps to its upper edge (`max_delta`, overlap ≈ MIN_OVERLAP_ROWS)
+/// on coincidental self-similarity, producing a huge bogus delta that drops most of a frame of content
+/// (the "fast-scroll big jump"). Requiring a healthier overlap to *accept* rejects that snap: the
+/// frame is dropped and retried against the same predecessor, so once the fling slows enough that a
+/// real overlap exists we re-acquire — better a brief pause than a mis-stitched seam.
+const MIN_ACCEPT_OVERLAP_FRACTION: f64 = 0.25;
 /// Consecutive failed locates after which the scroll-speed prior (`last_shift`) is cleared, so a
 /// poisoned prediction can't avalanche into an unrecoverable run of dropped frames.
 const STALL_RESET_FAILURES: u32 = 3;
@@ -162,21 +201,15 @@ struct LongCaptureSession {
     stop: Arc<AtomicBool>,
 }
 
-/// Most recently observed capture scale (physical pixels per logical point), ×1000, written by
-/// the sampling loop and read by the event-tap throttle. Scroll-wheel deltas arrive in logical
-/// points but the stitcher works in physical pixels, so the throttle needs this to size its
-/// budget in the same units the shift detector uses. Starts at 1000 (scale 1.0) until measured.
-#[cfg(target_os = "macos")]
-static CAPTURE_SCALE_X1000: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1000);
-
 /// Shared reference to a captured frame. `Arc` lets the same pixels flow capture → compute → merge
 /// without cloning the (large) image at each hand-off.
 #[cfg(target_os = "macos")]
 type SharedFrame = Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>;
 
-/// Stage 1 item: a captured frame plus the previous frame, awaiting relative-delta computation. The
+/// Stage 1 item: a decoded frame plus its predecessor, awaiting relative-delta computation. The
 /// previous frame travels with it so a compute worker can measure the inter-frame shift without any
-/// shared accumulated state — that is what makes the (expensive) delta search parallelizable.
+/// shared accumulated state — that is what makes the (expensive) delta search parallelizable. Frames
+/// are already decoded to RGBA by the stream callback, so the pipeline never holds a pixel buffer.
 #[cfg(target_os = "macos")]
 struct RawJob {
     index: u64,
@@ -214,17 +247,25 @@ const FRAME_QUEUE_BACKPRESSURE_NUM: usize = FRAME_QUEUE_CAPACITY / 2;
 
 /// Stage 1: capture thread → compute workers. FIFO; any idle worker takes the next frame.
 #[cfg(target_os = "macos")]
-static RAW_QUEUE: std::sync::OnceLock<(Mutex<VecDeque<RawJob>>, Condvar)> = std::sync::OnceLock::new();
+static RAW_QUEUE: std::sync::OnceLock<(Mutex<VecDeque<RawJob>>, Condvar)> =
+    std::sync::OnceLock::new();
 
 /// Stage 2: compute workers → merge thread. Keyed by `index` so the single merge thread can consume
 /// strictly in order regardless of which worker finished first.
 #[cfg(target_os = "macos")]
-static COMPUTED_QUEUE: std::sync::OnceLock<(Mutex<std::collections::BTreeMap<u64, ComputedJob>>, Condvar)> =
-    std::sync::OnceLock::new();
+static COMPUTED_QUEUE: std::sync::OnceLock<(
+    Mutex<std::collections::BTreeMap<u64, ComputedJob>>,
+    Condvar,
+)> = std::sync::OnceLock::new();
 
 /// Depth of the raw queue, mirrored as an atomic so the event tap reads backpressure without locking.
 #[cfg(target_os = "macos")]
 static FRAME_QUEUE_LEN: AtomicUsize = AtomicUsize::new(0);
+
+/// Depth of the computed queue (delta workers -> merge thread). This shows merge/UI backlog, which
+/// raw-queue backpressure alone cannot see.
+#[cfg(target_os = "macos")]
+static COMPUTED_QUEUE_LEN: AtomicUsize = AtomicUsize::new(0);
 
 /// Monotonic capture index. Stamped on every RawJob so the merge thread can reassemble strict order
 /// after frames are processed out-of-order by the parallel compute workers.
@@ -243,7 +284,30 @@ fn raw_queue() -> &'static (Mutex<VecDeque<RawJob>>, Condvar) {
 
 #[cfg(target_os = "macos")]
 fn computed_queue() -> &'static (Mutex<std::collections::BTreeMap<u64, ComputedJob>>, Condvar) {
-    COMPUTED_QUEUE.get_or_init(|| (Mutex::new(std::collections::BTreeMap::new()), Condvar::new()))
+    COMPUTED_QUEUE.get_or_init(|| {
+        (
+            Mutex::new(std::collections::BTreeMap::new()),
+            Condvar::new(),
+        )
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn clear_pipeline_queues() {
+    if let Ok(mut queue) = raw_queue().0.lock() {
+        queue.clear();
+        FRAME_QUEUE_LEN.store(0, Ordering::SeqCst);
+    }
+    if let Ok(mut map) = computed_queue().0.lock() {
+        map.clear();
+        COMPUTED_QUEUE_LEN.store(0, Ordering::SeqCst);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn wake_pipeline_workers() {
+    raw_queue().1.notify_all();
+    computed_queue().1.notify_all();
 }
 
 enum PreviewUpdate {
@@ -319,6 +383,17 @@ pub fn start_long_capture(
         .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?
         .insert(session_id.clone(), session);
     long_log(format!("start: session stored session={session_id}"));
+    #[cfg(target_os = "macos")]
+    {
+        clear_pipeline_queues();
+        spawn_pipeline_workers(app.clone(), stop.clone());
+    }
+    ensure_sampling_running(
+        session_id.clone(),
+        capture_pending.clone(),
+        stop.clone(),
+        last_scroll_delta.clone(),
+    );
     start_real_scroll_watcher(
         app,
         session_id,
@@ -413,13 +488,49 @@ fn run_real_scroll_watcher(
     let session_for_tap = session_id.clone();
     let selection_for_tap = selection.clone();
     let stop_for_tap = stop.clone();
-    let capture_pending_for_tap = capture_pending.clone();
     let cursor_passthrough_for_tap = cursor_passthrough.clone();
     let last_scroll_millis_for_tap = last_scroll_millis.clone();
     let last_scroll_delta_for_tap = last_scroll_delta.clone();
-    // `target_pid` is unused now that we no longer synthesize scroll events into a target app;
-    // the user scrolls it directly. Kept in the signature for cross-platform symmetry.
-    let _ = target_pid;
+    let _ = capture_pending;
+    // Synthetic-scroll setup: we drop the user's real wheel events and post our own discrete,
+    // pixel-unit, momentum-free scroll events to the target app instead. Real wheel events carry a
+    // velocity/phase that the OS turns into momentum scrolling, which amplifies the page's movement
+    // far beyond what we forward (observed ~3.5×) and causes big-jump seams; synthetic discrete events
+    // have no momentum, so the page moves exactly the amount we ask — making the capture track the
+    // wheel. Needs the target app's PID to post to.
+    // The source/pid are used only on the tap callback's thread, but CGEventTap::new requires a Send
+    // closure, so wrap them.
+    struct SendSynth {
+        source: CGEventSource,
+        pid: i32,
+    }
+    unsafe impl Send for SendSynth {}
+    let synth = match (
+        CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok(),
+        target_pid,
+    ) {
+        (Some(source), Some(pid)) => Some(SendSynth { source, pid }),
+        _ => None,
+    };
+    // Sliding-window scroll-rate limiter: a list of recent synthetic emits (timestamp_ms, px). On each
+    // event we drop entries older than RATE_WINDOW_MS, sum what's left to get the window's used budget,
+    // and only emit up to the remaining budget. This caps the page's speed over ANY 50ms window — far
+    // more precise than a fixed-boundary window (which let an event near the boundary spend ~2× budget)
+    // and bounds the per-event magnitude too. The list is tiny (a few entries per window). `Mutex`
+    // because the tap closure is `Fn` (no mutable captures).
+    let scroll_window = Arc::new(Mutex::new(Vec::<(i64, f64)>::new()));
+    // Per-window scroll budget = the smaller of the absolute cap and the frame-height fraction. The
+    // absolute cap (RATE_MAX_PX_PER_WINDOW) is the hard speed ceiling; the fraction protects short
+    // selections where the absolute cap would be too large a slice of the frame. `selection.height` is
+    // logical points; the stitcher works in physical pixels (≈2×), folded into RATE_MAX_FRAME_FRACTION.
+    let rate_max_px_per_window = ((selection.height as f64) * RATE_MAX_FRAME_FRACTION)
+        .min(RATE_MAX_PX_PER_WINDOW)
+        .max(40.0);
+    long_log(format!(
+        "real_scroll_watcher: synth setup available={} target_pid={:?} rate_max_px={rate_max_px_per_window:.0} window_ms={RATE_WINDOW_MS}",
+        synth.is_some(),
+        target_pid
+    ));
 
     let tap = match CGEventTap::new(
         CGEventTapLocation::HID,
@@ -441,40 +552,76 @@ fn run_real_scroll_watcher(
             );
 
             if matches!(event_type, CGEventType::ScrollWheel) && inside_selection {
-                // Free-scroll model: the wheel event passes through to the real target window so the
-                // user scrolls it directly. Speed is limited by closed-loop backpressure: if the
-                // stitch worker is falling behind, the frame queue fills, and we drop wheel events
-                // until it drains. This throttles by *actual* processing capacity, unlike the old
-                // open-loop budget that throttled forwarded scroll yet couldn't see the page's real
-                // (inertia-amplified) pixel movement.
+                // Ignore our own synthetic scroll events (tagged via user-data) to avoid re-entrancy.
+                if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA)
+                    == SYNTHETIC_SCROLL_TAG
+                {
+                    return CallbackResult::Keep;
+                }
                 let delta_y = scroll_delta_y(event);
                 if delta_y == 0.0 {
                     return CallbackResult::Keep;
                 }
 
+                // If we can't synthesize (no source/pid), fall back to scaling the real event through.
+                let Some(synth) = synth.as_ref() else {
+                    scale_scroll_event(event, SCROLL_SPEED_FACTOR, MAX_SCROLL_PX_PER_EVENT);
+                    last_scroll_millis_for_tap.store(monotonic_millis(), Ordering::SeqCst);
+                    last_scroll_delta_for_tap
+                        .store(delta_y.signum().round() as i64, Ordering::SeqCst);
+                    return CallbackResult::Keep;
+                };
+
                 let now = monotonic_millis();
-                let queue_len = FRAME_QUEUE_LEN.load(Ordering::SeqCst);
-                if queue_len >= FRAME_QUEUE_BACKPRESSURE_NUM {
-                    // Stitching can't keep up; drop the event so the page slows until the queue
-                    // drains. Don't update the scroll timestamp — a dropped event isn't real motion.
-                    long_log(format!(
-                        "scroll_backpressure: drop delta_y={delta_y:.2} queue_len={queue_len} threshold={FRAME_QUEUE_BACKPRESSURE_NUM}"
-                    ));
+                last_scroll_millis_for_tap.store(now, Ordering::SeqCst);
+                last_scroll_delta_for_tap.store(delta_y.signum().round() as i64, Ordering::SeqCst);
+
+                // Backpressure: hold the page still while stitching catches up.
+                if FRAME_QUEUE_LEN.load(Ordering::SeqCst) >= FRAME_QUEUE_BACKPRESSURE_NUM {
                     return CallbackResult::Drop;
                 }
 
-                last_scroll_millis_for_tap.store(now, Ordering::SeqCst);
-                last_scroll_delta_for_tap.store(delta_y.signum().round() as i64, Ordering::SeqCst);
-                ensure_sampling_running(
-                    app_for_tap.clone(),
-                    session_for_tap.clone(),
-                    capture_pending_for_tap.clone(),
-                    stop_for_tap.clone(),
-                    last_scroll_millis_for_tap.clone(),
-                    last_scroll_delta_for_tap.clone(),
-                );
-                // Let the (unscaled) event reach the target window — the user scrolls naturally.
-                return CallbackResult::Keep;
+                // Sliding-window rate limit: this event wants to move `want` px (scaled). Expire window
+                // entries older than RATE_WINDOW_MS, sum the rest as `used`, and emit only up to the
+                // remaining budget — so total page motion in any RATE_WINDOW_MS stays ≤ the cap.
+                let want = (delta_y.abs() * SCROLL_SPEED_FACTOR).min(MAX_SCROLL_PX_PER_EVENT);
+                let emit = if let Ok(mut win) = scroll_window.lock() {
+                    win.retain(|(ts, _)| now - *ts < RATE_WINDOW_MS);
+                    let used: f64 = win.iter().map(|(_, px)| *px).sum();
+                    let remaining = (rate_max_px_per_window - used).max(0.0);
+                    let emit = want.min(remaining);
+                    if emit > 0.0 {
+                        win.push((now, emit));
+                    }
+                    emit
+                } else {
+                    0.0
+                };
+                if emit <= 0.0 {
+                    return CallbackResult::Drop; // window budget spent; swallow this event
+                }
+
+                // Post one discrete (momentum-free) pixel scroll of the allowed amount.
+                let signed = (emit * delta_y.signum()).round() as i32;
+                if signed != 0 {
+                    if let Ok(scroll) = CGEvent::new_scroll_event(
+                        synth.source.clone(),
+                        ScrollEventUnit::PIXEL,
+                        1,
+                        signed,
+                        0,
+                        0,
+                    ) {
+                        scroll.set_integer_value_field(
+                            EventField::EVENT_SOURCE_USER_DATA,
+                            SYNTHETIC_SCROLL_TAG,
+                        );
+                        scroll.set_location(location);
+                        scroll.post(CGEventTapLocation::HID);
+                        let _ = synth.pid;
+                    }
+                }
+                return CallbackResult::Drop;
             }
 
             CallbackResult::Keep
@@ -541,17 +688,53 @@ fn scroll_delta_y(event: &core_graphics::event::CGEvent) -> f64 {
     event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1) as f64
 }
 
+/// Scale down the vertical scroll of `event` before it reaches the target window, so the page scrolls
+/// more slowly. With free-scroll the page moves at the system's native (often inertia-amplified) rate,
+/// which can outrun capture and produce big-jump seams; shrinking each wheel delta keeps per-frame
+/// motion within the stitcher's alignable range and makes the captured image track the wheel. All
+/// three delta representations are scaled together (an app may read any of them). A non-zero original
+/// delta keeps at least ±1 so very small scrolls still register.
+#[cfg(target_os = "macos")]
+fn scale_scroll_event(event: &core_graphics::event::CGEvent, factor: f64, max_px: f64) {
+    // The point-delta is the pixel-precise scroll that actually moves the page. Scaling alone lowers
+    // the *average* speed but a single hard fling event can still carry a huge delta whose ×factor is
+    // big enough to outrun capture for that one frame (the residual big jump). So also clamp the
+    // forwarded magnitude to `max_px`, which削平 the peaks without affecting normal scrolling.
+    let clamp = |v: f64| -> f64 {
+        let scaled = v * factor;
+        scaled.clamp(-max_px, max_px)
+    };
+    let point = event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
+    if point != 0 {
+        let out = clamp(point as f64).round() as i64;
+        let out = if out == 0 { point.signum() } else { out };
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1, out);
+    }
+    let fixed = event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1);
+    if fixed != 0.0 {
+        event.set_double_value_field(
+            EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1,
+            clamp(fixed),
+        );
+    }
+    // Line-delta is coarse (clicks, not pixels); scale it but don't pixel-clamp.
+    let line = event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
+    if line != 0 {
+        let out = ((line as f64) * factor).round() as i64;
+        let out = if out == 0 { line.signum() } else { out };
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1, out);
+    }
+}
+
 /// Ensure exactly one sampling loop is running for this session.
 ///
 /// Called from the event tap on every wheel event. The `capture_pending` flag doubles as a
 /// "sampling loop active" guard so concurrent wheel events don't spawn duplicate loops.
 #[cfg(target_os = "macos")]
 fn ensure_sampling_running(
-    app: AppHandle,
     session_id: String,
     capture_pending: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
-    last_scroll_millis: Arc<AtomicI64>,
     last_scroll_delta: Arc<AtomicI64>,
 ) {
     if capture_pending
@@ -563,70 +746,120 @@ fn ensure_sampling_running(
         return;
     }
 
-    // Start the pipeline consumers for this session: N parallel delta-compute workers and one merge
-    // thread. They outlive individual capture loops and drain the queues independently.
-    spawn_pipeline_workers(app.clone());
-
-    // Capture loop (producer): capture a frame and enqueue a RawJob for the compute workers. Its
-    // cadence is bound only by capture time (~45ms). Backpressure (event-tap dropping wheel events
-    // when the raw queue fills) keeps the producer from outrunning the pipeline.
+    // Push model: open a live stream whose callback enqueues each delivered frame for the compute
+    // workers. The callback runs on the stream's delivery thread, so it stays cheap (wrap + enqueue);
+    // the pixel decode and delta search happen on worker threads. A small supervisor thread owns the
+    // stream handle and keeps it alive until the session stops.
     thread::spawn(move || {
-        long_log("sampling: capture loop start");
-        // Read the (fixed) selection once so the per-frame capture never locks `sessions`.
+        long_log("sampling: supervisor start");
         let selection = {
             match sessions().lock().ok().and_then(|guard| {
-                guard.get(&session_id).map(|session| session.selection.clone())
+                guard
+                    .get(&session_id)
+                    .map(|session| session.selection.clone())
             }) {
                 Some(selection) => selection,
                 None => {
-                    long_log("sampling: session gone before capture loop start");
+                    long_log("sampling: session gone before stream open");
                     capture_pending.store(false, Ordering::SeqCst);
                     return;
                 }
             }
         };
+
+        // Per-stream callback state. We no longer gate on wheel-event recency: inertia scrolling moves
+        // the page without firing wheel events, so that gate dropped real frames and caused big delta
+        // jumps / seams. Instead SCStream only delivers frames when the screen changes, and the
+        // compute stage drops sub-threshold (near-duplicate) deltas — that is the content-change gate.
+        //
+        // We do reset `prev_frame` when the stream has been quiet for a while (a gap between delivered
+        // frames), because after a pause the page may have jumped; pairing a fresh frame with a stale
+        // predecessor would yield a garbage delta. After a reset the next frame becomes a fresh base.
+        let cb_session = session_id.clone();
+        let cb_stop = stop.clone();
+        let cb_last_dir = last_scroll_delta.clone();
         let mut prev_frame: Option<SharedFrame> = None;
-        loop {
-            if stop.load(Ordering::SeqCst) {
-                break;
+        let mut last_frame_ms: i64 = 0;
+
+        let on_frame = Box::new(move |frame: ImageBuffer<Rgba<u8>, Vec<u8>>| {
+            if cb_stop.load(Ordering::SeqCst) {
+                return;
+            }
+            let now_ms = monotonic_millis();
+            // Gap since the previous delivered frame. A large gap means the stream went quiet (page
+            // still) and may have jumped since; drop the stale predecessor so we don't measure a bogus
+            // delta across the gap.
+            if last_frame_ms > 0 && now_ms - last_frame_ms > STREAM_PREV_RESET_GAP_MS {
+                prev_frame = None;
+            }
+            last_frame_ms = now_ms;
+
+            let frame: SharedFrame = Arc::new(frame);
+
+            // Slow-scroll accumulation gate. If this frame is nearly identical to `prev` (the page
+            // barely moved since the last *enqueued* frame), skip it AND keep `prev` unchanged, so the
+            // next comparison spans the accumulated motion. Without this, at 60fps a slowly scrolling
+            // page emits many frames each ~a few px from the last, which the stitcher commits as tiny
+            // steps of the same content — the slow-scroll duplicate. This cheap row-sample check (not a
+            // full delta search) only suppresses true near-duplicates; real motion still advances.
+            if let Some(prev) = &prev_frame {
+                if frames_nearly_identical(prev, &frame) {
+                    return;
+                }
             }
 
-            let idle_ms = monotonic_millis() - last_scroll_millis.load(Ordering::SeqCst);
-            // Stop capturing once scrolling (including trackpad inertia) has been quiet long enough.
-            // The loop restarts on the next wheel event.
-            if idle_ms > SCROLL_IDLE_STOP.as_millis() as i64 {
-                long_log(format!("sampling: idle {idle_ms}ms, stopping capture loop"));
-                break;
+            let direction = cb_last_dir.load(Ordering::SeqCst);
+            let index = FRAME_INDEX.fetch_add(1, Ordering::SeqCst);
+            let (lock, cvar) = raw_queue();
+            if let Ok(mut queue) = lock.lock() {
+                if queue.len() >= FRAME_QUEUE_CAPACITY {
+                    long_log(format!(
+                        "sampling: QUEUE FULL ({}), dropping oldest unprocessed frame",
+                        queue.len()
+                    ));
+                    queue.pop_front();
+                }
+                queue.push_back(RawJob {
+                    index,
+                    session_id: cb_session.clone(),
+                    prev_frame: prev_frame.clone(),
+                    frame: frame.clone(),
+                    direction,
+                });
+                FRAME_QUEUE_LEN.store(queue.len(), Ordering::SeqCst);
+                cvar.notify_one();
             }
+            prev_frame = Some(frame);
+        });
 
-            let direction = last_scroll_delta.load(Ordering::SeqCst);
-            let tick_started = Instant::now();
-            match capture_and_enqueue_frame(&session_id, &selection, direction, prev_frame.clone()) {
-                Ok(frame) => prev_frame = Some(frame),
-                Err(error) => long_log(format!("sampling: capture failed {error}")),
+        let stream = match ScreenCaptureService.open_live_frame_stream(&selection, on_frame) {
+            Ok(stream) => stream,
+            Err(error) => {
+                long_log(format!("sampling: failed to open live stream {error}"));
+                capture_pending.store(false, Ordering::SeqCst);
+                return;
             }
+        };
+        long_log("sampling: live stream opened");
 
-            // Pace to the target capture interval, accounting for capture time already spent.
-            let spent = tick_started.elapsed();
-            if let Some(remaining) = SAMPLE_INTERVAL.checked_sub(spent) {
-                thread::sleep(remaining);
-            }
+        // Keep the stream alive until the session stops.
+        while !stop.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(50));
         }
+        stream.stop();
         capture_pending.store(false, Ordering::SeqCst);
-        // Wake the workers so they can re-check liveness even if the queues are empty.
         raw_queue().1.notify_all();
         computed_queue().1.notify_all();
-        long_log("sampling: capture loop stopped");
+        long_log("sampling: supervisor stopped");
     });
 }
 
-/// Spawn the pipeline (compute workers + merge thread) if not already running.
+/// Spawn the pipeline (compute workers + merge thread) for the current long-capture session.
 ///
-/// Not tied to one session's `stop` flag (that would race across sessions). Threads exit after their
-/// queue stays idle for a grace period; the next captured frame re-spawns them via `PIPELINE_RUNNING`.
-/// Per-frame work no-ops for frames whose session has ended.
+/// These threads live for the whole session. They wait while queues are idle and exit only when the
+/// session stop flag is set by confirm/cancel/close.
 #[cfg(target_os = "macos")]
-fn spawn_pipeline_workers(app: AppHandle) {
+fn spawn_pipeline_workers(app: AppHandle, stop: Arc<AtomicBool>) {
     static PIPELINE_RUNNING: AtomicBool = AtomicBool::new(false);
     if PIPELINE_RUNNING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -635,13 +868,9 @@ fn spawn_pipeline_workers(app: AppHandle) {
         return;
     }
 
-    // Shared liveness: set false only when the merge thread decides the pipeline is idle. Compute
-    // workers observe it to exit together.
-    let running = Arc::new(AtomicBool::new(true));
-
     // Compute workers (parallel): raw frame pair -> relative delta -> computed queue (keyed by index).
     for worker_id in 0..COMPUTE_WORKERS {
-        let running = running.clone();
+        let stop = stop.clone();
         thread::spawn(move || {
             long_log(format!("compute worker {worker_id}: start"));
             let (raw_lock, raw_cvar) = raw_queue();
@@ -652,12 +881,12 @@ fn spawn_pipeline_workers(app: AppHandle) {
                         Ok(guard) => guard,
                         Err(_) => break,
                     };
-                    while queue.is_empty() && running.load(Ordering::SeqCst) {
-                        let (guard, _) = match raw_cvar.wait_timeout(queue, Duration::from_millis(200))
-                        {
-                            Ok(result) => result,
-                            Err(_) => return,
-                        };
+                    while queue.is_empty() && !stop.load(Ordering::SeqCst) {
+                        let (guard, _) =
+                            match raw_cvar.wait_timeout(queue, Duration::from_millis(200)) {
+                                Ok(result) => result,
+                                Err(_) => return,
+                            };
                         queue = guard;
                     }
                     let item = queue.pop_front();
@@ -665,18 +894,24 @@ fn spawn_pipeline_workers(app: AppHandle) {
                     item
                 };
                 let Some(job) = job else {
-                    if !running.load(Ordering::SeqCst) {
+                    if stop.load(Ordering::SeqCst) {
                         break;
                     }
                     continue;
                 };
 
+                // Frames are already decoded to RGBA by the stream callback; just measure the shift.
                 let last_shift = SHARED_LAST_SHIFT.load(Ordering::SeqCst) as u32;
                 let delta = match &job.prev_frame {
-                    Some(prev) => compute_relative_delta(prev, &job.frame, job.direction, last_shift),
+                    Some(prev) => {
+                        compute_relative_delta(prev, &job.frame, job.direction, last_shift)
+                    }
                     // First frame of a run has no predecessor; treat as a fresh base (delta 0).
                     None => Some(0),
                 };
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
                 {
                     if let Ok(mut map) = comp_lock.lock() {
                         map.insert(
@@ -688,6 +923,7 @@ fn spawn_pipeline_workers(app: AppHandle) {
                                 direction: job.direction,
                             },
                         );
+                        COMPUTED_QUEUE_LEN.store(map.len(), Ordering::SeqCst);
                     }
                 }
                 comp_cvar.notify_all();
@@ -702,8 +938,6 @@ fn spawn_pipeline_workers(app: AppHandle) {
         let (comp_lock, comp_cvar) = computed_queue();
         // `next_index` is unset until the first job arrives; then it tracks strict ordering.
         let mut next_index: Option<u64> = None;
-        let mut idle_waits = 0u32;
-        const MAX_IDLE_WAITS: u32 = 5;
         loop {
             let job = {
                 let mut map = match comp_lock.lock() {
@@ -711,6 +945,9 @@ fn spawn_pipeline_workers(app: AppHandle) {
                     Err(_) => break,
                 };
                 loop {
+                    if stop.load(Ordering::SeqCst) {
+                        break;
+                    }
                     // Initialize / resync to the smallest available index so we never wait forever
                     // for an index that will never come (e.g. a fresh burst starting at a higher one).
                     if next_index.map_or(true, |n| !map.contains_key(&n)) {
@@ -720,26 +957,26 @@ fn spawn_pipeline_workers(app: AppHandle) {
                             }
                         }
                     }
-                    if next_index.is_some_and(|n| map.contains_key(&n)) || idle_waits >= MAX_IDLE_WAITS
-                    {
+                    if next_index.is_some_and(|n| map.contains_key(&n)) {
                         break;
                     }
-                    let (guard, timeout) =
-                        match comp_cvar.wait_timeout(map, Duration::from_millis(200)) {
-                            Ok(result) => result,
-                            Err(_) => return,
-                        };
+                    let (guard, _) = match comp_cvar.wait_timeout(map, Duration::from_millis(200)) {
+                        Ok(result) => result,
+                        Err(_) => return,
+                    };
                     map = guard;
-                    if timeout.timed_out() {
-                        idle_waits += 1;
-                    }
                 }
-                next_index.and_then(|n| map.remove(&n))
+                let item = if stop.load(Ordering::SeqCst) {
+                    None
+                } else {
+                    next_index.and_then(|n| map.remove(&n))
+                };
+                COMPUTED_QUEUE_LEN.store(map.len(), Ordering::SeqCst);
+                item
             };
 
             match job {
                 Some(job) => {
-                    idle_waits = 0;
                     next_index = Some(next_index.map_or(1, |n| n + 1));
                     if let Err(error) = merge_pipeline_job(&app, job) {
                         long_log(format!("merge thread: frame failed {error}"));
@@ -748,64 +985,11 @@ fn spawn_pipeline_workers(app: AppHandle) {
                 None => break,
             }
         }
-        running.store(false, Ordering::SeqCst);
-        // Wake compute workers so they observe `running=false` and exit too.
+        // Wake compute workers so they observe stop=true and exit too.
         raw_queue().1.notify_all();
         PIPELINE_RUNNING.store(false, Ordering::SeqCst);
         long_log("merge thread: stopped");
     });
-}
-
-/// Producer: capture one live frame and enqueue a `RawJob` (with its predecessor) for the compute
-/// workers. Returns the captured frame (shared) so the caller can pass it as the next frame's
-/// predecessor. Does NOT lock `sessions` — the selection is fixed and read once by the caller.
-#[cfg(target_os = "macos")]
-fn capture_and_enqueue_frame(
-    session_id: &str,
-    selection: &SelectionRect,
-    direction: i64,
-    prev_frame: Option<SharedFrame>,
-) -> Result<SharedFrame, FlickError> {
-    let capture_started = Instant::now();
-    let frame = capture_live_frame_with_editor_hidden(selection)?;
-    let capture_ms = capture_started.elapsed().as_millis();
-
-    if selection.height > 0 {
-        let scale = (frame.height() as f64) / (selection.height as f64);
-        CAPTURE_SCALE_X1000.store((scale * 1000.0).round() as i64, Ordering::SeqCst);
-    }
-
-    let frame: SharedFrame = Arc::new(frame);
-    let index = FRAME_INDEX.fetch_add(1, Ordering::SeqCst);
-    let (lock, cvar) = raw_queue();
-    {
-        let mut queue = lock
-            .lock()
-            .map_err(|_| FlickError::Message("raw queue mutex poisoned".into()))?;
-        // With early backpressure (50%) and a deep buffer, the queue should never reach capacity. If
-        // it ever does, dropping a frame loses content (a seam), so log it loudly.
-        if queue.len() >= FRAME_QUEUE_CAPACITY {
-            long_log(format!(
-                "sampling: QUEUE FULL ({}), dropping oldest unstitched frame — content seam likely",
-                queue.len()
-            ));
-            queue.pop_front();
-        }
-        queue.push_back(RawJob {
-            index,
-            session_id: session_id.to_string(),
-            prev_frame,
-            frame: frame.clone(),
-            direction,
-        });
-        FRAME_QUEUE_LEN.store(queue.len(), Ordering::SeqCst);
-    }
-    cvar.notify_one();
-    long_log(format!(
-        "sampling: enqueued index={index} capture_ms={capture_ms} queue_len={}",
-        FRAME_QUEUE_LEN.load(Ordering::SeqCst)
-    ));
-    Ok(frame)
 }
 
 /// Merge-thread consumer: apply one computed job (relative delta already measured) to the stitch and
@@ -823,6 +1007,7 @@ fn merge_pipeline_job(app: &AppHandle, job: ComputedJob) -> Result<(), FlickErro
     // Move the pixels out of the Arc (clone only if another ref still holds it — normally not).
     let frame = Arc::try_unwrap(frame).unwrap_or_else(|arc| (*arc).clone());
 
+    let stitch_started = Instant::now();
     let inputs = {
         let mut guard = sessions()
             .lock()
@@ -838,11 +1023,21 @@ fn merge_pipeline_job(app: &AppHandle, job: ComputedJob) -> Result<(), FlickErro
         }
         collect_build_inputs(session, preview_update)
     };
+    let stitch_ms = stitch_started.elapsed().as_millis();
+    let encode_started = Instant::now();
     let update = encode_build(inputs)?;
+    let encode_ms = encode_started.elapsed().as_millis();
+    let emit_started = Instant::now();
     emit_long_capture_update(app, &session_id, update)?;
+    let emit_ms = emit_started.elapsed().as_millis();
     long_log(format!(
-        "merge thread: stitched total_ms={}",
-        total_started.elapsed().as_millis()
+        "merge thread: stitched total_ms={} stitch_ms={} encode_ms={} emit_ms={} raw_queue_len={} computed_queue_len={}",
+        total_started.elapsed().as_millis(),
+        stitch_ms,
+        encode_ms,
+        emit_ms,
+        FRAME_QUEUE_LEN.load(Ordering::SeqCst),
+        COMPUTED_QUEUE_LEN.load(Ordering::SeqCst)
     ));
     Ok(())
 }
@@ -929,6 +1124,8 @@ pub fn cancel_long_capture(
         .remove(&session_id)
     {
         session.stop.store(true, Ordering::SeqCst);
+        #[cfg(target_os = "macos")]
+        wake_pipeline_workers();
     }
     cleanup_long_capture_ui(&app, &state, &session_id);
     long_log("cancel: complete");
@@ -947,6 +1144,8 @@ pub fn prepare_long_capture_edit(
         .remove(&session_id)
     {
         session.stop.store(true, Ordering::SeqCst);
+        #[cfg(target_os = "macos")]
+        wake_pipeline_workers();
     }
     if let Some((label, window)) = screenshot_editor_window(&app, &session_id) {
         long_log(format!("prepare_edit: editor label={label} restore cursor"));
@@ -1056,13 +1255,26 @@ fn finalize_long_capture(
     long_log(format!(
         "finalize: enter session={session_id} copy_to_clipboard={copy_to_clipboard}"
     ));
+    {
+        let stop = {
+            let guard = sessions()
+                .lock()
+                .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?;
+            guard
+                .get(&session_id)
+                .map(|session| session.stop.clone())
+                .ok_or_else(|| FlickError::Message("long capture session not found".into()))?
+        };
+        stop.store(true, Ordering::SeqCst);
+        #[cfg(target_os = "macos")]
+        wake_pipeline_workers();
+    }
     wait_for_pending_capture(&session_id)?;
     let long_session = sessions()
         .lock()
         .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?
         .remove(&session_id)
         .ok_or_else(|| FlickError::Message("long capture session not found".into()))?;
-    long_session.stop.store(true, Ordering::SeqCst);
     let image = long_session.stitched;
     long_log(format!(
         "finalize: stitched image {}x{}",
@@ -1286,6 +1498,89 @@ fn long_capture_target_pid(state: &State<'_, AppState>) -> Option<i32> {
     }
 }
 
+/// Cheap displacement check for the capture callback: did the page move at least MIN_SCROLL_DELTA
+/// since `a`? Returns true (near-duplicate, skip & accumulate) when the measured shift is smaller.
+///
+/// It takes a thin band of sampled rows from the middle of `a` and finds the vertical offset (within
+/// ±MIN_SCROLL_DELTA) at which it best matches `b`. If the best match sits at |offset| < threshold,
+/// the page barely moved — committing it would stitch the same content again. This is a tiny search
+/// (≈2·MIN_SCROLL_DELTA offsets × a few sampled rows × a few columns), microseconds, unlike the full
+/// delta search. Measuring *displacement* (not a content-% diff) keeps it consistent with the
+/// MIN_SCROLL_DELTA gate in the stitcher, so 1..(threshold-1)px moves no longer slip through and get
+/// snapped to the boundary delta (the slow-scroll duplicate).
+#[cfg(target_os = "macos")]
+fn frames_nearly_identical(
+    a: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+    b: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+) -> bool {
+    if a.width() != b.width() || a.height() != b.height() {
+        return false;
+    }
+    let width = a.width();
+    let height = a.height();
+    let thr = MIN_SCROLL_DELTA as i64;
+    // Need room for the band plus the ± offset search.
+    if (height as i64) < 4 * thr + 8 {
+        return false;
+    }
+    let ra = a.as_raw();
+    let rb = b.as_raw();
+    let stride = (width * 4) as usize;
+    let col_step = (width / 16).max(1);
+
+    // A band of sampled rows from the middle third of `a`.
+    let band_top = (height / 3) as i64;
+    let band_rows: Vec<i64> = (0..16).map(|k| band_top + k * 4).collect();
+
+    // Sum-of-abs-diff of the band placed at vertical `offset` in `b`. Lower = better match.
+    let sad_at = |offset: i64| -> i64 {
+        let mut sad = 0i64;
+        for &ay in &band_rows {
+            let by = ay + offset;
+            if by < 0 || by >= height as i64 {
+                return i64::MAX;
+            }
+            let abase = ay as usize * stride;
+            let bbase = by as usize * stride;
+            let mut x = 0u32;
+            while x < width {
+                let ai = abase + (x as usize) * 4;
+                let bi = bbase + (x as usize) * 4;
+                let sa = ra[ai] as i64 + ra[ai + 1] as i64 + ra[ai + 2] as i64;
+                let sb = rb[bi] as i64 + rb[bi + 1] as i64 + rb[bi + 2] as i64;
+                sad += (sa - sb).abs();
+                x += col_step;
+            }
+        }
+        sad
+    };
+
+    // Find the offset in [-thr, thr] with the lowest SAD. macOS scrolling down moves content up in
+    // the frame, so the band from `a` appears at a negative offset in `b`; searching both signs is
+    // robust regardless of direction.
+    let mut best_offset = 0i64;
+    let mut best_sad = i64::MAX;
+    for offset in -thr..=thr {
+        let sad = sad_at(offset);
+        if sad < best_sad {
+            best_sad = sad;
+            best_offset = offset;
+        }
+    }
+    if best_offset.abs() >= thr {
+        // Best alignment is at (or beyond) the edge → the page moved ≥ threshold. Not a duplicate.
+        return false;
+    }
+    // Best is at a sub-threshold offset. Confirm it's a *real* match (a clear SAD dip), not just the
+    // least-bad of a set of poor matches (which happens when the true move is far outside ±threshold).
+    // Compare against the SAD at the search edges: a genuine sub-threshold alignment is markedly
+    // better than the edge offsets; a far/fast scroll shows no such dip.
+    let edge_sad = sad_at(thr).min(sad_at(-thr));
+    // Near-duplicate only if the in-range best is clearly better than the edges (real dip) — i.e. the
+    // content really is aligned at a small offset.
+    best_sad.saturating_mul(4) < edge_sad.saturating_mul(3)
+}
+
 /// Stage-1 (parallel) work: measure the relative scroll between `prev_frame` and `frame`.
 ///
 /// This is the expensive, self-contained part of stitching — it needs only the two frames, the wheel
@@ -1303,6 +1598,9 @@ fn compute_relative_delta(
     }
     let prev_sig = RowSignatures::from_frame(prev_frame);
     let frame_sig = RowSignatures::from_frame(frame);
+    if same_position_frame(&prev_sig, &frame_sig) {
+        return Some(0);
+    }
     let dir = if direction_hint < 0 {
         1
     } else if direction_hint > 0 {
@@ -1312,6 +1610,43 @@ fn compute_relative_delta(
     };
     let overlap_result = locate_next_frame_from_last(&prev_sig, &frame_sig, dir, last_shift);
     overlap_result.overlap.map(|overlap| overlap.delta_y)
+}
+
+#[cfg(target_os = "macos")]
+fn same_position_frame(last_sig: &RowSignatures, next_sig: &RowSignatures) -> bool {
+    let rows = last_sig.len().min(next_sig.len()) as usize;
+    if rows == 0 {
+        return false;
+    }
+
+    let mut nontrivial_rows = 0_u32;
+    let mut feature_matches = 0_u32;
+    let mut hash_matches = 0_u32;
+    let mut sum_corr = 0.0_f32;
+    for row in 0..rows {
+        if last_sig.trivial[row] && next_sig.trivial[row] {
+            continue;
+        }
+        nontrivial_rows += 1;
+        let corr = last_sig.row_corr(row, next_sig, row);
+        sum_corr += corr;
+        if corr >= ROW_CORR_THRESHOLD {
+            feature_matches += 1;
+        }
+        if last_sig.hashes[row] == next_sig.hashes[row] {
+            hash_matches += 1;
+        }
+    }
+    if nontrivial_rows < MIN_QUALITY_ROWS {
+        return false;
+    }
+
+    let avg_corr_permille =
+        ((sum_corr / nontrivial_rows as f32).clamp(0.0, 1.0) * 1000.0).round() as u32;
+    let feature_permille = feature_matches.saturating_mul(1000) / nontrivial_rows.max(1);
+    let hash_permille = hash_matches.saturating_mul(1000) / nontrivial_rows.max(1);
+
+    avg_corr_permille >= 985 && feature_permille >= 950 && hash_permille >= 900
 }
 
 /// Stage-2 (serial, merge thread) work: apply a precomputed relative `delta` to the running stitch.
@@ -1437,8 +1772,11 @@ fn correct_y_against_stitched(
     let lo = (est_offset - radius).clamp(0, max_offset);
     let hi = (est_offset + radius).clamp(0, max_offset);
     // Window of stitched rows any candidate placement touches.
-    let stitched_sig =
-        RowSignatures::from_image_window(stitched, lo as u32, (hi + frame_h).min(stitched_h) as u32);
+    let stitched_sig = RowSignatures::from_image_window(
+        stitched,
+        lo as u32,
+        (hi + frame_h).min(stitched_h) as u32,
+    );
     let win_rows = stitched_sig.len() as i64;
     if win_rows < frame_h {
         return None;
@@ -1466,7 +1804,8 @@ fn correct_y_against_stitched(
         let distance = (offset - est_offset).abs();
         // Prefer higher correlation; on near-ties prefer the placement closest to the estimate so a
         // far self-similar location can't pull the anchor away.
-        if corr > best_corr + 0.001 || ((corr - best_corr).abs() <= 0.001 && distance < best_distance)
+        if corr > best_corr + 0.001
+            || ((corr - best_corr).abs() <= 0.001 && distance < best_distance)
         {
             best_corr = corr;
             best_offset = Some(offset);
@@ -1525,14 +1864,19 @@ impl RowSignatures {
             let seg = if width <= 1 {
                 0
             } else {
-                ((px as usize) * ROW_FEATURE_SEGMENTS / (width as usize)).min(ROW_FEATURE_SEGMENTS - 1)
+                ((px as usize) * ROW_FEATURE_SEGMENTS / (width as usize))
+                    .min(ROW_FEATURE_SEGMENTS - 1)
             };
             seg_sum[seg] += luma;
             seg_count[seg] += 1;
         }
         let mut means = [0.0_f32; ROW_FEATURE_SEGMENTS];
         for (slot, (sum, count)) in means.iter_mut().zip(seg_sum.iter().zip(seg_count.iter())) {
-            *slot = if *count > 0 { *sum / *count as f32 } else { 0.0 };
+            *slot = if *count > 0 {
+                *sum / *count as f32
+            } else {
+                0.0
+            };
         }
 
         let mut col = 0;
@@ -1758,7 +2102,12 @@ fn locate_next_frame_from_last(
         * MIN_RELATIVE_NONTRIVIAL_FRACTION)
         .ceil() as u32;
     let min_nontrivial_matched = min_nontrivial_matched.max(MIN_QUALITY_ROWS);
-    // Search the widest range the accept-floor allows, so fast scrolls (large delta, small overlap)
+    // Accept-time overlap floor (larger than the search floor): rejects boundary-snap matches whose
+    // overlap is only a sliver, which on a fast fling are coincidental self-similarity rather than a
+    // trustworthy alignment.
+    let min_accept_overlap =
+        ((last_h.min(next_h) as f64) * MIN_ACCEPT_OVERLAP_FRACTION).round() as i64;
+    // Search the widest range the search floor allows, so fast scrolls (large delta, small overlap)
     // are reachable.
     let max_delta = last_h - i64::from(min_contiguous);
     if max_delta < 1 {
@@ -1813,13 +2162,15 @@ fn locate_next_frame_from_last(
         if delta_y == 0 {
             continue;
         }
-        // Reject tiny deltas whenever a scroll direction is known. The sampling loop only runs while
-        // the wheel is active, so the page really moved by more than a pixel; a delta of ±1..a few px
-        // is the self-similar near-neighbor artifact (the whole page offset by one line still matches
-        // at ~1000‰) and, with a poisoned prediction, it self-locks the search there — the page keeps
-        // scrolling but `current_y` only crawls ±1, corrupting the stitch. Dropping these frames is
-        // safe: the overlap is nearly a full frame, so the next (larger) frame still overlaps.
-        if preferred_sign != 0 && delta_y.abs() < MIN_SCROLL_DELTA {
+        // Reject tiny deltas unconditionally. With the 60fps stream, near-duplicate frames (the page
+        // barely moved between two samples) arrive constantly; their tiny delta is the self-similar
+        // near-neighbor artifact (the whole page offset by ~1 line still matches at ~1000‰), not real
+        // motion. Committing them stitches the same content repeatedly (the "duplicate stitch" bug)
+        // and, with a poisoned prediction, self-locks the search at a crawl. This used to be gated on
+        // a known scroll direction, but the stream's wheel-direction signal is sparse, so the gate
+        // often missed. Dropping these frames is safe: overlap is nearly a full frame, so the next
+        // larger frame still overlaps. The first frame of a run (no predecessor) is handled upstream.
+        if delta_y.abs() < MIN_SCROLL_DELTA {
             continue;
         }
 
@@ -1946,6 +2297,7 @@ fn locate_next_frame_from_last(
         if nontrivial_overlap_rows < MIN_QUALITY_ROWS
             || similar_nontrivial_matched < MIN_QUALITY_ROWS
             || (overlap as i64) < i64::from(min_contiguous)
+            || (overlap as i64) < min_accept_overlap
             || avg_corr_permille < MIN_AVG_CORR_PERMILLE
         {
             continue;
@@ -2059,12 +2411,11 @@ fn merge_frame_by_range(
     ));
 
     if old_range.contains(frame_range) {
-        // `frame_y` is already an absolute position from locating the frame in the stitch, so we
-        // move the viewport there. Also write the full accepted frame into the stitch; the next
-        // iteration strictly re-anchors `last_frame` against the stitched image, so the stitch must
-        // contain the exact pixels of the last accepted frame, not only the rows that grew it.
+        // `frame_y` is already an absolute position from locating the frame in the stitch, so only
+        // move the viewport. Do not repaint covered rows from live frames: during scroll, compositor
+        // timing and sub-pixel sampling can vary frame-to-frame, and repeatedly overwriting the same
+        // stitched rows creates horizontal tearing bands in the final image.
         let moved = frame_y != session.current_y;
-        image::imageops::overlay(&mut session.stitched, &frame, 0, frame_y - old_range.top);
         session.current_y = frame_y;
         session.last_frame = frame;
         long_log(format!(
@@ -2084,6 +2435,80 @@ fn merge_frame_by_range(
         top: old_range.top.min(frame_range.top),
         bottom: old_range.bottom.max(frame_range.bottom),
     };
+
+    if grows_bottom && !grows_top {
+        let new_rows = (new_range.bottom - old_range.bottom) as u32;
+        if new_rows < MIN_STITCH_GROW_ROWS {
+            session.current_y = frame_y;
+            session.last_frame = frame;
+            long_log(format!(
+                "merge_range: defer tiny bottom growth old_bottom={} new_bottom={} new_rows={} threshold={}",
+                old_range.bottom, new_range.bottom, new_rows, MIN_STITCH_GROW_ROWS
+            ));
+            return PreviewUpdate::None;
+        }
+        let src_top = (old_range.bottom - frame_range.top).max(0) as u32;
+        let appended = frame_rows(&frame, src_top, new_rows);
+
+        let mut raw = std::mem::replace(&mut session.stitched, ImageBuffer::new(0, 0)).into_raw();
+        raw.extend_from_slice(appended.as_raw());
+        session.stitched =
+            ImageBuffer::from_raw(width, new_range.height(), raw).unwrap_or_else(|| {
+                ImageBuffer::from_pixel(width, new_range.height(), Rgba([255, 255, 255, 255]))
+            });
+        session.stitched_range = new_range;
+        session.current_y = frame_y;
+        session.last_frame = frame;
+        long_log(format!(
+            "merge_range: append bottom in-place old_bottom={} new_bottom={} new_rows={} height={}",
+            old_range.bottom,
+            new_range.bottom,
+            new_rows,
+            session.stitched.height(),
+        ));
+        return PreviewUpdate::Append {
+            rows: new_rows,
+            image: appended,
+        };
+    }
+
+    if grows_top && !grows_bottom {
+        let new_rows = (old_range.top - frame_range.top) as u32;
+        if new_rows < MIN_STITCH_GROW_ROWS {
+            session.current_y = frame_y;
+            session.last_frame = frame;
+            long_log(format!(
+                "merge_range: defer tiny top growth old_top={} new_top={} new_rows={} threshold={}",
+                old_range.top, new_range.top, new_rows, MIN_STITCH_GROW_ROWS
+            ));
+            return PreviewUpdate::None;
+        }
+        let prepended = frame_rows(&frame, 0, new_rows);
+
+        let old_raw = std::mem::replace(&mut session.stitched, ImageBuffer::new(0, 0)).into_raw();
+        let mut raw = Vec::with_capacity(prepended.as_raw().len() + old_raw.len());
+        raw.extend_from_slice(prepended.as_raw());
+        raw.extend_from_slice(&old_raw);
+        session.stitched =
+            ImageBuffer::from_raw(width, new_range.height(), raw).unwrap_or_else(|| {
+                ImageBuffer::from_pixel(width, new_range.height(), Rgba([255, 255, 255, 255]))
+            });
+        session.stitched_range = new_range;
+        session.current_y = frame_y;
+        session.last_frame = frame;
+        long_log(format!(
+            "merge_range: prepend top in-place old_top={} new_top={} new_rows={} height={}",
+            old_range.top,
+            new_range.top,
+            new_rows,
+            session.stitched.height(),
+        ));
+        return PreviewUpdate::Prepend {
+            rows: new_rows,
+            image: prepended,
+        };
+    }
+
     let mut grown = ImageBuffer::from_pixel(width, new_range.height(), Rgba([255, 255, 255, 255]));
     image::imageops::overlay(
         &mut grown,
@@ -2110,8 +2535,6 @@ fn merge_frame_by_range(
     } else {
         None
     };
-
-    image::imageops::overlay(&mut grown, &frame, 0, frame_range.top - new_range.top);
 
     let preview_update = if grows_top && grows_bottom {
         // Grew at both ends in one frame (rare): fall back to a full replace.
