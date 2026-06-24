@@ -16,7 +16,10 @@ use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSi
 use objc2_quartz_core::kCAGravityResize;
 use tauri::AppHandle;
 
-use crate::{error::FlickError, models::SelectionRect, services::CachedScreenCapture};
+use crate::{
+    error::FlickError, features::capture::long_capture::long_log, models::SelectionRect,
+    services::CachedScreenCapture,
+};
 
 use super::{
     CursorPosition, overlay::CoordinateSpace, overlay::OverlayDrawState, overlay::OverlayVisuals,
@@ -293,16 +296,24 @@ pub(super) fn order_out_overlay_windows(app: &AppHandle) -> Result<(), FlickErro
         let state = overlay_state()
             .lock()
             .expect("frozen overlay mutex poisoned");
-        eprintln!(
-            "[long-capture/overlay] order_out_overlay_windows: visible={} image_windows={} blocker_windows={}",
+        long_log(format!(
+            "macos overlay: order_out_overlay_windows visible={} image_windows={} blocker_windows={}",
             state.overlay_visible,
             state.image_windows.len(),
             state.blocker_windows.len()
-        );
+        ));
         for window in &state.image_windows {
+            long_log(format!(
+                "macos overlay: order out image window ptr=0x{:x}",
+                window.ptr
+            ));
             hide_window(*window);
         }
         for window in &state.blocker_windows {
+            long_log(format!(
+                "macos overlay: order out blocker window ptr=0x{:x}",
+                window.ptr
+            ));
             hide_window(*window);
         }
     })?;
@@ -314,26 +325,34 @@ pub(super) fn restore_overlay_windows(app: &AppHandle) -> Result<(), FlickError>
         let state = overlay_state()
             .lock()
             .expect("frozen overlay mutex poisoned");
-        eprintln!(
-            "[long-capture/overlay] restore_overlay_windows: visible={} geometry={} image_windows={} blocker_windows={}",
+        long_log(format!(
+            "macos overlay: restore_overlay_windows visible={} geometry={} image_windows={} blocker_windows={}",
             state.overlay_visible,
             state.overlay_geometry.len(),
             state.image_windows.len(),
             state.blocker_windows.len()
-        );
+        ));
         if !state.overlay_visible {
-            eprintln!("[long-capture/overlay] restore_overlay_windows: skipped not visible");
+            long_log("macos overlay: restore_overlay_windows skipped not visible");
             return;
         }
         let Some(coordinate_space) = state.coordinate_space else {
-            eprintln!("[long-capture/overlay] restore_overlay_windows: skipped missing coordinate space");
+            long_log("macos overlay: restore_overlay_windows skipped missing coordinate space");
             return;
         };
         for (window, rect) in state.image_windows.iter().zip(state.overlay_geometry.iter()) {
+            long_log(format!(
+                "macos overlay: restore image window ptr=0x{:x} bounds=({},{} {}x{})",
+                window.ptr, rect.x, rect.y, rect.width, rect.height
+            ));
             set_window_frame(*window, rect, coordinate_space);
             show_window(*window);
         }
         for (window, rect) in state.blocker_windows.iter().zip(state.overlay_geometry.iter()) {
+            long_log(format!(
+                "macos overlay: restore blocker window ptr=0x{:x} bounds=({},{} {}x{})",
+                window.ptr, rect.x, rect.y, rect.width, rect.height
+            ));
             set_window_frame(*window, rect, coordinate_space);
             show_window(*window);
         }
@@ -355,16 +374,24 @@ pub(super) fn set_overlay_window_capture_sharing(
         } else {
             NSWindowSharingType::None
         };
-        eprintln!(
-            "[long-capture/overlay] set_overlay_window_capture_sharing include_in_capture={} image_windows={} blocker_windows={}",
+        long_log(format!(
+            "macos overlay: set_overlay_window_capture_sharing include_in_capture={} image_windows={} blocker_windows={}",
             include_in_capture,
             state.image_windows.len(),
             state.blocker_windows.len()
-        );
+        ));
         for window in &state.image_windows {
+            long_log(format!(
+                "macos overlay: set image sharing ptr=0x{:x} include_in_capture={}",
+                window.ptr, include_in_capture
+            ));
             set_window_sharing(*window, sharing);
         }
         for window in &state.blocker_windows {
+            long_log(format!(
+                "macos overlay: set blocker sharing ptr=0x{:x} include_in_capture={}",
+                window.ptr, include_in_capture
+            ));
             set_window_sharing(*window, sharing);
         }
     })?;
@@ -379,12 +406,12 @@ pub(super) fn set_overlay_mouse_passthrough(
         let state = overlay_state()
             .lock()
             .expect("frozen overlay mutex poisoned");
-        eprintln!(
-            "[long-capture/overlay] set_overlay_mouse_passthrough passthrough={} image_windows={} blocker_windows={}",
+        long_log(format!(
+            "macos overlay: set_overlay_mouse_passthrough passthrough={} image_windows={} blocker_windows={}",
             passthrough,
             state.image_windows.len(),
             state.blocker_windows.len()
-        );
+        ));
         for window in &state.image_windows {
             set_window_mouse_passthrough(*window, true);
         }

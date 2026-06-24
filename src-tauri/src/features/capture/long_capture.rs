@@ -1,17 +1,19 @@
-use std::collections::VecDeque;
-use std::sync::Condvar;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
+    fs::OpenOptions,
+    io::Write,
     path::Path,
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
 };
 
 use base64::{Engine as _, engine::general_purpose};
+use chrono::{SecondsFormat, Utc};
 use image::{
     ImageBuffer, ImageEncoder, Rgba,
     codecs::png::{CompressionType, FilterType as PngFilterType},
@@ -38,6 +40,7 @@ use super::{
 /// without the editor on top of it. (Only used for the one-shot initial frame; the streaming
 /// sampling loop relies on session-wide capture exclusion instead.)
 const WINDOW_HIDE_DELAY: Duration = Duration::from_millis(70);
+const INITIAL_LIVE_STREAM_FRAME_TIMEOUT: Duration = Duration::from_millis(1200);
 const FINALIZE_CAPTURE_WAIT_TIMEOUT: Duration = Duration::from_millis(1500);
 const FINALIZE_CAPTURE_WAIT_POLL: Duration = Duration::from_millis(25);
 const LONG_PREVIEW_WIDTH: u32 = 240;
@@ -112,7 +115,21 @@ const MIN_AVG_CORR_PERMILLE: u32 = 850;
 /// Fraction of the frame's non-trivial rows that must match before accepting a last/next delta.
 const MIN_RELATIVE_NONTRIVIAL_FRACTION: f64 = 0.25;
 
-pub(super) fn long_log(_message: impl AsRef<str>) {}
+pub(crate) fn long_log(message: impl AsRef<str>) {
+    let line = format!(
+        "[long-capture] {} {}\n",
+        Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+        message.as_ref()
+    );
+    eprint!("{line}");
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/flick-long-capture.log")
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
 
 pub(super) fn monotonic_millis() -> i64 {
     static START: OnceLock<Instant> = OnceLock::new();
@@ -297,6 +314,7 @@ pub fn start_long_capture(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<LongCaptureUpdate, FlickError> {
+    long_log("============================================================");
     long_log(format!("start: session={session_id}"));
     let selection = pending_selection(&state, &session_id)?;
     long_log(format!(
@@ -1202,19 +1220,57 @@ fn capture_live_frame(
             .map(|(label, _)| label.as_str())
             .unwrap_or("<none>")
     ));
-    #[cfg(target_os = "windows")]
-    if let Some((_, window)) = window.as_ref() {
-        platform::set_window_capture_sharing(window, false);
+    if let Some((label, window)) = window.as_ref() {
+        long_log(format!(
+            "capture_live_frame: editor before exclusion {}",
+            describe_editor_window(label, window)
+        ));
     }
-    if let Some((_, window)) = window.as_ref() {
-        long_log("capture_live_frame: hide editor start");
-        let _ = window.hide();
-        long_log("capture_live_frame: hide editor complete");
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    if let Some((label, window)) = window.as_ref() {
+        long_log(format!(
+            "capture_live_frame: set editor capture sharing false start label={label}"
+        ));
+        platform::set_window_capture_sharing(window, false);
+        long_log(format!(
+            "capture_live_frame: set editor capture sharing false complete label={label}"
+        ));
+    }
+    if let Some((label, window)) = window.as_ref() {
+        long_log(format!(
+            "capture_live_frame: hide editor start {}",
+            describe_editor_window(label, window)
+        ));
+        match window.hide() {
+            Ok(()) => long_log(format!(
+                "capture_live_frame: hide editor complete {}",
+                describe_editor_window(label, window)
+            )),
+            Err(error) => long_log(format!(
+                "capture_live_frame: hide editor failed label={label} error={error}"
+            )),
+        }
     }
     long_log("capture_live_frame: hide overlay start");
     platform::hide_overlay_for_live_capture(app, state);
     long_log("capture_live_frame: hide overlay complete");
+    if let Some((label, window)) = window.as_ref() {
+        long_log(format!(
+            "capture_live_frame: before sleep editor state {}",
+            describe_editor_window(label, window)
+        ));
+    }
+    long_log(format!(
+        "capture_live_frame: sleep before capture ms={}",
+        WINDOW_HIDE_DELAY.as_millis()
+    ));
     thread::sleep(WINDOW_HIDE_DELAY);
+    if let Some((label, window)) = window.as_ref() {
+        long_log(format!(
+            "capture_live_frame: after sleep editor state {}",
+            describe_editor_window(label, window)
+        ));
+    }
     long_log("capture_live_frame: capture live desktop start");
     let result = capture_live_frame_with_editor_hidden(selection);
     match &result {
@@ -1230,11 +1286,29 @@ fn capture_live_frame(
     long_log("capture_live_frame: restore overlay start");
     platform::restore_overlay_after_live_capture(app, state, selection);
     long_log("capture_live_frame: restore overlay complete");
-    if let Some((_, window)) = window.as_ref() {
-        long_log("capture_live_frame: show editor start");
-        let _ = window.show();
-        let _ = window.set_focus();
-        long_log("capture_live_frame: show editor complete");
+    #[cfg(target_os = "macos")]
+    if let Some((label, window)) = window.as_ref() {
+        long_log(format!(
+            "capture_live_frame: set editor capture sharing true start label={label}"
+        ));
+        platform::set_window_capture_sharing(window, true);
+        long_log(format!(
+            "capture_live_frame: set editor capture sharing true complete label={label}"
+        ));
+    }
+    if let Some((label, window)) = window.as_ref() {
+        long_log(format!(
+            "capture_live_frame: show editor start {}",
+            describe_editor_window(label, window)
+        ));
+        let show_result = window.show();
+        let focus_result = window.set_focus();
+        long_log(format!(
+            "capture_live_frame: show editor complete label={label} show_ok={} focus_ok={} {}",
+            show_result.is_ok(),
+            focus_result.is_ok(),
+            describe_editor_window(label, window)
+        ));
     }
     result
 }
@@ -1251,6 +1325,32 @@ pub(super) fn screenshot_editor_window(
     let preload_label = "screenshot-editor-preload".to_string();
     app.get_webview_window(&preload_label)
         .map(|window| (preload_label, window))
+}
+
+fn describe_editor_window(label: &str, window: &tauri::WebviewWindow) -> String {
+    let visible = window
+        .is_visible()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|error| format!("err:{error}"));
+    let focused = window
+        .is_focused()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|error| format!("err:{error}"));
+    let position = window
+        .outer_position()
+        .map(|position| format!("{},{}", position.x, position.y))
+        .unwrap_or_else(|error| format!("err:{error}"));
+    let size = window
+        .outer_size()
+        .map(|size| format!("{}x{}", size.width, size.height))
+        .unwrap_or_else(|error| format!("err:{error}"));
+    let url = window
+        .url()
+        .map(|url| url.to_string())
+        .unwrap_or_else(|error| format!("err:{error}"));
+    format!(
+        "label={label} visible={visible} focused={focused} outer_pos={position} outer_size={size} url={url}"
+    )
 }
 
 fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
@@ -1311,9 +1411,52 @@ fn capture_live_frame_with_editor_hidden(
         "capture_live_frame_with_editor_hidden: service capture start selection=({},{} {}x{})",
         selection.x, selection.y, selection.width, selection.height
     ));
+    #[cfg(target_os = "macos")]
+    {
+        match capture_single_frame_from_live_stream(selection) {
+            Ok(image) => {
+                long_log(format!(
+                    "capture_live_frame_with_editor_hidden: live stream frame complete {}x{}",
+                    image.width(),
+                    image.height()
+                ));
+                return Ok(image);
+            }
+            Err(error) => {
+                long_log(format!(
+                    "capture_live_frame_with_editor_hidden: live stream frame failed {error}; falling back to one-shot capture"
+                ));
+            }
+        }
+    }
+
     ScreenCaptureService::default()
         .capture_selection(selection, &[])
         .map_err(FlickError::from)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_single_frame_from_live_stream(
+    selection: &SelectionRect,
+) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, FlickError> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let mut sender = Some(sender);
+    let stream = ScreenCaptureService::default().open_live_frame_stream(
+        selection,
+        Box::new(move |frame| {
+            if let Some(sender) = sender.take() {
+                let _ = sender.send(frame);
+            }
+        }),
+    )?;
+    long_log("capture_live_frame_with_editor_hidden: live stream opened for single frame");
+    let frame = receiver
+        .recv_timeout(INITIAL_LIVE_STREAM_FRAME_TIMEOUT)
+        .map_err(|error| {
+            FlickError::Message(format!("timed out waiting for live frame: {error}"))
+        })?;
+    stream.stop();
+    Ok(frame)
 }
 
 fn long_capture_scroll_target(state: &State<'_, AppState>) -> ScrollTarget {
