@@ -184,6 +184,13 @@ pub fn set_window_mouse_passthrough(window: &tauri::WebviewWindow, passthrough: 
     set_hwnd_mouse_passthrough(hwnd.0 as _, passthrough);
 }
 
+pub fn set_window_mouse_passthrough_quiet(window: &tauri::WebviewWindow, passthrough: bool) {
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    set_hwnd_mouse_passthrough_quiet(hwnd.0 as _, passthrough);
+}
+
 fn set_hwnd_mouse_passthrough(hwnd: windows_sys::Win32::Foundation::HWND, passthrough: bool) {
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
@@ -197,6 +204,18 @@ fn set_hwnd_mouse_passthrough(hwnd: windows_sys::Win32::Foundation::HWND, passth
             "scroll_controller/windows: set hwnd transparent hwnd={:#x} passthrough={} old_style={:#x} new_style={:#x} previous={:#x}",
             hwnd as usize, passthrough, style, next, previous
         ));
+    }
+}
+
+fn set_hwnd_mouse_passthrough_quiet(hwnd: windows_sys::Win32::Foundation::HWND, passthrough: bool) {
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let next = if passthrough {
+            style | WS_EX_TRANSPARENT as isize
+        } else {
+            style & !(WS_EX_TRANSPARENT as isize)
+        };
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
     }
 }
 

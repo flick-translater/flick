@@ -40,6 +40,14 @@ const longEditMinWindowHeight = longEditToolbarHeight
 
 type EditorMode = 'edit' | 'long-capture';
 
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
+}
+
 type PreviewSegment = {
   id: number;
   dataUrl: string;
@@ -909,6 +917,7 @@ function ScreenshotEditor() {
     setLongEditDisplaySize(imageSizeFallback);
     setEditorMode('long-capture');
     try {
+      await waitForNextPaint();
       editorLog('long start invoke start_long_capture');
       const update = await invoke<LongCaptureUpdate>('start_long_capture', { sessionId });
       editorLog('long start invoke complete');
@@ -1233,8 +1242,8 @@ function ScreenshotEditor() {
               <ScreenshotEditorCanvas
                 selectionOffset={selectionOffset}
                 displaySize={displaySize}
-                editorVisible={editorVisible}
-                screenshotDataUrl={editorMode === 'long-capture' ? longScreenshot.currentFrameDataUrl : screenshotDataUrl}
+                editorVisible={editorVisible && editorMode === 'edit'}
+                screenshotDataUrl={editorMode === 'long-capture' ? '' : screenshotDataUrl}
                 baseCanvasRef={baseCanvasRef}
                 draftCanvasRef={draftCanvasRef}
                 imageSize={imageSize}

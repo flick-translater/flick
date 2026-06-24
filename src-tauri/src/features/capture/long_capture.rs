@@ -310,6 +310,7 @@ pub fn start_long_capture(
         "start: pending selection x={} y={} width={} height={}",
         selection.x, selection.y, selection.width, selection.height
     ));
+    configure_long_capture_window_shape(&app, &session_id);
     let frame = capture_live_frame(&app, &state, &session_id, &selection)?;
     long_log(format!(
         "start: initial frame captured {}x{}",
@@ -418,7 +419,14 @@ pub fn scroll_long_capture(
             session.button_scroll_running.clone(),
         )
     };
-    last_scroll_delta.store(i64::from(signed_direction), Ordering::SeqCst);
+    #[cfg(target_os = "windows")]
+    let pipeline_direction = -signed_direction;
+    #[cfg(not(target_os = "windows"))]
+    let pipeline_direction = signed_direction;
+    last_scroll_delta.store(i64::from(pipeline_direction), Ordering::SeqCst);
+    long_log(format!(
+        "button scroll: direction={direction} input_direction={signed_direction} pipeline_direction={pipeline_direction}"
+    ));
     platform::start_long_capture_button_scroll(
         app,
         session_id,
@@ -1211,6 +1219,9 @@ fn capture_live_frame(
     #[cfg(target_os = "windows")]
     if let Some((_, window)) = window.as_ref() {
         platform::set_window_capture_sharing(window, false);
+        long_log("capture_live_frame: hide editor start");
+        let _ = window.hide();
+        long_log("capture_live_frame: hide editor complete");
     }
     #[cfg(not(target_os = "windows"))]
     if let Some((_, window)) = window.as_ref() {
@@ -1237,6 +1248,13 @@ fn capture_live_frame(
     long_log("capture_live_frame: restore overlay start");
     platform::restore_overlay_after_live_capture(app, state, selection);
     long_log("capture_live_frame: restore overlay complete");
+    #[cfg(target_os = "windows")]
+    if let Some((_, window)) = window.as_ref() {
+        long_log("capture_live_frame: show editor start");
+        let _ = window.show();
+        let _ = window.set_focus();
+        long_log("capture_live_frame: show editor complete");
+    }
     #[cfg(not(target_os = "windows"))]
     if let Some((_, window)) = window.as_ref() {
         long_log("capture_live_frame: show editor start");
@@ -1259,6 +1277,71 @@ pub(super) fn screenshot_editor_window(
     let preload_label = "screenshot-editor-preload".to_string();
     app.get_webview_window(&preload_label)
         .map(|window| (preload_label, window))
+}
+
+fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        let Some((label, window)) = screenshot_editor_window(app, session_id) else {
+            long_log("long window shape: editor window not found");
+            return;
+        };
+        let Ok(url) = window.url() else {
+            long_log(format!(
+                "long window shape: failed to read url label={label}"
+            ));
+            return;
+        };
+
+        let toolbar_left = query_f64(&url, "toolbar_left").unwrap_or(8.0);
+        let toolbar_top = query_f64(&url, "toolbar_top").unwrap_or(8.0);
+        let thumbnail_left = query_f64(&url, "thumbnail_left").unwrap_or(8.0);
+        let thumbnail_top = query_f64(&url, "thumbnail_top").unwrap_or(8.0);
+        let thumbnail_width = query_f64(&url, "thumbnail_width").unwrap_or(300.0);
+        let thumbnail_height = query_f64(&url, "thumbnail_height").unwrap_or(560.0);
+
+        let toolbar_width: f64 = 680.0;
+        let toolbar_height: f64 = 56.0;
+        let regions = vec![
+            SelectionRect {
+                x: toolbar_left.floor() as i32,
+                y: toolbar_top.floor() as i32,
+                width: toolbar_width.ceil() as u32,
+                height: toolbar_height as u32,
+            },
+            SelectionRect {
+                x: thumbnail_left.floor() as i32,
+                y: thumbnail_top.floor() as i32,
+                width: thumbnail_width.ceil() as u32,
+                height: thumbnail_height.ceil() as u32,
+            },
+        ];
+        crate::app::platform::configure_screenshot_editor_window_shape(&window, &regions);
+        long_log(format!(
+            "long window shape: label={label} regions=toolbar({:.0},{:.0} {:.0}x{:.0}) thumbnail({:.0},{:.0} {:.0}x{:.0})",
+            toolbar_left,
+            toolbar_top,
+            toolbar_width,
+            toolbar_height,
+            thumbnail_left,
+            thumbnail_top,
+            thumbnail_width,
+            thumbnail_height
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        let _ = session_id;
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn query_f64(url: &tauri::Url, key: &str) -> Option<f64> {
+    url.query_pairs()
+        .find(|(name, _)| name == key)
+        .and_then(|(_, value)| value.parse::<f64>().ok())
 }
 
 fn capture_live_frame_with_editor_hidden(
