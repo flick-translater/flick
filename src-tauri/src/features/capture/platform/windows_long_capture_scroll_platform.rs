@@ -3,29 +3,28 @@
 use std::{
     ptr::null_mut,
     sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, AtomicI64, Ordering},
-        mpsc::{self, Sender},
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicPtr, Ordering},
+        mpsc::{self, SyncSender},
     },
     thread,
     time::Duration,
 };
 
 use tauri::AppHandle;
-use windows_sys::{
-    Win32::{
-        Foundation::{GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
-        UI::{
-            Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON},
-            WindowsAndMessaging::{
-                CallNextHookEx, DispatchMessageW, EnumWindows, GetWindowRect, HC_ACTION,
-                IsWindowVisible, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, PM_REMOVE, PeekMessageW,
-                PostMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-                WH_MOUSE_LL, WHEEL_DELTA, WM_MOUSEWHEEL, WindowFromPoint,
-            },
+use windows_sys::Win32::{
+    Foundation::{GetLastError, LPARAM, LRESULT, POINT, WPARAM},
+    UI::{
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_WHEEL, MOUSEINPUT,
+            SendInput, VK_LBUTTON,
+        },
+        WindowsAndMessaging::{
+            CallNextHookEx, DispatchMessageW, HC_ACTION, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT,
+            PM_REMOVE, PeekMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
+            WH_MOUSE_LL, WHEEL_DELTA, WM_MOUSEWHEEL,
         },
     },
-    core::BOOL,
 };
 
 use crate::{
@@ -45,26 +44,38 @@ const RATE_WINDOW_MS: i64 = 150;
 const RATE_MAX_DELTA_PER_WINDOW: f64 = WHEEL_DELTA as f64 * 2.0;
 const BUTTON_SCROLL_DELTA_PER_STEP: i32 = WHEEL_DELTA as i32 / 3;
 const BUTTON_SCROLL_INTERVAL: Duration = Duration::from_millis(70);
+const SYNTHETIC_SCROLL_TAG: usize = 0x464c_4b31; // "FLK1"
 
-struct HookState {
-    selection: SelectionRect,
-    stop: Arc<AtomicBool>,
+#[derive(Clone)]
+struct ScrollWorkerState {
     last_scroll_millis: Arc<AtomicI64>,
     last_scroll_delta: Arc<AtomicI64>,
     should_throttle_scroll: Arc<dyn Fn() -> bool + Send + Sync>,
-    rate_window: Vec<(i64, f64)>,
-    wheel_sender: Sender<WheelCommand>,
 }
 
 struct WheelCommand {
-    x: i32,
-    y: i32,
     delta: i32,
 }
 
-fn hook_state() -> &'static Mutex<Option<HookState>> {
-    static STATE: OnceLock<Mutex<Option<HookState>>> = OnceLock::new();
-    STATE.get_or_init(|| Mutex::new(None))
+struct HookAtomicState {
+    active: AtomicBool,
+    selection_x: AtomicI32,
+    selection_y: AtomicI32,
+    selection_width: AtomicI32,
+    selection_height: AtomicI32,
+    sender: AtomicPtr<SyncSender<WheelCommand>>,
+}
+
+fn hook_state() -> &'static HookAtomicState {
+    static STATE: OnceLock<HookAtomicState> = OnceLock::new();
+    STATE.get_or_init(|| HookAtomicState {
+        active: AtomicBool::new(false),
+        selection_x: AtomicI32::new(0),
+        selection_y: AtomicI32::new(0),
+        selection_width: AtomicI32::new(0),
+        selection_height: AtomicI32::new(0),
+        sender: AtomicPtr::new(null_mut()),
+    })
 }
 
 pub(super) fn start_scroll_controller(options: ScrollControllerOptions) {
@@ -122,19 +133,23 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
         let _ = window.set_ignore_cursor_events(false);
     }
 
-    let skip_hwnds = collect_own_window_handles(&app, &session_id);
-    let (wheel_sender, wheel_receiver) = mpsc::channel::<WheelCommand>();
+    let (wheel_sender, wheel_receiver) = mpsc::sync_channel::<WheelCommand>(512);
+    let worker_state = ScrollWorkerState {
+        last_scroll_millis,
+        last_scroll_delta,
+        should_throttle_scroll,
+    };
     {
         let app = app.clone();
         let session_id = session_id.clone();
         let stop = stop.clone();
-        let skip_hwnds = skip_hwnds.clone();
         thread::spawn(move || {
             long_log("scroll_controller/windows: wheel worker start");
+            let mut rate_window = Vec::new();
             while !stop.load(Ordering::SeqCst) {
                 match wheel_receiver.recv_timeout(Duration::from_millis(50)) {
                     Ok(command) => {
-                        send_wheel_to_point(command.x, command.y, command.delta, &skip_hwnds);
+                        handle_wheel_command(&worker_state, &mut rate_window, command.delta);
                     }
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -145,17 +160,7 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
         });
     }
 
-    if let Ok(mut state) = hook_state().lock() {
-        *state = Some(HookState {
-            selection,
-            stop: stop.clone(),
-            last_scroll_millis,
-            last_scroll_delta,
-            should_throttle_scroll,
-            rate_window: Vec::new(),
-            wheel_sender,
-        });
-    }
+    install_hook_state(selection, wheel_sender);
 
     let hook = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(low_level_mouse_proc), null_mut(), 0) };
     if hook.is_null() {
@@ -212,15 +217,14 @@ fn run_button_scroll_loop(
     let target_x = selection.x + (selection.width / 2) as i32;
     let target_y = selection.y + (selection.height / 2) as i32;
     let wheel_delta = -direction.signum() * BUTTON_SCROLL_DELTA_PER_STEP;
-    let skip_hwnds = collect_own_window_handles(&app, &session_id);
 
     restore_editor_cursor(&app, &session_id);
     long_log(format!(
-        "scroll_controller/windows: button scroll loop start direction={direction} wheel_delta={wheel_delta}"
+        "scroll_controller/windows: button scroll loop start direction={direction} wheel_delta={wheel_delta} target=({target_x},{target_y})"
     ));
 
     while !stop.load(Ordering::SeqCst) && left_mouse_button_down() {
-        send_wheel_to_point(target_x, target_y, wheel_delta, &skip_hwnds);
+        inject_wheel(wheel_delta);
         thread::sleep(BUTTON_SCROLL_INTERVAL);
     }
 
@@ -243,45 +247,27 @@ unsafe extern "system" fn low_level_mouse_proc(
     }
 
     let info = unsafe { &*(lparam as *const MSLLHOOKSTRUCT) };
-    if (info.flags & LLMHF_INJECTED) != 0 {
+    if info.dwExtraInfo == SYNTHETIC_SCROLL_TAG || (info.flags & LLMHF_INJECTED) != 0 {
         return unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) };
     }
 
-    let should_drop = hook_state()
-        .lock()
-        .ok()
-        .and_then(|mut guard| {
-            guard
-                .as_mut()
-                .map(|state| handle_mouse_wheel_event(state, info))
-        })
-        .unwrap_or(false);
-
-    if should_drop {
+    if enqueue_wheel_from_hook(info) {
         return 1;
     }
     unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
 }
 
-fn handle_mouse_wheel_event(state: &mut HookState, info: &MSLLHOOKSTRUCT) -> bool {
-    if state.stop.load(Ordering::SeqCst) {
+fn enqueue_wheel_from_hook(info: &MSLLHOOKSTRUCT) -> bool {
+    let state = hook_state();
+    if !state.active.load(Ordering::Relaxed) {
         return false;
     }
 
-    let inside_selection = point_in_selection(info.pt.x as f64, info.pt.y as f64, &state.selection);
-    long_log(format!(
-        "scroll_controller/windows: wheel hook pt=({}, {}) selection=({},{} {}x{}) inside={} injected_flags={} extra={:#x}",
-        info.pt.x,
-        info.pt.y,
-        state.selection.x,
-        state.selection.y,
-        state.selection.width,
-        state.selection.height,
-        inside_selection,
-        info.flags,
-        info.dwExtraInfo
-    ));
-    if !inside_selection {
+    let x = state.selection_x.load(Ordering::Relaxed);
+    let y = state.selection_y.load(Ordering::Relaxed);
+    let width = state.selection_width.load(Ordering::Relaxed);
+    let height = state.selection_height.load(Ordering::Relaxed);
+    if !point_in_selection(info.pt.x, info.pt.y, x, y, width, height) {
         return false;
     }
 
@@ -290,6 +276,19 @@ fn handle_mouse_wheel_event(state: &mut HookState, info: &MSLLHOOKSTRUCT) -> boo
         return false;
     }
 
+    let sender_ptr = state.sender.load(Ordering::Acquire);
+    if !sender_ptr.is_null() {
+        let sender = unsafe { &*sender_ptr };
+        let _ = sender.try_send(WheelCommand { delta: raw_delta });
+    }
+    true
+}
+
+fn handle_wheel_command(
+    state: &ScrollWorkerState,
+    rate_window: &mut Vec<(i64, f64)>,
+    raw_delta: i32,
+) {
     let now = monotonic_millis();
     state.last_scroll_millis.store(now, Ordering::SeqCst);
     state
@@ -300,172 +299,67 @@ fn handle_mouse_wheel_event(state: &mut HookState, info: &MSLLHOOKSTRUCT) -> boo
         long_log(format!(
             "scroll_controller/windows: wheel throttled raw_delta={raw_delta}"
         ));
-        return true;
+        return;
     }
 
-    state
-        .rate_window
-        .retain(|(timestamp, _)| now - *timestamp < RATE_WINDOW_MS);
-    let used: f64 = state.rate_window.iter().map(|(_, delta)| *delta).sum();
+    rate_window.retain(|(timestamp, _)| now - *timestamp < RATE_WINDOW_MS);
+    let used: f64 = rate_window.iter().map(|(_, delta)| *delta).sum();
     let remaining = (RATE_MAX_DELTA_PER_WINDOW - used).max(0.0);
     let want = ((raw_delta as f64) * WHEEL_SPEED_FACTOR)
         .clamp(-MAX_WHEEL_DELTA_PER_EVENT, MAX_WHEEL_DELTA_PER_EVENT);
     let emit_abs = want.abs().min(remaining);
     if emit_abs <= 0.0 {
-        return true;
+        return;
     }
 
-    state.rate_window.push((now, emit_abs));
+    rate_window.push((now, emit_abs));
     let mut emit = (emit_abs * want.signum()).round() as i32;
     if emit == 0 {
         emit = raw_delta.signum();
     }
     long_log(format!(
-        "scroll_controller/windows: wheel inside selection raw_delta={raw_delta} emit_delta={emit}"
+        "scroll_controller/windows: inject wheel raw_delta={raw_delta} emit_delta={emit}"
     ));
-    if state
-        .wheel_sender
-        .send(WheelCommand {
-            x: info.pt.x,
-            y: info.pt.y,
-            delta: emit,
-        })
-        .is_err()
-    {
-        long_log("scroll_controller/windows: wheel worker channel closed");
-    }
-    true
+    inject_wheel(emit);
 }
 
-fn send_wheel_to_point(x: i32, y: i32, delta: i32, skip_hwnds: &[usize]) {
-    let started = monotonic_millis();
-    let before_hwnd = unsafe { WindowFromPoint(POINT { x, y }) };
-    let target_hwnd = find_scroll_target_window(x, y, skip_hwnds);
-    long_log(format!(
-        "scroll_controller/windows: wheel target pt=({x},{y}) delta={delta} before_hwnd={:#x} target_hwnd={:#x} skipped={}",
-        before_hwnd as usize,
-        target_hwnd as usize,
-        skip_hwnds.len()
-    ));
-
-    if target_hwnd.is_null() {
-        long_log("scroll_controller/windows: wheel target missing; dropped");
-        return;
-    }
-
-    post_wheel_message(target_hwnd, x, y, delta);
-
-    let restored_hwnd = unsafe { WindowFromPoint(POINT { x, y }) };
-    let elapsed = monotonic_millis() - started;
-    long_log(format!(
-        "scroll_controller/windows: wheel restore target hwnd={:#x} elapsed_ms={elapsed}",
-        restored_hwnd as usize
-    ));
-}
-
-fn post_wheel_message(hwnd: HWND, x: i32, y: i32, delta: i32) {
-    let wparam = make_wparam(0, delta as i16 as u16);
-    let lparam = make_lparam(x, y);
-    let ok = unsafe { PostMessageW(hwnd, WM_MOUSEWHEEL, wparam, lparam) };
-    if ok == 0 {
+fn inject_wheel(delta: i32) {
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                mouseData: delta as u32,
+                dwFlags: MOUSEEVENTF_WHEEL,
+                dwExtraInfo: SYNTHETIC_SCROLL_TAG,
+                ..MOUSEINPUT::default()
+            },
+        },
+    };
+    let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
+    if sent != 1 {
         let error = unsafe { GetLastError() };
         long_log(format!(
-            "scroll_controller/windows: PostMessage WM_MOUSEWHEEL failed hwnd={:#x} delta={delta} last_error={error}",
-            hwnd as usize
+            "scroll_controller/windows: SendInput wheel failed sent={sent} delta={delta} last_error={error}"
         ));
     } else {
         long_log(format!(
-            "scroll_controller/windows: PostMessage WM_MOUSEWHEEL ok hwnd={:#x} delta={delta}",
-            hwnd as usize
+            "scroll_controller/windows: SendInput wheel ok sent={sent} delta={delta}"
         ));
     }
 }
 
-fn make_wparam(low: u16, high: u16) -> WPARAM {
-    (((high as u32) << 16) | low as u32) as WPARAM
-}
-
-fn make_lparam(x: i32, y: i32) -> LPARAM {
-    (((y as u16 as u32) << 16) | x as u16 as u32) as LPARAM
-}
-
-fn collect_own_window_handles(app: &AppHandle, session_id: &str) -> Vec<usize> {
-    let mut handles: Vec<usize> = windows_platform::overlay_window_handles()
-        .into_iter()
-        .map(|hwnd| hwnd as usize)
-        .collect();
-    if let Some((_, window)) = screenshot_editor_window(app, session_id) {
-        if let Ok(hwnd) = window.hwnd() {
-            handles.push(hwnd.0 as usize);
-        }
-    }
-    handles.sort_unstable();
-    handles.dedup();
-    long_log(format!(
-        "scroll_controller/windows: own windows skipped for wheel target count={}",
-        handles.len()
-    ));
-    handles
-}
-
-struct HitTestData<'a> {
+fn point_in_selection(
     x: i32,
     y: i32,
-    skip_hwnds: &'a [usize],
-    hwnd: HWND,
-}
-
-fn find_scroll_target_window(x: i32, y: i32, skip_hwnds: &[usize]) -> HWND {
-    let mut data = HitTestData {
-        x,
-        y,
-        skip_hwnds,
-        hwnd: null_mut(),
-    };
-    unsafe {
-        EnumWindows(
-            Some(enum_hit_test_window),
-            (&mut data as *mut HitTestData<'_>) as LPARAM,
-        );
-    }
-
-    if data.hwnd.is_null() {
-        return null_mut();
-    }
-    data.hwnd
-}
-
-unsafe extern "system" fn enum_hit_test_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    let data = unsafe { &mut *(lparam as *mut HitTestData<'_>) };
-    if data.skip_hwnds.contains(&(hwnd as usize)) {
-        return 1;
-    }
-    if unsafe { IsWindowVisible(hwnd) } == 0 {
-        return 1;
-    }
-
-    let mut rect = RECT {
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-    };
-    if unsafe { GetWindowRect(hwnd, &mut rect) } == 0 {
-        return 1;
-    }
-    if data.x < rect.left || data.x >= rect.right || data.y < rect.top || data.y >= rect.bottom {
-        return 1;
-    }
-
-    data.hwnd = hwnd;
-    0
-}
-
-fn point_in_selection(x: f64, y: f64, selection: &SelectionRect) -> bool {
-    x >= selection.x as f64
-        && x <= (selection.x + selection.width as i32) as f64
-        && y >= selection.y as f64
-        && y <= (selection.y + selection.height as i32) as f64
+    selection_x: i32,
+    selection_y: i32,
+    width: i32,
+    height: i32,
+) -> bool {
+    x >= selection_x
+        && x <= selection_x.saturating_add(width)
+        && y >= selection_y
+        && y <= selection_y.saturating_add(height)
 }
 
 fn restore_editor_cursor(app: &AppHandle, session_id: &str) {
@@ -486,8 +380,33 @@ fn left_mouse_button_down() -> bool {
     unsafe { GetAsyncKeyState(VK_LBUTTON as i32) < 0 }
 }
 
+fn install_hook_state(selection: SelectionRect, sender: SyncSender<WheelCommand>) {
+    let state = hook_state();
+    state.selection_x.store(selection.x, Ordering::Relaxed);
+    state.selection_y.store(selection.y, Ordering::Relaxed);
+    state
+        .selection_width
+        .store(selection.width as i32, Ordering::Relaxed);
+    state
+        .selection_height
+        .store(selection.height as i32, Ordering::Relaxed);
+    let sender_ptr = Box::into_raw(Box::new(sender));
+    let old = state.sender.swap(sender_ptr, Ordering::AcqRel);
+    if !old.is_null() {
+        unsafe {
+            drop(Box::from_raw(old));
+        }
+    }
+    state.active.store(true, Ordering::Release);
+}
+
 fn clear_hook_state() {
-    if let Ok(mut state) = hook_state().lock() {
-        *state = None;
+    let state = hook_state();
+    state.active.store(false, Ordering::Relaxed);
+    let old = state.sender.swap(null_mut(), Ordering::AcqRel);
+    if !old.is_null() {
+        unsafe {
+            drop(Box::from_raw(old));
+        }
     }
 }

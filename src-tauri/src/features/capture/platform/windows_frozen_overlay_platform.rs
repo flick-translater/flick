@@ -26,12 +26,12 @@ use windows_sys::Win32::{
 
 use crate::{error::FlickError, models::SelectionRect, services::CachedScreenCapture};
 
-use super::overlay::{OverlayDrawState, OverlayVisuals, border_rects};
+use super::overlay::{OverlayVisuals, border_rects};
 
 #[derive(Default)]
 struct FrozenOverlayState {
     overlay_visible: bool,
-    draw_state: OverlayDrawState,
+    selection: Option<SelectionRect>,
     visuals: Option<OverlayVisuals>,
     windows: Vec<WindowHandle>,
 }
@@ -181,7 +181,7 @@ pub(super) fn show_native_overlay(
         .map_err(|_| FlickError::Message("windows overlay state mutex poisoned".into()))?;
 
     state.overlay_visible = true;
-    state.draw_state = OverlayDrawState::default();
+    state.selection = None;
     state.visuals = Some(visuals);
 
     while state.windows.len() < snapshots.len() {
@@ -192,11 +192,10 @@ pub(super) fn show_native_overlay(
         });
     }
 
-    let draw_state = state.draw_state.clone();
     for (window, snapshot) in state.windows.iter_mut().zip(snapshots.iter()) {
         let mut data = create_window_data(snapshot, visuals);
         initialize_layered_surface(&mut data)?;
-        paint_overlay_frame(&mut data, &draw_state, visuals);
+        paint_overlay_frame(&mut data, None, visuals);
         show_overlay_window(window.hwnd as HWND, &snapshot.bounds)?;
         render_overlay_window(window.hwnd as HWND, &mut data)?;
         window.data = Some(data);
@@ -228,7 +227,7 @@ pub(super) fn hide_native_overlay(_app: &AppHandle) -> Result<(), FlickError> {
         state.windows.len()
     ));
     state.overlay_visible = false;
-    state.draw_state = OverlayDrawState::default();
+    state.selection = None;
     state.visuals = None;
 
     for window in state.windows.drain(..) {
@@ -249,17 +248,11 @@ pub(super) fn update_highlight(
         return Ok(());
     }
 
-    let new_draw_state = OverlayDrawState {
-        selection,
-        cursor: state.draw_state.cursor,
-    };
-    if selections_equal(
-        state.draw_state.selection.as_ref(),
-        new_draw_state.selection.as_ref(),
-    ) {
+    if selections_equal(state.selection.as_ref(), selection.as_ref()) {
         return Ok(());
     }
-    state.draw_state = new_draw_state.clone();
+    state.selection = selection;
+    let selection = state.selection.clone();
     let visuals = state
         .visuals
         .ok_or_else(|| FlickError::Message("missing windows overlay visuals".into()))?;
@@ -268,39 +261,7 @@ pub(super) fn update_highlight(
         let Some(data) = window.data.as_mut() else {
             continue;
         };
-        paint_overlay_frame(data, &new_draw_state, visuals);
-        render_overlay_window(window.hwnd as HWND, data)?;
-    }
-
-    Ok(())
-}
-
-pub(super) fn update_crosshair(
-    _app: &AppHandle,
-    cursor: Option<(f64, f64)>,
-) -> Result<(), FlickError> {
-    let mut state = overlay_state()
-        .lock()
-        .map_err(|_| FlickError::Message("windows overlay state mutex poisoned".into()))?;
-    if !state.overlay_visible {
-        return Ok(());
-    }
-
-    if cursor_equal(state.draw_state.cursor, cursor) {
-        return Ok(());
-    }
-
-    state.draw_state.cursor = cursor;
-    let draw_state = state.draw_state.clone();
-    let visuals = state
-        .visuals
-        .ok_or_else(|| FlickError::Message("missing windows overlay visuals".into()))?;
-
-    for window in &mut state.windows {
-        let Some(data) = window.data.as_mut() else {
-            continue;
-        };
-        paint_overlay_frame(data, &draw_state, visuals);
+        paint_overlay_frame(data, selection.as_ref(), visuals);
         render_overlay_window(window.hwnd as HWND, data)?;
     }
 
@@ -338,19 +299,6 @@ pub(super) fn set_mouse_passthrough(passthrough: bool) {
             set_hwnd_mouse_passthrough(window.hwnd as HWND, passthrough);
         }
     }
-}
-
-pub(super) fn window_handles() -> Vec<HWND> {
-    overlay_state()
-        .lock()
-        .map(|state| {
-            state
-                .windows
-                .iter()
-                .map(|window| window.hwnd as HWND)
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 pub(super) fn pump_native_overlay_messages() {
@@ -428,14 +376,6 @@ fn selections_equal(left: Option<&SelectionRect>, right: Option<&SelectionRect>)
     }
 }
 
-fn cursor_equal(left: Option<(f64, f64)>, right: Option<(f64, f64)>) -> bool {
-    match (left, right) {
-        (None, None) => true,
-        (Some((lx, ly)), Some((rx, ry))) => lx == rx && ly == ry,
-        _ => false,
-    }
-}
-
 fn rgba_to_bgra(bytes: &[u8]) -> Vec<u8> {
     let mut bgra = bytes.to_vec();
     for pixel in bgra.chunks_exact_mut(4) {
@@ -459,12 +399,12 @@ fn build_dimmed_background(background_bgra: &[u8], dim_alpha: f32) -> Vec<u8> {
 
 fn paint_overlay_frame(
     data: &mut OverlayWindowData,
-    draw_state: &OverlayDrawState,
+    selection: Option<&SelectionRect>,
     visuals: OverlayVisuals,
 ) {
     data.frame_bgra.copy_from_slice(&data.dimmed_bgra);
 
-    if let Some(selection) = draw_state.selection.as_ref() {
+    if let Some(selection) = selection {
         let local = intersect_local_rect(selection, &data.bounds);
         if let Some(local) = local {
             restore_selection(
@@ -482,16 +422,6 @@ fn paint_overlay_frame(
                 );
             }
         }
-    }
-
-    if let Some((cursor_x, cursor_y)) = draw_state.cursor {
-        draw_crosshair(
-            &mut data.frame_bgra,
-            &data.bounds,
-            cursor_x,
-            cursor_y,
-            visuals,
-        );
     }
 }
 
@@ -559,61 +489,6 @@ fn draw_filled_rect(
             frame_bgra[offset + 2] = color_rgba[0];
             frame_bgra[offset + 3] = color_rgba[3];
         }
-    }
-}
-
-fn draw_crosshair(
-    frame_bgra: &mut [u8],
-    bounds: &SelectionRect,
-    cursor_x: f64,
-    cursor_y: f64,
-    visuals: OverlayVisuals,
-) {
-    if cursor_x < bounds.x as f64
-        || cursor_x > (bounds.x + bounds.width as i32) as f64
-        || cursor_y < bounds.y as f64
-        || cursor_y > (bounds.y + bounds.height as i32) as f64
-    {
-        return;
-    }
-
-    let local_x = (cursor_x.floor() as i32 - bounds.x).clamp(0, bounds.width as i32 - 1);
-    let local_y = (cursor_y.floor() as i32 - bounds.y).clamp(0, bounds.height as i32 - 1);
-    let dash = visuals.crosshair_dash_length.max(1) as i32;
-    let gap = visuals.crosshair_gap_length.max(1) as i32;
-
-    let mut x = 0;
-    while x < bounds.width as i32 {
-        let segment_end = (x + dash).min(bounds.width as i32);
-        draw_filled_rect(
-            frame_bgra,
-            bounds,
-            &SelectionRect {
-                x,
-                y: local_y,
-                width: (segment_end - x) as u32,
-                height: 1,
-            },
-            visuals.crosshair_color,
-        );
-        x += dash + gap;
-    }
-
-    let mut y = 0;
-    while y < bounds.height as i32 {
-        let segment_end = (y + dash).min(bounds.height as i32);
-        draw_filled_rect(
-            frame_bgra,
-            bounds,
-            &SelectionRect {
-                x: local_x,
-                y,
-                width: 1,
-                height: (segment_end - y) as u32,
-            },
-            visuals.crosshair_color,
-        );
-        y += dash + gap;
     }
 }
 
