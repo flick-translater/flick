@@ -100,6 +100,8 @@ function ScreenshotEditor() {
   const isClosingRef = useRef(false);
   const readyNotifiedRef = useRef(false);
   const longUpdateSignatureRef = useRef('');
+  const longScrollActiveRef = useRef(false);
+  const longScrollInFlightRef = useRef(false);
   const previewSegmentIdRef = useRef(0);
   const annotationsRef = useRef<Annotation[]>([]);
   const draftRef = useRef<Annotation | null>(null);
@@ -384,6 +386,12 @@ function ScreenshotEditor() {
       void unlistenPromise.then((unlisten) => unlisten());
     };
   }, [appWindow, editorMode, isLongEditLaunch, sessionId, windowLabel]);
+
+  useEffect(() => {
+    return () => {
+      stopLongScroll();
+    };
+  }, []);
 
   const commitAnnotations = useCallback((next: Annotation[]) => {
     setAnnotations((current) => {
@@ -910,6 +918,7 @@ function ScreenshotEditor() {
   }
 
   function handleLongEdit() {
+    stopLongScroll();
     editorLog(
       `long edit click: active=${longScreenshot.active} preview_len=${longScreenshot.previewDataUrl.length} total=${longScreenshot.totalHeight}`,
     );
@@ -926,6 +935,40 @@ function ScreenshotEditor() {
         setError(String(editError));
       }
     })();
+  }
+
+  function startLongScroll(direction: 'up' | 'down') {
+    if (
+      editorMode !== 'long-capture'
+      || isSaving
+      || !imageLoaded
+      || !sessionId
+      || longScrollActiveRef.current
+      || longScrollInFlightRef.current
+    ) {
+      return;
+    }
+    longScrollActiveRef.current = true;
+    longScrollInFlightRef.current = true;
+    editorLog(`long scroll ${direction}: start`);
+    void invoke('scroll_long_capture', { sessionId, direction })
+      .catch((scrollError: unknown) => {
+        editorLog(`long scroll ${direction} failed: ${String(scrollError)}`);
+        setError(String(scrollError));
+        longScrollActiveRef.current = false;
+      })
+      .finally(() => {
+        longScrollInFlightRef.current = false;
+      });
+  }
+
+  function stopLongScroll() {
+    if (!longScrollActiveRef.current || !sessionId) {
+      return;
+    }
+    longScrollActiveRef.current = false;
+    void invoke('stop_long_capture_scroll', { sessionId }).catch(() => undefined);
+    editorLog('long scroll: stop');
   }
 
   async function resizeWindowForLongEdit(
@@ -976,6 +1019,7 @@ function ScreenshotEditor() {
   }
 
   async function handleCancel() {
+    stopLongScroll();
     if (!sessionId) {
       return;
     }
@@ -1001,6 +1045,7 @@ function ScreenshotEditor() {
   }
 
   async function handleConfirm() {
+    stopLongScroll();
     if (!imageRef.current || !sessionId) {
       return;
     }
@@ -1272,6 +1317,8 @@ function ScreenshotEditor() {
                   toolbarPosition={toolbarPosition}
                   editorVisible={editorVisible}
                   onEdit={handleLongEdit}
+                  onScrollStart={startLongScroll}
+                  onScrollStop={stopLongScroll}
                   onCancel={() => void handleCancel()}
                   onConfirm={() => void handleConfirm()}
                   isSaving={isSaving}

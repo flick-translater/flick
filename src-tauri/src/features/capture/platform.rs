@@ -99,6 +99,37 @@ pub(crate) fn start_scroll_controller(options: ScrollControllerOptions) {
     }
 }
 
+pub(crate) fn start_long_capture_button_scroll(
+    app: AppHandle,
+    session_id: String,
+    selection: SelectionRect,
+    target: ScrollTarget,
+    direction: i32,
+    stop: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
+) -> Result<(), FlickError> {
+    #[cfg(target_os = "macos")]
+    {
+        return macos_long_capture_scroll_platform::start_button_scroll(
+            app, session_id, selection, target, direction, stop, running,
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return linux_long_capture_scroll_platform::start_button_scroll(
+            app, session_id, selection, target, direction, stop, running,
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        windows_long_capture_scroll_platform::start_button_scroll(
+            app, session_id, selection, target, direction, stop, running,
+        )
+    }
+}
+
 pub fn cancel_interactive_capture(app: &AppHandle, state: &State<'_, AppState>) {
     #[cfg(target_os = "macos")]
     {

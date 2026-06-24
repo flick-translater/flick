@@ -167,6 +167,13 @@ struct LongCaptureSession {
     failed_locate_count: u32,
     /// Set while a real-wheel capture worker is waiting/capturing after a scroll.
     capture_pending: Arc<AtomicBool>,
+    /// Latest requested scroll direction, shared with the sampling pipeline as a direction hint.
+    last_scroll_delta: Arc<AtomicI64>,
+    /// Native target that should receive synthetic scroll events.
+    scroll_target: ScrollTarget,
+    /// Controls the toolbar-driven automatic scroll loop.
+    button_scroll_stop: Arc<AtomicBool>,
+    button_scroll_running: Arc<AtomicBool>,
     /// Set when the session ends; the scroll watcher thread observes this and exits.
     stop: Arc<AtomicBool>,
 }
@@ -328,6 +335,8 @@ pub fn start_long_capture(
     let cursor_passthrough = Arc::new(AtomicBool::new(false));
     let last_scroll_millis = Arc::new(AtomicI64::new(0));
     let last_scroll_delta = Arc::new(AtomicI64::new(0));
+    let button_scroll_stop = Arc::new(AtomicBool::new(true));
+    let button_scroll_running = Arc::new(AtomicBool::new(false));
     let scroll_target = long_capture_scroll_target(&state);
     let session = LongCaptureSession {
         selection: selection.clone(),
@@ -338,6 +347,10 @@ pub fn start_long_capture(
         last_shift: 0,
         failed_locate_count: 0,
         capture_pending: capture_pending.clone(),
+        last_scroll_delta: last_scroll_delta.clone(),
+        scroll_target,
+        button_scroll_stop,
+        button_scroll_running,
         stop: stop.clone(),
     };
     let update = encode_build(collect_build_inputs(&session, PreviewUpdate::Replace))?;
@@ -396,6 +409,63 @@ pub fn get_long_capture_image(session_id: String) -> Result<String, FlickError> 
         .get(&session_id)
         .ok_or_else(|| FlickError::Message("long capture session not found".into()))?;
     image_to_data_url(&session.stitched)
+}
+
+pub fn scroll_long_capture(
+    app: AppHandle,
+    session_id: String,
+    direction: String,
+) -> Result<(), FlickError> {
+    let signed_direction = match direction.as_str() {
+        // UI direction is visual: "up" means the image/content rolls upward, equivalent to a
+        // conventional scroll-down wheel step.
+        "up" => 1,
+        "down" => -1,
+        _ => {
+            return Err(FlickError::Message(format!(
+                "unsupported long capture scroll direction: {direction}"
+            )));
+        }
+    };
+    let (selection, target, last_scroll_delta, button_scroll_stop, button_scroll_running) = {
+        let guard = sessions()
+            .lock()
+            .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?;
+        let session = guard
+            .get(&session_id)
+            .ok_or_else(|| FlickError::Message("long capture session not found".into()))?;
+        (
+            session.selection.clone(),
+            session.scroll_target,
+            session.last_scroll_delta.clone(),
+            session.button_scroll_stop.clone(),
+            session.button_scroll_running.clone(),
+        )
+    };
+    last_scroll_delta.store(i64::from(signed_direction), Ordering::SeqCst);
+    platform::start_long_capture_button_scroll(
+        app,
+        session_id,
+        selection,
+        target,
+        signed_direction,
+        button_scroll_stop,
+        button_scroll_running,
+    )
+}
+
+pub fn stop_long_capture_scroll(session_id: String) -> Result<(), FlickError> {
+    let button_scroll_stop = {
+        let guard = sessions()
+            .lock()
+            .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?;
+        let session = guard
+            .get(&session_id)
+            .ok_or_else(|| FlickError::Message("long capture session not found".into()))?;
+        session.button_scroll_stop.clone()
+    };
+    button_scroll_stop.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 /// Ensure exactly one sampling loop is running for this session.
@@ -2418,6 +2488,10 @@ mod tests {
             last_shift: 0,
             failed_locate_count: 0,
             capture_pending: Arc::new(AtomicBool::new(false)),
+            last_scroll_delta: Arc::new(AtomicI64::new(0)),
+            scroll_target: ScrollTarget::default(),
+            button_scroll_stop: Arc::new(AtomicBool::new(true)),
+            button_scroll_running: Arc::new(AtomicBool::new(false)),
             stop: Arc::new(AtomicBool::new(false)),
         }
     }

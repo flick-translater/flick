@@ -10,14 +10,17 @@ use std::{
 };
 
 use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
+use core_graphics::base::boolean_t;
+use core_graphics::display::CGDisplay;
 use core_graphics::event::{
     CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
-    CallbackResult, EventField, ScrollEventUnit,
+    CGMouseButton, CallbackResult, EventField, ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use tauri::AppHandle;
 
 use crate::{
+    error::FlickError,
     features::capture::{
         long_capture::{long_log, monotonic_millis, screenshot_editor_window},
         platform,
@@ -25,7 +28,7 @@ use crate::{
     models::SelectionRect,
 };
 
-use super::ScrollControllerOptions;
+use super::{ScrollControllerOptions, ScrollTarget};
 
 /// Factor applied to each forwarded wheel delta, slowing the page so per-frame scroll stays within
 /// the stitcher's alignable range.
@@ -41,6 +44,8 @@ const RATE_MAX_FRAME_FRACTION: f64 = 0.5;
 /// Sentinel written to a synthetic scroll event's user-data field so the event tap recognizes its
 /// own posted events and ignores them.
 const SYNTHETIC_SCROLL_TAG: i64 = 0x466c_6b53; // "FlkS"
+const BUTTON_SCROLL_PX_PER_STEP: i32 = 36;
+const BUTTON_SCROLL_INTERVAL: Duration = Duration::from_millis(70);
 
 pub(super) fn start_scroll_controller(options: ScrollControllerOptions) {
     long_log(format!(
@@ -52,6 +57,85 @@ pub(super) fn start_scroll_controller(options: ScrollControllerOptions) {
         options.selection.height
     ));
     thread::spawn(move || run_scroll_controller(options));
+}
+
+pub(super) fn start_button_scroll(
+    app: AppHandle,
+    session_id: String,
+    selection: SelectionRect,
+    target: ScrollTarget,
+    direction: i32,
+    stop: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
+) -> Result<(), FlickError> {
+    let _ = target;
+    if running
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Ok(());
+    }
+    stop.store(false, Ordering::SeqCst);
+    thread::spawn(move || {
+        run_button_scroll_loop(app, session_id, selection, direction, stop, running);
+    });
+    Ok(())
+}
+
+fn run_button_scroll_loop(
+    app: AppHandle,
+    session_id: String,
+    selection: SelectionRect,
+    direction: i32,
+    stop: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
+) {
+    let source = match CGEventSource::new(CGEventSourceStateID::HIDSystemState) {
+        Ok(source) => source,
+        Err(_) => {
+            running.store(false, Ordering::SeqCst);
+            return;
+        }
+    };
+    let original_location = match CGEvent::new(source.clone()) {
+        Ok(event) => event.location(),
+        Err(_) => {
+            running.store(false, Ordering::SeqCst);
+            return;
+        }
+    };
+    let target_location = core_graphics::geometry::CGPoint::new(
+        selection.x as f64 + selection.width as f64 / 2.0,
+        selection.y as f64 + selection.height as f64 / 2.0,
+    );
+    let signed = direction.signum() * BUTTON_SCROLL_PX_PER_STEP;
+    let display = CGDisplay::main();
+
+    set_editor_cursor_passthrough(&app, &session_id, true);
+    let _ = display.hide_cursor();
+    let _ = CGDisplay::warp_mouse_cursor_position(target_location);
+    long_log(format!(
+        "scroll_controller/macos: button scroll loop start direction={direction} signed={signed}"
+    ));
+
+    while !stop.load(Ordering::SeqCst) && left_mouse_button_down() {
+        if let Ok(scroll) =
+            CGEvent::new_scroll_event(source.clone(), ScrollEventUnit::PIXEL, 1, signed, 0, 0)
+        {
+            scroll
+                .set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTHETIC_SCROLL_TAG);
+            scroll.set_location(target_location);
+            scroll.post(CGEventTapLocation::HID);
+        }
+        thread::sleep(BUTTON_SCROLL_INTERVAL);
+    }
+
+    let _ = CGDisplay::warp_mouse_cursor_position(original_location);
+    let _ = display.show_cursor();
+    set_editor_cursor_passthrough(&app, &session_id, false);
+    stop.store(true, Ordering::SeqCst);
+    running.store(false, Ordering::SeqCst);
+    long_log("scroll_controller/macos: button scroll loop stopped");
 }
 
 fn run_scroll_controller(options: ScrollControllerOptions) {
@@ -302,4 +386,16 @@ fn set_editor_cursor_passthrough(app: &AppHandle, session_id: &str, passthrough:
         ));
         let _ = window.set_ignore_cursor_events(passthrough);
     }
+}
+
+fn left_mouse_button_down() -> bool {
+    unsafe {
+        CGEventSourceButtonState(CGEventSourceStateID::HIDSystemState, CGMouseButton::Left) != 0
+    }
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGEventSourceButtonState(state_id: CGEventSourceStateID, button: CGMouseButton)
+    -> boolean_t;
 }

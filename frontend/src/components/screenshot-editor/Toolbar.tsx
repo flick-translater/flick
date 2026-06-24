@@ -4,8 +4,10 @@ import {
   ArrowUpDown,
   Brush,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Circle,
   Edit3,
   Redo2,
@@ -398,6 +400,8 @@ type LongScreenshotToolbarProps = {
   toolbarPosition: { left: number; top: number };
   editorVisible: boolean;
   onEdit: () => void;
+  onScrollStart: (direction: 'up' | 'down') => void;
+  onScrollStop: () => void;
   onCancel: () => void;
   onConfirm: () => void;
   isSaving: boolean;
@@ -409,6 +413,8 @@ export function LongScreenshotToolbar({
   toolbarPosition,
   editorVisible,
   onEdit,
+  onScrollStart,
+  onScrollStop,
   onCancel,
   onConfirm,
   isSaving,
@@ -436,6 +442,36 @@ export function LongScreenshotToolbar({
         className={toolbarButtonClass}
       >
         <Edit3 size={18} />
+      </button>
+      <button
+        type="button"
+        title="Scroll up"
+        disabled={isSaving || !imageLoaded}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          onScrollStart('up');
+        }}
+        onPointerUp={onScrollStop}
+        onPointerCancel={onScrollStop}
+        className={toolbarButtonClass}
+      >
+        <ChevronUp size={18} />
+      </button>
+      <button
+        type="button"
+        title="Scroll down"
+        disabled={isSaving || !imageLoaded}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          onScrollStart('down');
+        }}
+        onPointerUp={onScrollStop}
+        onPointerCancel={onScrollStop}
+        className={toolbarButtonClass}
+      >
+        <ChevronDown size={18} />
       </button>
       <button
         type="button"
