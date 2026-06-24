@@ -2,6 +2,7 @@ export default {
   translation: {
     sidebar: {
       general: "一般設定",
+      screenshot: "スクリーンショット設定",
       history: "履歴",
       engine: "エンジン設定",
       ai: "AI 設定"
@@ -41,6 +42,16 @@ export default {
       discardChanges: "変更を破棄",
       savePreferences: "設定を保存"
     },
+    screenshotSettings: {
+      captureBehavior: "スクリーンショット動作",
+      captureBehaviorDesc: "スクリーンショット後の編集フローと GIF 録画の出力を設定します。",
+      screenshotEditorToolbar: "スクリーンショット編集ツールバー",
+      screenshotEditorToolbarDesc: "通常のスクリーンショット後だけ編集ツールバーを表示します。スクリーンショットと翻訳は従来のフローを維持します。",
+      gifRecording: "GIF 録画",
+      gifRecordingDesc: "録画 GIF の出力サイズとファイルサイズを制御します。",
+      gifSize: "GIF 最大サイズ",
+      gifSizeDesc: "選択したサイズを超える録画は縦横比を保って縮小されます。"
+    },
     screenshotEditor: {
       tools: {
         brush: "ブラシ",
@@ -55,6 +66,11 @@ export default {
       actions: {
         color: "色",
         longScreenshot: "長いスクリーンショット",
+        recordGif: "GIF 録画",
+        startRecording: "録画開始",
+        pauseRecording: "一時停止",
+        resumeRecording: "再開",
+        finishRecording: "録画終了",
         undo: "元に戻す",
         redo: "やり直す",
         clear: "クリア",

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import GeneralSettings from './views/GeneralSettings';
+import ScreenshotSettings from './views/ScreenshotSettings';
 import HistoryView from './views/HistoryView';
 import OCRSettings from './views/OCRSettings';
 import AISettings from './views/AISettings';
@@ -21,6 +22,7 @@ export default function App() {
         
         <main className="relative flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8 xl:px-10 xl:py-10">
           {currentView === 'general' && <GeneralSettings />}
+          {currentView === 'screenshot' && <ScreenshotSettings />}
           {currentView === 'history' && <HistoryView />}
           {currentView === 'ocr' && <OCRSettings />}
           {currentView === 'ai' && <AISettings />}
@@ -33,6 +35,7 @@ export default function App() {
 function getViewTitle(view: ViewState, t: (key: string) => string) {
   switch (view) {
     case 'general': return t('sidebar.general');
+    case 'screenshot': return t('sidebar.screenshot');
     case 'history': return t('sidebar.history');
     case 'ocr': return t('sidebar.engine');
     case 'ai': return t('sidebar.ai');

@@ -13,6 +13,7 @@ const MAIN_WINDOW_LABEL: &str = "main";
 const TRANSLATE_WINDOW_LABEL: &str = "translate";
 const SCREENSHOT_EDITOR_WINDOW_PREFIX: &str = "screenshot-editor";
 const PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL: &str = "screenshot-editor-preload";
+const GIF_RECORDING_TOOLBAR_WINDOW_PREFIX: &str = "gif-recording-toolbar";
 
 pub fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
     platform::show_main_window_before_focus(app);
@@ -368,7 +369,82 @@ pub fn close_screenshot_editor_window(app: &AppHandle, session_id: &str) {
             "close_screenshot_editor_window: preload window missing label={PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL}"
         ));
     }
+    close_gif_recording_toolbar_window(app, session_id);
     crate::features::capture::capture_editor_log("close_screenshot_editor_window: complete");
+}
+
+pub fn show_gif_recording_toolbar_window(
+    app: &AppHandle,
+    session_id: &str,
+) -> tauri::Result<WebviewWindow> {
+    let label = format!("{GIF_RECORDING_TOOLBAR_WINDOW_PREFIX}-{session_id}");
+    if let Some(window) = app.get_webview_window(&label) {
+        window.show()?;
+        window.set_focus()?;
+        return Ok(window);
+    }
+
+    let editor_label = format!("{SCREENSHOT_EDITOR_WINDOW_PREFIX}-{session_id}");
+    let editor = app
+        .get_webview_window(&editor_label)
+        .or_else(|| app.get_webview_window(PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL));
+    let (x, y) = if let Some(editor) = editor {
+        let scale = editor.scale_factor().unwrap_or(1.0);
+        let position = editor.outer_position().ok();
+        let url = editor.url().ok();
+        let toolbar_left = url
+            .as_ref()
+            .and_then(|url| query_f64(url, "toolbar_left"))
+            .unwrap_or(8.0);
+        let toolbar_top = url
+            .as_ref()
+            .and_then(|url| query_f64(url, "toolbar_top"))
+            .unwrap_or(8.0);
+        if let Some(position) = position {
+            (
+                position.x as f64 / scale + toolbar_left,
+                position.y as f64 / scale + toolbar_top,
+            )
+        } else {
+            (toolbar_left, toolbar_top)
+        }
+    } else {
+        (80.0, 80.0)
+    };
+    let url = format!("recording-toolbar.html?session_id={session_id}");
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+        .title("Flick GIF Recording")
+        .devtools(false)
+        .inner_size(220.0, 48.0)
+        .position(x, y)
+        .resizable(false)
+        .visible(false)
+        .focused(false)
+        .always_on_top(true)
+        .accept_first_mouse(true)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .build()?;
+    platform::configure_built_window(&window);
+    platform::configure_screenshot_editor_window(&window);
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(window)
+}
+
+pub fn close_gif_recording_toolbar_window(app: &AppHandle, session_id: &str) {
+    let label = format!("{GIF_RECORDING_TOOLBAR_WINDOW_PREFIX}-{session_id}");
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.hide();
+        let _ = window.close();
+    }
+}
+
+fn query_f64(url: &tauri::Url, key: &str) -> Option<f64> {
+    url.query_pairs()
+        .find(|(name, _)| name == key)
+        .and_then(|(_, value)| value.parse::<f64>().ok())
 }
 
 fn restore_screenshot_editor_capture_window_style(window: &WebviewWindow) {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Database, Edit2, FolderOpen, Globe, Keyboard, LoaderCircle, Paintbrush, Power } from 'lucide-react';
+import { Database, Edit2, FolderOpen, Globe, Keyboard, LoaderCircle, Power } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import Toggle from '../components/Toggle';
 import { AppSettings, AutostartStatus, StorageInfo } from '../types';
@@ -42,10 +42,6 @@ export default function GeneralSettings() {
   );
   const isWindows = useMemo(
     () => /Win/i.test(navigator.platform),
-    [],
-  );
-  const isLinux = useMemo(
-    () => /Linux/i.test(navigator.platform),
     [],
   );
 
@@ -300,38 +296,6 @@ export default function GeneralSettings() {
             </div>
           </div>
         </section>
-
-        {!isLinux && (
-          <section className="flex flex-col justify-between rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="mb-0.5 font-headline text-base font-bold text-primary">{t('general.screenshotEditorToolbar')}</h2>
-                <p className="text-xs leading-relaxed text-on-surface-variant">{t('general.screenshotEditorToolbarDesc')}</p>
-              </div>
-              <div className="rounded-lg bg-primary/5 p-2 text-primary">
-                <Paintbrush size={20} />
-              </div>
-            </div>
-            <div className="mt-4 flex items-center justify-between gap-4">
-              <span className="text-sm font-semibold text-on-surface">{t('general.showScreenshotEditorToolbar')}</span>
-              <Toggle
-                checked={settings?.screenshot_editor_toolbar_enabled ?? true}
-                onChange={(enabled) => {
-                  setSettings((current) => current ? { ...current, screenshot_editor_toolbar_enabled: enabled } : current);
-                  void invoke<AppSettings>('update_screenshot_editor_toolbar_enabled', { enabled })
-                    .then((updated) => {
-                      setSettings(updated);
-                      setGeneralError('');
-                    })
-                    .catch((error: unknown) => {
-                      setSettings((current) => current ? { ...current, screenshot_editor_toolbar_enabled: !enabled } : current);
-                      setGeneralError(String(error));
-                    });
-                }}
-              />
-            </div>
-          </section>
-        )}
 
         <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2">
           <div className="mb-3 flex items-start justify-between gap-4">

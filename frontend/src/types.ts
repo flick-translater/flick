@@ -1,4 +1,4 @@
-export type ViewState = 'general' | 'history' | 'ocr' | 'ai';
+export type ViewState = 'general' | 'screenshot' | 'history' | 'ocr' | 'ai';
 
 export type ProviderSettings = {
   api_key: string;
@@ -32,6 +32,7 @@ export type AppSettings = {
   screenshot_directory: string;
   screenshot_editor_toolbar_enabled: boolean;
   screenshot_editor_color: string;
+  gif_recording_size: '540p' | '720p' | string;
   ocr_auto_translate: boolean;
   ocr_target_language: string;
   selected_replace_target_language: string;

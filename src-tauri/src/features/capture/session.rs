@@ -31,7 +31,11 @@ use super::{history, platform};
 
 pub(crate) fn capture_editor_log(_step: &str) {}
 
-pub fn capture_editor_frontend_log(_message: &str) {}
+pub fn capture_editor_frontend_log(message: &str) {
+    if message.contains("gif recording") || message.contains("gif-recording") {
+        eprintln!("[gif-recording/frontend] {message}");
+    }
+}
 
 pub fn cancel_capture(app: &AppHandle) -> Result<(), FlickError> {
     if let Some(state) = app.try_state::<AppState>() {

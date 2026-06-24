@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop-capability",
   "description": "Default permissions for Flick desktop windows.",
-  "windows": ["main", "widget", "screenshot-editor-preload", "screenshot-editor-*"],
+  "windows": ["main", "widget", "screenshot-editor-preload", "screenshot-editor-*", "gif-recording-toolbar-*"],
   "permissions": [
     "core:default",
     "core:event:default",

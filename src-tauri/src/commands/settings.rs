@@ -217,6 +217,33 @@ pub fn update_screenshot_editor_color(
     Ok(updated)
 }
 
+#[tauri::command]
+pub fn update_gif_recording_size(
+    state: State<'_, AppState>,
+    size: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = match size.trim().to_lowercase().as_str() {
+        "540p" => "540p",
+        "720p" => "720p",
+        _ => {
+            return Err(FlickError::Message("invalid GIF recording size".into()));
+        }
+    }
+    .to_string();
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.gif_recording_size = normalized;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
 fn normalize_hex_color(color: &str) -> Result<String, FlickError> {
     let value = color.trim();
     let valid = value.len() == 7

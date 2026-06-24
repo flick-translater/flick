@@ -2,6 +2,7 @@ export default {
   translation: {
     sidebar: {
       general: "常规设置",
+      screenshot: "截图设置",
       history: "历史记录",
       engine: "引擎设置",
       ai: "AI 设置"
@@ -41,6 +42,16 @@ export default {
       discardChanges: "放弃更改",
       savePreferences: "保存首选项"
     },
+    screenshotSettings: {
+      captureBehavior: "截图行为",
+      captureBehaviorDesc: "配置截图后的编辑流程和录屏输出。",
+      screenshotEditorToolbar: "截图编辑工具栏",
+      screenshotEditorToolbarDesc: "仅普通截图后显示编辑工具栏；截图并翻译仍使用原流程。",
+      gifRecording: "GIF 录制",
+      gifRecordingDesc: "控制录制 GIF 的输出大小和文件体积。",
+      gifSize: "GIF 最大尺寸",
+      gifSizeDesc: "超过所选尺寸时会按比例缩放。"
+    },
     screenshotEditor: {
       tools: {
         brush: "画笔",
@@ -55,6 +66,11 @@ export default {
       actions: {
         color: "颜色",
         longScreenshot: "长截图",
+        recordGif: "录制 GIF",
+        startRecording: "开始录制",
+        pauseRecording: "暂停录制",
+        resumeRecording: "继续录制",
+        finishRecording: "结束录制",
         undo: "撤销",
         redo: "重做",
         clear: "清空",

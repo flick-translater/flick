@@ -11,12 +11,15 @@ import {
   Circle,
   Edit3,
   Redo2,
+  Pause,
+  Play,
   Smile,
   Slash,
   Square,
   Trash2,
   Type,
   Undo2,
+  Video,
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -77,6 +80,7 @@ type ScreenshotEditorToolbarProps = {
   canRedo: boolean;
   clearAnnotations: () => void;
   onLongCapture: () => void;
+  onGifRecording: () => void;
   onCancel: () => void;
   onConfirm: () => void;
   isSaving: boolean;
@@ -124,6 +128,7 @@ export function ScreenshotEditorToolbar({
   canRedo,
   clearAnnotations,
   onLongCapture,
+  onGifRecording,
   onCancel,
   onConfirm,
   isSaving,
@@ -377,6 +382,21 @@ export function ScreenshotEditorToolbar({
                 <LongScreenshotIcon />
               </button>
             </TooltipButton>
+            <TooltipButton
+              label={t('screenshotEditor.actions.recordGif')}
+              positionClass={tooltipPositionClass}
+            >
+              <button
+                type="button"
+                title={t('screenshotEditor.actions.recordGif')}
+                aria-label={t('screenshotEditor.actions.recordGif')}
+                disabled={isSaving || !imageLoaded}
+                onClick={onGifRecording}
+                className={toolbarButtonClass}
+              >
+                <Video size={18} />
+              </button>
+            </TooltipButton>
           </div>
         </>
       )}
@@ -428,6 +448,94 @@ export function ScreenshotEditorToolbar({
           </button>
         </TooltipButton>
       </div>
+    </div>
+  );
+}
+
+type GifRecordingToolbarProps = {
+  toolbarRef: React.RefObject<HTMLDivElement | null>;
+  toolbarPosition: { left: number; top: number };
+  editorVisible: boolean;
+  status: 'idle' | 'recording' | 'paused' | 'saving';
+  onStart: () => void;
+  onPause: () => void;
+  onFinish: () => void;
+  onCancel: () => void;
+};
+
+export function GifRecordingToolbar({
+  toolbarRef,
+  toolbarPosition,
+  editorVisible,
+  status,
+  onStart,
+  onPause,
+  onFinish,
+  onCancel,
+}: GifRecordingToolbarProps) {
+  const { t } = useTranslation();
+  const isSaving = status === 'saving';
+  const isRecording = status === 'recording';
+  const isPaused = status === 'paused';
+  return (
+    <div
+      ref={toolbarRef}
+      className="absolute z-40 flex max-w-[calc(100vw-16px)] items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/95 p-1.5 shadow-xl backdrop-blur"
+      style={{
+        left: toolbarPosition.left,
+        top: toolbarPosition.top,
+        opacity: editorVisible ? 1 : 0,
+        pointerEvents: editorVisible ? 'auto' : 'none',
+      }}
+    >
+      <TooltipButton label={isPaused ? t('screenshotEditor.actions.resumeRecording') : t('screenshotEditor.actions.startRecording')} positionClass="bottom-full mb-2">
+        <button
+          type="button"
+          title={isPaused ? t('screenshotEditor.actions.resumeRecording') : t('screenshotEditor.actions.startRecording')}
+          aria-label={isPaused ? t('screenshotEditor.actions.resumeRecording') : t('screenshotEditor.actions.startRecording')}
+          disabled={isSaving || isRecording}
+          onClick={onStart}
+          className={toolbarButtonClass}
+        >
+          <Play size={18} />
+        </button>
+      </TooltipButton>
+      <TooltipButton label={t('screenshotEditor.actions.pauseRecording')} positionClass="bottom-full mb-2">
+        <button
+          type="button"
+          title={t('screenshotEditor.actions.pauseRecording')}
+          aria-label={t('screenshotEditor.actions.pauseRecording')}
+          disabled={isSaving || !isRecording}
+          onClick={onPause}
+          className={toolbarButtonClass}
+        >
+          <Pause size={18} />
+        </button>
+      </TooltipButton>
+      <TooltipButton label={t('screenshotEditor.actions.finishRecording')} positionClass="bottom-full mb-2">
+        <button
+          type="button"
+          title={t('screenshotEditor.actions.finishRecording')}
+          aria-label={t('screenshotEditor.actions.finishRecording')}
+          disabled={isSaving || status === 'idle'}
+          onClick={onFinish}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-green-600 text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+        >
+          <Square size={14} fill="currentColor" />
+        </button>
+      </TooltipButton>
+      <TooltipButton label={t('screenshotEditor.actions.cancel')} positionClass="bottom-full mb-2">
+        <button
+          type="button"
+          title={t('screenshotEditor.actions.cancel')}
+          aria-label={t('screenshotEditor.actions.cancel')}
+          disabled={isSaving}
+          onClick={onCancel}
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <X size={18} />
+        </button>
+      </TooltipButton>
     </div>
   );
 }

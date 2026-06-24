@@ -49,6 +49,10 @@ pub fn open_file_in_default_app(path: &str) -> Result<(), FlickError> {
 pub fn read_image_as_data_url(path: &str) -> Result<String, FlickError> {
     let bytes = fs::read(path)
         .map_err(|error| FlickError::Message(format!("failed to read image: {error}")))?;
+    let mime = match Path::new(path).extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("gif") => "image/gif",
+        _ => "image/png",
+    };
 
-    Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
+    Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
 }

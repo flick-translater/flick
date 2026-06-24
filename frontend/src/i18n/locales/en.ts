@@ -2,6 +2,7 @@ export default {
   translation: {
     sidebar: {
       general: "General",
+      screenshot: "Screenshot Settings",
       history: "History",
       engine: "Engine Settings",
       ai: "AI Settings"
@@ -41,6 +42,16 @@ export default {
       discardChanges: "Discard Changes",
       savePreferences: "Save Preferences"
     },
+    screenshotSettings: {
+      captureBehavior: "Screenshot Behavior",
+      captureBehaviorDesc: "Configure the editing flow after screenshots and GIF recording output.",
+      screenshotEditorToolbar: "Screenshot Editor Toolbar",
+      screenshotEditorToolbarDesc: "Shows the editor only after plain screenshots. Screenshot & Translate keeps the existing flow.",
+      gifRecording: "GIF Recording",
+      gifRecordingDesc: "Control the output size and file size of recorded GIFs.",
+      gifSize: "Maximum GIF Size",
+      gifSizeDesc: "Recordings larger than the selected size are scaled proportionally."
+    },
     screenshotEditor: {
       tools: {
         brush: "Brush",
@@ -55,6 +66,11 @@ export default {
       actions: {
         color: "Color",
         longScreenshot: "Long screenshot",
+        recordGif: "Record GIF",
+        startRecording: "Start recording",
+        pauseRecording: "Pause recording",
+        resumeRecording: "Resume recording",
+        finishRecording: "Finish recording",
         undo: "Undo",
         redo: "Redo",
         clear: "Clear",

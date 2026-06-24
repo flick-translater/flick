@@ -73,6 +73,7 @@ export function ScreenshotEditorCanvas({
         width: displaySize.width,
         height: displaySize.height,
         opacity: editorVisible ? 1 : 0,
+        pointerEvents: showAnnotationLayer ? 'auto' : 'none',
       }}
     >
       {screenshotDataUrl && showAnnotationLayer && (

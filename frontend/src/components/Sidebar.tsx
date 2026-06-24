@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings, History, ScanText, Bot } from 'lucide-react';
+import { Settings, History, ScanText, Bot, Image } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ViewState } from '../types';
@@ -28,6 +28,7 @@ export default function Sidebar({ currentView, setCurrentView }: SidebarProps) {
 
   const navItems: { id: ViewState; label: string; icon: React.ElementType }[] = [
     { id: 'general', label: t('sidebar.general'), icon: Settings },
+    { id: 'screenshot', label: t('sidebar.screenshot'), icon: Image },
     { id: 'history', label: t('sidebar.history'), icon: History },
     { id: 'ocr', label: t('sidebar.engine'), icon: ScanText },
     { id: 'ai', label: t('sidebar.ai'), icon: Bot },

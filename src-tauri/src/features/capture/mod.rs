@@ -7,6 +7,7 @@ mod history;
 mod io;
 mod long_capture;
 pub(crate) mod platform;
+mod recording;
 mod session;
 
 pub use history::{
@@ -18,6 +19,11 @@ pub use long_capture::{
     cancel_long_capture, confirm_long_capture, get_long_capture_image,
     open_long_capture_edit_window, prepare_long_capture_edit, save_long_capture,
     scroll_long_capture, start_long_capture, stop_long_capture_scroll,
+};
+pub use recording::{
+    cancel_gif_recording, close_gif_recording_toolbar_window, finish_gif_recording,
+    open_gif_recording_toolbar_window, pause_gif_recording, resume_gif_recording,
+    set_gif_recording_window_shape, start_gif_recording,
 };
 pub(crate) use session::capture_editor_log;
 pub use session::{

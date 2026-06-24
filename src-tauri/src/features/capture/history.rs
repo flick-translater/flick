@@ -84,6 +84,22 @@ pub fn clear_all_captures(state: &State<'_, AppState>) -> Result<(), FlickError>
 }
 
 pub fn copy_capture_image(path: &str) -> Result<(), FlickError> {
+    if path
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("gif"))
+    {
+        let mut clipboard = arboard::Clipboard::new()
+            .map_err(|error| FlickError::Message(format!("failed to access clipboard: {error}")))?;
+        if let Err(file_error) = clipboard.set().file_list(&[Path::new(path)]) {
+            clipboard.set_text(path.to_string()).map_err(|error| {
+                FlickError::Message(format!(
+                    "failed to copy gif file to clipboard: {file_error}; text fallback failed: {error}"
+                ))
+            })?;
+        }
+        return Ok(());
+    }
+
     let image = image::open(path)
         .map_err(|error| FlickError::Message(format!("failed to read screenshot: {error}")))?
         .into_rgba8();
@@ -132,7 +148,10 @@ fn load_capture_history(screenshot_dir: &Path) -> Result<Vec<CaptureRecord>, Fli
         })?;
         let path = entry.path();
 
-        if !matches!(path.extension().and_then(|ext| ext.to_str()), Some("png")) {
+        let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+            continue;
+        };
+        if !ext.eq_ignore_ascii_case("png") && !ext.eq_ignore_ascii_case("gif") {
             continue;
         }
 
@@ -143,9 +162,7 @@ fn load_capture_history(screenshot_dir: &Path) -> Result<Vec<CaptureRecord>, Fli
             continue;
         }
 
-        let (width, height) = image::image_dimensions(&path).map_err(|error| {
-            FlickError::Message(format!("failed to read screenshot dimensions: {error}"))
-        })?;
+        let (width, height) = capture_dimensions(&path)?;
         let created_at = metadata
             .modified()
             .map(DateTime::<Utc>::from)
@@ -167,4 +184,23 @@ fn load_capture_history(screenshot_dir: &Path) -> Result<Vec<CaptureRecord>, Fli
 
     records.sort_by(|left, right| right.created_at.cmp(&left.created_at));
     Ok(records)
+}
+
+fn capture_dimensions(path: &Path) -> Result<(u32, u32), FlickError> {
+    if path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gif"))
+    {
+        let file = fs::File::open(path)
+            .map_err(|error| FlickError::Message(format!("failed to open gif: {error}")))?;
+        let decoder = gif::DecodeOptions::new().read_info(file).map_err(|error| {
+            FlickError::Message(format!("failed to read gif dimensions: {error}"))
+        })?;
+        return Ok((u32::from(decoder.width()), u32::from(decoder.height())));
+    }
+
+    image::image_dimensions(path).map_err(|error| {
+        FlickError::Message(format!("failed to read screenshot dimensions: {error}"))
+    })
 }

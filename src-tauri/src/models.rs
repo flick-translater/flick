@@ -259,6 +259,10 @@ fn default_screenshot_editor_color() -> String {
     "#ef4444".into()
 }
 
+fn default_gif_recording_size() -> String {
+    "720p".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -276,6 +280,8 @@ pub struct AppSettings {
     pub screenshot_editor_toolbar_enabled: bool,
     #[serde(default = "default_screenshot_editor_color")]
     pub screenshot_editor_color: String,
+    #[serde(default = "default_gif_recording_size")]
+    pub gif_recording_size: String,
     pub ocr_auto_translate: bool,
     pub ocr_target_language: String,
     pub selected_replace_target_language: String,
@@ -299,6 +305,7 @@ impl Default for AppSettings {
             screenshot_directory: String::new(),
             screenshot_editor_toolbar_enabled: true,
             screenshot_editor_color: default_screenshot_editor_color(),
+            gif_recording_size: default_gif_recording_size(),
             ocr_auto_translate: true,
             ocr_target_language: default_ocr_target_language(),
             selected_replace_target_language: default_selected_replace_target_language(),
@@ -333,6 +340,10 @@ impl AppSettings {
         if self.selected_replace_target_language.trim().is_empty() {
             self.selected_replace_target_language = default_selected_replace_target_language();
         }
+        self.gif_recording_size = match self.gif_recording_size.trim().to_lowercase().as_str() {
+            "540p" => "540p".into(),
+            _ => default_gif_recording_size(),
+        };
     }
 }
 

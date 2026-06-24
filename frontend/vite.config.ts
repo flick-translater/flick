@@ -31,6 +31,7 @@ export default defineConfig(({mode}) => {
           main: path.resolve(__dirname, 'index.html'),
           widget: path.resolve(__dirname, 'translation-window.html'),
           screenshotEditor: path.resolve(__dirname, 'screenshot-editor.html'),
+          recordingToolbar: path.resolve(__dirname, 'recording-toolbar.html'),
         },
       },
     },
