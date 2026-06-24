@@ -81,10 +81,7 @@ type LongCaptureUpdate = {
   max_offset: number;
 };
 
-function editorLog(step: string) {
-  const message = `[screenshot-editor] ${new Date().toISOString()} ${step}`;
-  console.info(message);
-  void invoke('capture_editor_frontend_log', { message }).catch(() => undefined);
+function editorLog(_step: string) {
 }
 
 function ScreenshotEditor() {

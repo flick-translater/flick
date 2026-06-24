@@ -40,9 +40,7 @@ impl LiveFrameStreamHandle for WindowsLiveFrameStreamHandle {}
 impl Drop for WindowsLiveFrameStreamHandle {
     fn drop(&mut self) {
         if let Some(control) = self.control.take() {
-            if let Err(error) = control.stop() {
-                eprintln!("[long-capture] windows stream stop failed: {error}");
-            }
+            let _ = control.stop();
         }
     }
 }
@@ -64,8 +62,6 @@ struct MonitorBounds {
     hmonitor: HMONITOR,
     x: i32,
     y: i32,
-    width: u32,
-    height: u32,
 }
 
 struct WindowsStreamHandler {
@@ -150,17 +146,6 @@ pub fn open_live_frame_stream(
 
     let control = WindowsStreamHandler::start_free_threaded(settings)
         .map_err(|error| anyhow!("failed to start Windows Graphics Capture stream: {error}"))?;
-    eprintln!(
-        "[long-capture] windows stream opened monitor=({},{} {}x{}) crop=({},{} {}x{})",
-        monitor_bounds.x,
-        monitor_bounds.y,
-        monitor_bounds.width,
-        monitor_bounds.height,
-        crop.x,
-        crop.y,
-        crop.width,
-        crop.height
-    );
     Ok(Box::new(WindowsLiveFrameStreamHandle {
         control: Some(control),
     }))
@@ -189,14 +174,10 @@ fn monitor_bounds_for_selection(selection: &SelectionRect) -> anyhow::Result<Mon
 
     let left = info.rcMonitor.left;
     let top = info.rcMonitor.top;
-    let right = info.rcMonitor.right;
-    let bottom = info.rcMonitor.bottom;
     Ok(MonitorBounds {
         hmonitor,
         x: left,
         y: top,
-        width: u32::try_from(right - left).context("invalid monitor width")?,
-        height: u32::try_from(bottom - top).context("invalid monitor height")?,
     })
 }
 

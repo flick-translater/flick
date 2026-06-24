@@ -144,9 +144,6 @@ pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
 }
 
 pub fn hide_overlay_for_live_capture(_app: &AppHandle, _state: &State<'_, AppState>) {
-    crate::features::capture::long_capture::long_log(
-        "capture_live_frame/windows: hide frozen overlay start",
-    );
     frozen_overlay::hide_for_live_capture();
 }
 
@@ -155,23 +152,14 @@ pub fn restore_overlay_after_live_capture(
     _state: &State<'_, AppState>,
     _selection: &SelectionRect,
 ) {
-    crate::features::capture::long_capture::long_log(
-        "capture_live_frame/windows: restore frozen overlay start",
-    );
     frozen_overlay::restore_after_live_capture();
 }
 
 pub fn set_overlay_capture_sharing(_app: &AppHandle, include_in_capture: bool) {
-    crate::features::capture::long_capture::long_log(format!(
-        "scroll_controller/windows: set overlay capture sharing include={include_in_capture}"
-    ));
     frozen_overlay::set_capture_sharing(include_in_capture);
 }
 
 pub fn set_overlay_mouse_passthrough(_app: &AppHandle, passthrough: bool) {
-    crate::features::capture::long_capture::long_log(format!(
-        "scroll_controller/windows: set overlay mouse passthrough={passthrough}"
-    ));
     frozen_overlay::set_mouse_passthrough(passthrough);
 }
 
@@ -184,21 +172,15 @@ pub fn set_window_capture_sharing(window: &tauri::WebviewWindow, include_in_capt
     } else {
         WDA_EXCLUDEFROMCAPTURE
     };
-    let ok = unsafe { SetWindowDisplayAffinity(hwnd.0 as _, affinity) };
-    crate::features::capture::long_capture::long_log(format!(
-        "scroll_controller/windows: set window capture sharing hwnd={:#x} include={} affinity={} ok={}",
-        hwnd.0 as usize, include_in_capture, affinity, ok
-    ));
+    unsafe {
+        SetWindowDisplayAffinity(hwnd.0 as _, affinity);
+    }
 }
 
 pub fn set_window_mouse_passthrough(window: &tauri::WebviewWindow, passthrough: bool) {
     let Ok(hwnd) = window.hwnd() else {
         return;
     };
-    crate::features::capture::long_capture::long_log(format!(
-        "scroll_controller/windows: set editor mouse passthrough hwnd={:#x} passthrough={passthrough}",
-        hwnd.0 as usize
-    ));
     set_hwnd_mouse_passthrough(hwnd.0 as _, passthrough);
 }
 
@@ -218,10 +200,7 @@ fn set_hwnd_mouse_passthrough(hwnd: windows_sys::Win32::Foundation::HWND, passth
             style & !(WS_EX_TRANSPARENT as isize)
         };
         let previous = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
-        crate::features::capture::long_capture::long_log(format!(
-            "scroll_controller/windows: set hwnd transparent hwnd={:#x} passthrough={} old_style={:#x} new_style={:#x} previous={:#x}",
-            hwnd as usize, passthrough, style, next, previous
-        ));
+        let _ = previous;
     }
 }
 

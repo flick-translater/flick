@@ -12,7 +12,6 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose};
-use chrono::{SecondsFormat, Utc};
 use image::{
     ImageBuffer, ImageEncoder, Rgba,
     codecs::png::{CompressionType, FilterType as PngFilterType},
@@ -113,13 +112,7 @@ const MIN_AVG_CORR_PERMILLE: u32 = 850;
 /// Fraction of the frame's non-trivial rows that must match before accepting a last/next delta.
 const MIN_RELATIVE_NONTRIVIAL_FRACTION: f64 = 0.25;
 
-pub(super) fn long_log(message: impl AsRef<str>) {
-    eprintln!(
-        "[long-capture] {} {}",
-        Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-        message.as_ref()
-    );
-}
+pub(super) fn long_log(_message: impl AsRef<str>) {}
 
 pub(super) fn monotonic_millis() -> i64 {
     static START: OnceLock<Instant> = OnceLock::new();
@@ -419,11 +412,7 @@ pub fn scroll_long_capture(
             session.button_scroll_running.clone(),
         )
     };
-    let pipeline_direction = signed_direction;
-    last_scroll_delta.store(i64::from(pipeline_direction), Ordering::SeqCst);
-    long_log(format!(
-        "button scroll: direction={direction} input_direction={signed_direction} pipeline_direction={pipeline_direction}"
-    ));
+    last_scroll_delta.store(i64::from(signed_direction), Ordering::SeqCst);
     platform::start_long_capture_button_scroll(
         app,
         session_id,
@@ -1216,11 +1205,7 @@ fn capture_live_frame(
     #[cfg(target_os = "windows")]
     if let Some((_, window)) = window.as_ref() {
         platform::set_window_capture_sharing(window, false);
-        long_log("capture_live_frame: hide editor start");
-        let _ = window.hide();
-        long_log("capture_live_frame: hide editor complete");
     }
-    #[cfg(not(target_os = "windows"))]
     if let Some((_, window)) = window.as_ref() {
         long_log("capture_live_frame: hide editor start");
         let _ = window.hide();
@@ -1245,14 +1230,6 @@ fn capture_live_frame(
     long_log("capture_live_frame: restore overlay start");
     platform::restore_overlay_after_live_capture(app, state, selection);
     long_log("capture_live_frame: restore overlay complete");
-    #[cfg(target_os = "windows")]
-    if let Some((_, window)) = window.as_ref() {
-        long_log("capture_live_frame: show editor start");
-        let _ = window.show();
-        let _ = window.set_focus();
-        long_log("capture_live_frame: show editor complete");
-    }
-    #[cfg(not(target_os = "windows"))]
     if let Some((_, window)) = window.as_ref() {
         long_log("capture_live_frame: show editor start");
         let _ = window.show();
@@ -1279,14 +1256,10 @@ pub(super) fn screenshot_editor_window(
 fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
     #[cfg(target_os = "windows")]
     {
-        let Some((label, window)) = screenshot_editor_window(app, session_id) else {
-            long_log("long window shape: editor window not found");
+        let Some((_, window)) = screenshot_editor_window(app, session_id) else {
             return;
         };
         let Ok(url) = window.url() else {
-            long_log(format!(
-                "long window shape: failed to read url label={label}"
-            ));
             return;
         };
 
@@ -1315,18 +1288,6 @@ fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
             },
         ];
         crate::app::platform::configure_screenshot_editor_window_shape(&window, &regions);
-        long_log(format!(
-            "long window shape: label={label} regions=toolbar({:.0},{:.0} {:.0}x{:.0}) thumbnail({:.0},{:.0} {:.0}x{:.0}) anchor_top={:.0}",
-            toolbar_left,
-            toolbar_top,
-            toolbar_width,
-            toolbar_height,
-            thumbnail_left,
-            thumbnail_region_top,
-            thumbnail_width,
-            thumbnail_height,
-            thumbnail_top
-        ));
     }
 
     #[cfg(not(target_os = "windows"))]

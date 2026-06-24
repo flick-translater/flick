@@ -139,10 +139,7 @@ impl SCStreamOutputTrait for PushFrameHandler {
         // Decode now, then drop `pixel_buffer` (end of scope) so the pool slot is freed immediately.
         let image = match rgba_image_from_pixel_buffer_crop(&pixel_buffer, self.crop) {
             Ok(image) => image,
-            Err(error) => {
-                eprintln!("[long-capture] push handler: decode failed {error}");
-                return;
-            }
+            Err(_) => return,
         };
         drop(pixel_buffer);
         if let Ok(mut cb) = self.on_frame.lock() {
