@@ -25,7 +25,6 @@ use crate::services::screen_capture::macos_frozen_platform;
 use crate::{
     app::{AppState, windows::emit_capture_status},
     error::FlickError,
-    features::capture::long_capture::long_log,
     models::SelectionRect,
     services::CachedScreenCapture,
 };
@@ -220,18 +219,8 @@ pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
 }
 
 pub fn hide_overlay_for_live_capture(app: &AppHandle, _state: &State<'_, AppState>) {
-    long_log("macos: hide_overlay_for_live_capture start");
-    match frozen_overlay::set_overlay_window_capture_sharing(app, false) {
-        Ok(()) => long_log("macos: overlay capture sharing false complete"),
-        Err(error) => long_log(format!(
-            "macos: overlay capture sharing false failed {error}"
-        )),
-    }
-    match frozen_overlay::order_out_overlay_windows(app) {
-        Ok(()) => long_log("macos: overlay order out complete"),
-        Err(error) => long_log(format!("macos: overlay order out failed {error}")),
-    }
-    long_log("macos: hide_overlay_for_live_capture complete");
+    let _ = frozen_overlay::set_overlay_window_capture_sharing(app, false);
+    let _ = frozen_overlay::order_out_overlay_windows(app);
 }
 
 pub fn restore_overlay_after_live_capture(
@@ -239,80 +228,33 @@ pub fn restore_overlay_after_live_capture(
     _state: &State<'_, AppState>,
     selection: &SelectionRect,
 ) {
-    long_log(format!(
-        "macos: restore_overlay_after_live_capture start selection=({},{} {}x{})",
-        selection.x, selection.y, selection.width, selection.height
-    ));
-    match frozen_overlay::restore_overlay_windows(app) {
-        Ok(()) => long_log("macos: overlay restore windows complete"),
-        Err(error) => long_log(format!("macos: overlay restore windows failed {error}")),
-    }
-    match frozen_overlay::set_overlay_window_capture_sharing(app, true) {
-        Ok(()) => long_log("macos: overlay capture sharing true complete"),
-        Err(error) => long_log(format!(
-            "macos: overlay capture sharing true failed {error}"
-        )),
-    }
-    match update_highlight(app, Some(selection.clone())) {
-        Ok(()) => long_log("macos: overlay highlight restore complete"),
-        Err(error) => long_log(format!("macos: overlay highlight restore failed {error}")),
-    }
-    long_log("macos: restore_overlay_after_live_capture complete");
+    let _ = frozen_overlay::restore_overlay_windows(app);
+    let _ = frozen_overlay::set_overlay_window_capture_sharing(app, true);
+    let _ = update_highlight(app, Some(selection.clone()));
 }
 
 pub fn set_overlay_capture_sharing(app: &AppHandle, include_in_capture: bool) {
-    long_log(format!(
-        "macos: set_overlay_capture_sharing include_in_capture={include_in_capture}"
-    ));
-    match frozen_overlay::set_overlay_window_capture_sharing(app, include_in_capture) {
-        Ok(()) => long_log("macos: set_overlay_capture_sharing complete"),
-        Err(error) => long_log(format!("macos: set_overlay_capture_sharing failed {error}")),
-    }
+    let _ = frozen_overlay::set_overlay_window_capture_sharing(app, include_in_capture);
 }
 
 pub fn set_overlay_mouse_passthrough(app: &AppHandle, passthrough: bool) {
-    long_log(format!(
-        "macos: set_overlay_mouse_passthrough passthrough={passthrough}"
-    ));
-    match frozen_overlay::set_overlay_mouse_passthrough(app, passthrough) {
-        Ok(()) => long_log("macos: set_overlay_mouse_passthrough complete"),
-        Err(error) => long_log(format!(
-            "macos: set_overlay_mouse_passthrough failed {error}"
-        )),
-    }
+    let _ = frozen_overlay::set_overlay_mouse_passthrough(app, passthrough);
 }
 
 pub fn set_window_capture_sharing(window: &tauri::WebviewWindow, include_in_capture: bool) {
-    let label = window.label().to_string();
     let Ok(ns_window) = window.ns_window() else {
-        long_log(format!(
-            "macos: set_window_capture_sharing missing ns_window label={label}"
-        ));
         return;
     };
     let ns_window = ns_window as usize;
-    long_log(format!(
-        "macos: set_window_capture_sharing schedule label={label} include_in_capture={include_in_capture} ns_window=0x{ns_window:x}"
-    ));
-    match window.run_on_main_thread(move || {
-            let window = unsafe { &*(ns_window as *mut std::ffi::c_void).cast::<NSWindow>() };
-            let sharing = if include_in_capture {
-                NSWindowSharingType::ReadOnly
-            } else {
-                NSWindowSharingType::None
-            };
-            window.setSharingType(sharing);
-            long_log(format!(
-                "macos: set_window_capture_sharing applied include_in_capture={include_in_capture} ns_window=0x{ns_window:x}"
-            ));
-        }) {
-        Ok(()) => long_log(format!(
-            "macos: set_window_capture_sharing scheduled label={label} include_in_capture={include_in_capture}"
-        )),
-        Err(error) => long_log(format!(
-            "macos: set_window_capture_sharing schedule failed label={label} include_in_capture={include_in_capture} error={error}"
-        )),
-    }
+    let _ = window.run_on_main_thread(move || {
+        let window = unsafe { &*(ns_window as *mut std::ffi::c_void).cast::<NSWindow>() };
+        let sharing = if include_in_capture {
+            NSWindowSharingType::ReadOnly
+        } else {
+            NSWindowSharingType::None
+        };
+        window.setSharingType(sharing);
+    });
 }
 
 fn run_native_capture_loop(app: AppHandle, session_id: u64) {

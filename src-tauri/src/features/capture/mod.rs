@@ -14,7 +14,6 @@ pub use history::{
     get_storage_info, list_capture_history, prune_capture_history,
 };
 pub use io::{open_file_in_default_app, pick_screenshot_directory, read_image_as_data_url};
-pub(crate) use long_capture::long_log;
 pub use long_capture::{
     cancel_long_capture, confirm_long_capture, get_long_capture_image,
     open_long_capture_edit_window, prepare_long_capture_edit, save_long_capture,

@@ -19,7 +19,6 @@ use screencapturekit::{
 };
 
 use crate::{
-    features::capture::long_log,
     models::SelectionRect,
     services::{CachedScreenCapture, screen_capture::MacosCaptureBackend},
 };
@@ -189,33 +188,6 @@ pub fn open_live_frame_stream(
     let display_frame = display.frame();
     let excluded_windows = windows_owned_by_current_process(&content);
     let excluded_window_refs: Vec<_> = excluded_windows.iter().collect();
-    long_log(format!(
-        "sckit live stream: filter display=({},{} {}x{}) current_pid={} excluded_windows={}",
-        display_frame.x,
-        display_frame.y,
-        display_frame.width,
-        display_frame.height,
-        std::process::id(),
-        excluded_window_refs.len()
-    ));
-    for window in &excluded_windows {
-        let frame = window.frame();
-        let title = window
-            .title()
-            .unwrap_or_else(|| String::from("<untitled>"))
-            .replace(['\n', '\r'], " ");
-        long_log(format!(
-            "sckit live stream: excluding window id={} layer={} on_screen={} frame=({},{} {}x{}) title={}",
-            window.window_id(),
-            window.window_layer(),
-            window.is_on_screen(),
-            frame.x,
-            frame.y,
-            frame.width,
-            frame.height,
-            title
-        ));
-    }
     let filter = SCContentFilter::create()
         .with_display(display)
         .with_excluding_windows(&excluded_window_refs)
