@@ -191,6 +191,15 @@ pub fn start_gif_recording(
 }
 
 #[tauri::command]
+pub fn prepare_gif_recording_mode(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), FlickError> {
+    capture::prepare_gif_recording_mode(app, state, session_id)
+}
+
+#[tauri::command]
 pub fn pause_gif_recording(session_id: String) -> Result<(), FlickError> {
     capture::pause_gif_recording(session_id)
 }
@@ -210,8 +219,8 @@ pub fn finish_gif_recording(
 }
 
 #[tauri::command]
-pub fn cancel_gif_recording(session_id: String) -> Result<(), FlickError> {
-    capture::cancel_gif_recording(session_id)
+pub fn cancel_gif_recording(app: AppHandle, session_id: String) -> Result<(), FlickError> {
+    capture::cancel_gif_recording(app, session_id)
 }
 
 #[tauri::command]

@@ -87,6 +87,7 @@ type ScreenshotEditorToolbarProps = {
   imageLoaded: boolean;
   embedded?: boolean;
   showLongCapture?: boolean;
+  useNativeTooltip?: boolean;
 };
 
 export function ScreenshotEditorToolbar({
@@ -135,6 +136,7 @@ export function ScreenshotEditorToolbar({
   imageLoaded,
   embedded = false,
   showLongCapture = true,
+  useNativeTooltip = false,
 }: ScreenshotEditorToolbarProps) {
   const { t } = useTranslation();
   const hsvColor = hexToHsv(color);
@@ -165,10 +167,9 @@ export function ScreenshotEditorToolbar({
           const isActive = tool === item.id;
           const label = t(item.labelKey);
           return (
-            <div key={item.id} className="group relative shrink-0">
+            <div key={item.id} className="group relative shrink-0" title={useNativeTooltip ? label : undefined}>
               <button
                 type="button"
-                title={label}
                 aria-label={label}
                 onClick={() => onToolClick(item.id)}
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
@@ -179,7 +180,7 @@ export function ScreenshotEditorToolbar({
               >
                 <Icon size={18} active={isActive} />
               </button>
-              <ToolbarTooltip label={label} positionClass={tooltipPositionClass} />
+              {!useNativeTooltip && <ToolbarTooltip label={label} positionClass={tooltipPositionClass} />}
               {isActive && item.id !== 'mosaic' && item.id !== 'text' && item.id !== 'emoji' && (
                 <ToolOptionPanel label={t('screenshotEditor.options.size')} positionClass={popupPositionClass}>
                   <input
@@ -248,10 +249,10 @@ export function ScreenshotEditorToolbar({
                     <TooltipButton
                       label={t('screenshotEditor.actions.previous')}
                       positionClass="bottom-full mb-2"
+                      useNativeTooltip={useNativeTooltip}
                     >
                       <button
                         type="button"
-                        title={t('screenshotEditor.actions.previous')}
                         aria-label={t('screenshotEditor.actions.previous')}
                         disabled={emojiPage === 0}
                         onClick={() => setEmojiPage((page) => Math.max(page - 1, 0))}
@@ -266,10 +267,10 @@ export function ScreenshotEditorToolbar({
                     <TooltipButton
                       label={t('screenshotEditor.actions.next')}
                       positionClass="bottom-full mb-2"
+                      useNativeTooltip={useNativeTooltip}
                     >
                       <button
                         type="button"
-                        title={t('screenshotEditor.actions.next')}
                         aria-label={t('screenshotEditor.actions.next')}
                         disabled={emojiPage >= emojiPageCount - 1}
                         onClick={() => setEmojiPage((page) => Math.min(page + 1, emojiPageCount - 1))}
@@ -288,10 +289,9 @@ export function ScreenshotEditorToolbar({
 
       <div className={toolbarSeparatorClass} />
 
-      <div className="group relative shrink-0">
+      <div className="group relative shrink-0" title={useNativeTooltip ? t('screenshotEditor.actions.color') : undefined}>
         <button
           type="button"
-          title={t('screenshotEditor.actions.color')}
           aria-label={t('screenshotEditor.actions.color')}
           onClick={() => {
             setEmojiPickerOpen(false);
@@ -300,7 +300,7 @@ export function ScreenshotEditorToolbar({
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-outline-variant/30 shadow-inner"
           style={{ backgroundColor: color }}
         />
-        <ToolbarTooltip label={t('screenshotEditor.actions.color')} positionClass={tooltipPositionClass} />
+        {!useNativeTooltip && <ToolbarTooltip label={t('screenshotEditor.actions.color')} positionClass={tooltipPositionClass} />}
         {colorPickerOpen && (
           <div
             className={`absolute left-0 ${popupPositionClass} z-50 w-56 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl`}
@@ -370,10 +370,10 @@ export function ScreenshotEditorToolbar({
             <TooltipButton
               label={t('screenshotEditor.actions.longScreenshot')}
               positionClass={tooltipPositionClass}
+              useNativeTooltip={useNativeTooltip}
             >
               <button
                 type="button"
-                title={t('screenshotEditor.actions.longScreenshot')}
                 aria-label={t('screenshotEditor.actions.longScreenshot')}
                 disabled={isSaving || !imageLoaded}
                 onClick={onLongCapture}
@@ -385,10 +385,10 @@ export function ScreenshotEditorToolbar({
             <TooltipButton
               label={t('screenshotEditor.actions.recordGif')}
               positionClass={tooltipPositionClass}
+              useNativeTooltip={useNativeTooltip}
             >
               <button
                 type="button"
-                title={t('screenshotEditor.actions.recordGif')}
                 aria-label={t('screenshotEditor.actions.recordGif')}
                 disabled={isSaving || !imageLoaded}
                 onClick={onGifRecording}
@@ -404,13 +404,13 @@ export function ScreenshotEditorToolbar({
       <div className={toolbarSeparatorClass} />
 
       <div className="flex items-center gap-1">
-        <TooltipButton label={t('screenshotEditor.actions.undo')} positionClass={tooltipPositionClass}>
-          <button type="button" title={t('screenshotEditor.actions.undo')} aria-label={t('screenshotEditor.actions.undo')} onClick={undo} disabled={!canUndo} className={toolbarButtonClass}>
+        <TooltipButton label={t('screenshotEditor.actions.undo')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
+          <button type="button" aria-label={t('screenshotEditor.actions.undo')} onClick={undo} disabled={!canUndo} className={toolbarButtonClass}>
             <Undo2 size={18} />
           </button>
         </TooltipButton>
-        <TooltipButton label={t('screenshotEditor.actions.redo')} positionClass={tooltipPositionClass}>
-          <button type="button" title={t('screenshotEditor.actions.redo')} aria-label={t('screenshotEditor.actions.redo')} onClick={redo} disabled={!canRedo} className={toolbarButtonClass}>
+        <TooltipButton label={t('screenshotEditor.actions.redo')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
+          <button type="button" aria-label={t('screenshotEditor.actions.redo')} onClick={redo} disabled={!canRedo} className={toolbarButtonClass}>
             <Redo2 size={18} />
           </button>
         </TooltipButton>
@@ -419,15 +419,14 @@ export function ScreenshotEditorToolbar({
       <div className={toolbarSeparatorClass} />
 
       <div className="flex items-center gap-1">
-        <TooltipButton label={t('screenshotEditor.actions.clear')} positionClass={tooltipPositionClass}>
-          <button type="button" title={t('screenshotEditor.actions.clear')} aria-label={t('screenshotEditor.actions.clear')} onClick={clearAnnotations} className={toolbarButtonClass}>
+        <TooltipButton label={t('screenshotEditor.actions.clear')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
+          <button type="button" aria-label={t('screenshotEditor.actions.clear')} onClick={clearAnnotations} className={toolbarButtonClass}>
             <Trash2 size={18} />
           </button>
         </TooltipButton>
-        <TooltipButton label={t('screenshotEditor.actions.cancel')} positionClass={tooltipPositionClass}>
+        <TooltipButton label={t('screenshotEditor.actions.cancel')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
           <button
             type="button"
-            title={t('screenshotEditor.actions.cancel')}
             aria-label={t('screenshotEditor.actions.cancel')}
             onClick={onCancel}
             className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
@@ -435,10 +434,9 @@ export function ScreenshotEditorToolbar({
             <X size={18} />
           </button>
         </TooltipButton>
-        <TooltipButton label={t('screenshotEditor.actions.confirm')} positionClass={tooltipPositionClass}>
+        <TooltipButton label={t('screenshotEditor.actions.confirm')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
           <button
             type="button"
-            title={t('screenshotEditor.actions.confirm')}
             aria-label={t('screenshotEditor.actions.confirm')}
             disabled={isSaving || !imageLoaded}
             onClick={onConfirm}
@@ -461,6 +459,7 @@ type GifRecordingToolbarProps = {
   onPause: () => void;
   onFinish: () => void;
   onCancel: () => void;
+  useNativeTooltip?: boolean;
 };
 
 export function GifRecordingToolbar({
@@ -472,6 +471,7 @@ export function GifRecordingToolbar({
   onPause,
   onFinish,
   onCancel,
+  useNativeTooltip = false,
 }: GifRecordingToolbarProps) {
   const { t } = useTranslation();
   const isSaving = status === 'saving';
@@ -488,10 +488,9 @@ export function GifRecordingToolbar({
         pointerEvents: editorVisible ? 'auto' : 'none',
       }}
     >
-      <TooltipButton label={isPaused ? t('screenshotEditor.actions.resumeRecording') : t('screenshotEditor.actions.startRecording')} positionClass="bottom-full mb-2">
+      <TooltipButton label={isPaused ? t('screenshotEditor.actions.resumeRecording') : t('screenshotEditor.actions.startRecording')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"
-          title={isPaused ? t('screenshotEditor.actions.resumeRecording') : t('screenshotEditor.actions.startRecording')}
           aria-label={isPaused ? t('screenshotEditor.actions.resumeRecording') : t('screenshotEditor.actions.startRecording')}
           disabled={isSaving || isRecording}
           onClick={onStart}
@@ -500,10 +499,9 @@ export function GifRecordingToolbar({
           <Play size={18} />
         </button>
       </TooltipButton>
-      <TooltipButton label={t('screenshotEditor.actions.pauseRecording')} positionClass="bottom-full mb-2">
+      <TooltipButton label={t('screenshotEditor.actions.pauseRecording')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"
-          title={t('screenshotEditor.actions.pauseRecording')}
           aria-label={t('screenshotEditor.actions.pauseRecording')}
           disabled={isSaving || !isRecording}
           onClick={onPause}
@@ -512,10 +510,9 @@ export function GifRecordingToolbar({
           <Pause size={18} />
         </button>
       </TooltipButton>
-      <TooltipButton label={t('screenshotEditor.actions.finishRecording')} positionClass="bottom-full mb-2">
+      <TooltipButton label={t('screenshotEditor.actions.finishRecording')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"
-          title={t('screenshotEditor.actions.finishRecording')}
           aria-label={t('screenshotEditor.actions.finishRecording')}
           disabled={isSaving || status === 'idle'}
           onClick={onFinish}
@@ -524,10 +521,9 @@ export function GifRecordingToolbar({
           <Square size={14} fill="currentColor" />
         </button>
       </TooltipButton>
-      <TooltipButton label={t('screenshotEditor.actions.cancel')} positionClass="bottom-full mb-2">
+      <TooltipButton label={t('screenshotEditor.actions.cancel')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"
-          title={t('screenshotEditor.actions.cancel')}
           aria-label={t('screenshotEditor.actions.cancel')}
           disabled={isSaving}
           onClick={onCancel}
@@ -551,6 +547,7 @@ type LongScreenshotToolbarProps = {
   onConfirm: () => void;
   isSaving: boolean;
   imageLoaded: boolean;
+  useNativeTooltip?: boolean;
 };
 
 export function LongScreenshotToolbar({
@@ -564,6 +561,7 @@ export function LongScreenshotToolbar({
   onConfirm,
   isSaving,
   imageLoaded,
+  useNativeTooltip = false,
 }: LongScreenshotToolbarProps) {
   const { t } = useTranslation();
   return (
@@ -577,10 +575,9 @@ export function LongScreenshotToolbar({
         pointerEvents: editorVisible ? 'auto' : 'none',
       }}
     >
-      <TooltipButton label={t('screenshotEditor.actions.edit')} positionClass="bottom-full mb-2">
+      <TooltipButton label={t('screenshotEditor.actions.edit')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"
-          title={t('screenshotEditor.actions.edit')}
           aria-label={t('screenshotEditor.actions.edit')}
           disabled={isSaving || !imageLoaded}
           onClick={onEdit}
@@ -589,10 +586,9 @@ export function LongScreenshotToolbar({
           <Edit3 size={18} />
         </button>
       </TooltipButton>
-      <TooltipButton label={t('screenshotEditor.actions.scrollUp')} positionClass="bottom-full mb-2">
+      <TooltipButton label={t('screenshotEditor.actions.scrollUp')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"
-          title={t('screenshotEditor.actions.scrollUp')}
           aria-label={t('screenshotEditor.actions.scrollUp')}
           disabled={isSaving || !imageLoaded}
           onPointerDown={(event) => {
@@ -607,10 +603,9 @@ export function LongScreenshotToolbar({
           <ChevronUp size={18} />
         </button>
       </TooltipButton>
-      <TooltipButton label={t('screenshotEditor.actions.scrollDown')} positionClass="bottom-full mb-2">
+      <TooltipButton label={t('screenshotEditor.actions.scrollDown')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"
-          title={t('screenshotEditor.actions.scrollDown')}
           aria-label={t('screenshotEditor.actions.scrollDown')}
           disabled={isSaving || !imageLoaded}
           onPointerDown={(event) => {
@@ -625,10 +620,9 @@ export function LongScreenshotToolbar({
           <ChevronDown size={18} />
         </button>
       </TooltipButton>
-      <TooltipButton label={t('screenshotEditor.actions.cancel')} positionClass="bottom-full mb-2">
+      <TooltipButton label={t('screenshotEditor.actions.cancel')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"
-          title={t('screenshotEditor.actions.cancel')}
           aria-label={t('screenshotEditor.actions.cancel')}
           onClick={onCancel}
           className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
@@ -636,10 +630,9 @@ export function LongScreenshotToolbar({
           <X size={18} />
         </button>
       </TooltipButton>
-      <TooltipButton label={t('screenshotEditor.actions.confirm')} positionClass="bottom-full mb-2">
+      <TooltipButton label={t('screenshotEditor.actions.confirm')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"
-          title={t('screenshotEditor.actions.confirm')}
           aria-label={t('screenshotEditor.actions.confirm')}
           disabled={isSaving || !imageLoaded}
           onClick={onConfirm}
@@ -655,16 +648,18 @@ export function LongScreenshotToolbar({
 function TooltipButton({
   label,
   positionClass,
+  useNativeTooltip = false,
   children,
 }: {
   label: string;
   positionClass: string;
+  useNativeTooltip?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div className="group relative shrink-0">
+    <div className="group relative shrink-0" title={useNativeTooltip ? label : undefined}>
       {children}
-      <ToolbarTooltip label={label} positionClass={positionClass} />
+      {!useNativeTooltip && <ToolbarTooltip label={label} positionClass={positionClass} />}
     </div>
   );
 }

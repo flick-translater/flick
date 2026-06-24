@@ -126,6 +126,7 @@ pub fn run() {
             commands::capture::cancel_long_capture,
             commands::capture::prepare_long_capture_edit,
             commands::capture::open_long_capture_edit_window,
+            commands::capture::prepare_gif_recording_mode,
             commands::capture::start_gif_recording,
             commands::capture::pause_gif_recording,
             commands::capture::resume_gif_recording,

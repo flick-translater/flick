@@ -123,8 +123,8 @@ pub fn finalize_capture_session(
     _state: &State<'_, AppState>,
     _restore_previous_frontmost: bool,
 ) {
-    let _ = app;
     clear_active_session();
+    let _ = frozen_overlay::hide_native_overlay(app);
 }
 
 pub fn restore_after_failed_capture(

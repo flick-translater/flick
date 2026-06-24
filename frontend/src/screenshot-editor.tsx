@@ -10,7 +10,11 @@ import {
 import './index.css';
 import { ScreenshotEditorCanvas } from './components/screenshot-editor/Canvas';
 import { emojiChoices } from './components/screenshot-editor/emoji-data';
-import { LongScreenshotToolbar, ScreenshotEditorToolbar } from './components/screenshot-editor/Toolbar';
+import {
+  GifRecordingToolbar,
+  LongScreenshotToolbar,
+  ScreenshotEditorToolbar,
+} from './components/screenshot-editor/Toolbar';
 import { normalizeLanguage, setupI18n } from './i18n/config';
 import type {
   Annotation,
@@ -103,6 +107,7 @@ function ScreenshotEditor() {
   const isPreload = query.get('preload') === '1';
   const isLongEditLaunch = query.get('long_edit') === '1';
   const isLinux = useMemo(() => /Linux/i.test(navigator.platform), []);
+  const isWindows = useMemo(() => /Win/i.test(navigator.platform), []);
   const windowLabel = appWindow.label;
   const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const draftCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -966,12 +971,17 @@ function ScreenshotEditor() {
     editorLog('gif recording mode: set editorMode=recording status=idle');
     setEditorMode('recording');
     try {
-      editorLog('gif recording mode: invoke open_gif_recording_toolbar_window start');
-      await invoke('open_gif_recording_toolbar_window', { sessionId });
-      editorLog('gif recording mode: invoke open_gif_recording_toolbar_window complete');
-      editorLog('gif recording mode: invoke set_gif_recording_window_shape recording=true start');
-      await invoke('set_gif_recording_window_shape', { sessionId, recording: true });
-      editorLog('gif recording mode: invoke set_gif_recording_window_shape recording=true complete');
+      editorLog('gif recording mode: wait for recording frame paint start');
+      await waitForNextPaint();
+      editorLog('gif recording mode: wait for recording frame paint complete');
+      if (isWindows) {
+        editorLog('gif recording mode: invoke set_gif_recording_window_shape recording=true start');
+        await invoke('set_gif_recording_window_shape', { sessionId, recording: true });
+        editorLog('gif recording mode: invoke set_gif_recording_window_shape recording=true complete');
+      }
+      editorLog('gif recording mode: invoke prepare_gif_recording_mode start');
+      await invoke('prepare_gif_recording_mode', { sessionId });
+      editorLog('gif recording mode: invoke prepare_gif_recording_mode complete');
     } catch (recordingModeError) {
       editorLog(`gif recording mode failed ${String(recordingModeError)}`);
       setEditorMode('edit');
@@ -1440,6 +1450,7 @@ function ScreenshotEditor() {
                 fontSize={fontSize}
                 viewportImageOffsetY={0}
                 showAnnotationLayer={editorMode === 'edit'}
+                insetFrame={editorMode === 'recording'}
               />
 
               {editorMode === 'edit' ? (
@@ -1491,6 +1502,7 @@ function ScreenshotEditor() {
                   isSaving={isSaving}
                   imageLoaded={imageLoaded}
                   showLongCapture={!isLinux}
+                  useNativeTooltip={isWindows}
                 />
               ) : editorMode === 'long-capture' ? (
                 <LongScreenshotToolbar
@@ -1504,6 +1516,19 @@ function ScreenshotEditor() {
                   onConfirm={() => void handleConfirm()}
                   isSaving={isSaving}
                   imageLoaded={imageLoaded}
+                  useNativeTooltip={isWindows}
+                />
+              ) : editorMode === 'recording' ? (
+                <GifRecordingToolbar
+                  toolbarRef={toolbarRef}
+                  toolbarPosition={toolbarPosition}
+                  editorVisible={editorVisible}
+                  status={gifRecordingStatus}
+                  onStart={() => void handleGifRecordingStart()}
+                  onPause={() => void handleGifRecordingPause()}
+                  onFinish={() => void handleGifRecordingFinish()}
+                  onCancel={() => void handleGifRecordingCancel()}
+                  useNativeTooltip={isWindows}
                 />
               ) : null}
 

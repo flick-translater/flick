@@ -33,6 +33,7 @@ type ScreenshotEditorCanvasProps = {
   viewportImageOffsetY?: number;
   showAnnotationLayer?: boolean;
   framed?: boolean;
+  insetFrame?: boolean;
 };
 
 export function ScreenshotEditorCanvas({
@@ -61,12 +62,18 @@ export function ScreenshotEditorCanvas({
   viewportImageOffsetY = 0,
   showAnnotationLayer = true,
   framed = true,
+  insetFrame = false,
 }: ScreenshotEditorCanvasProps) {
   const selectedControlCssRect = selectedControlRect ? canvasRectToCss(selectedControlRect) : null;
+  const frameClass = framed
+    ? insetFrame
+      ? 'shadow-[inset_0_0_0_2px_rgba(0,102,204,0.95)]'
+      : 'shadow-[0_0_0_2px_rgba(0,102,204,0.95)]'
+    : '';
 
   return (
     <div
-      className={`absolute overflow-hidden bg-transparent ${framed ? 'shadow-[0_0_0_2px_rgba(0,102,204,0.95)]' : ''}`}
+      className={`absolute overflow-hidden bg-transparent ${frameClass}`}
       style={{
         left: selectionOffset.left,
         top: selectionOffset.top,

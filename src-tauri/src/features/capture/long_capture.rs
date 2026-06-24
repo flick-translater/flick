@@ -4,11 +4,12 @@ use std::{
     sync::{
         Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
-        mpsc,
     },
     thread,
     time::{Duration, Instant},
 };
+#[cfg(target_os = "macos")]
+use std::sync::mpsc;
 
 use base64::{Engine as _, engine::general_purpose};
 use image::{
@@ -37,6 +38,7 @@ use super::{
 /// without the editor on top of it. (Only used for the one-shot initial frame; the streaming
 /// sampling loop relies on session-wide capture exclusion instead.)
 const WINDOW_HIDE_DELAY: Duration = Duration::from_millis(70);
+#[cfg(target_os = "macos")]
 const INITIAL_LIVE_STREAM_FRAME_TIMEOUT: Duration = Duration::from_millis(1200);
 const FINALIZE_CAPTURE_WAIT_TIMEOUT: Duration = Duration::from_millis(1500);
 const FINALIZE_CAPTURE_WAIT_POLL: Duration = Duration::from_millis(25);

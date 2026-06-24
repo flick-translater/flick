@@ -163,12 +163,37 @@ pub fn start_gif_recording(
         }
     });
 
+    prepare_recording_windows(&app, &session_id);
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(frame) = capture_initial_recording_frame(&selection) {
+            match sender.try_send(RecordingMessage::Frame(frame)) {
+                Ok(()) => recording_log("start_gif_recording: queued initial frame"),
+                Err(error) => recording_log(format!(
+                    "start_gif_recording: failed to queue initial frame: {error}"
+                )),
+            }
+        }
+    }
+
     recording_log("start_gif_recording: opening live frame stream");
-    let stream = ScreenCaptureService::default()
-        .open_live_frame_stream(&selection, on_frame)
-        .map_err(|error| {
-            FlickError::Message(format!("failed to start screen recording: {error}"))
-        })?;
+    let stream = match ScreenCaptureService::default().open_live_frame_stream(&selection, on_frame)
+    {
+        Ok(stream) => stream,
+        Err(error) => {
+            recording_log(format!(
+                "start_gif_recording: failed to open live frame stream: {error}"
+            ));
+            stopped.store(true, Ordering::SeqCst);
+            drop(sender);
+            let _ = worker.join();
+            let _ = fs::remove_file(&writing_path);
+            cleanup_recording_windows(&app, &session_id);
+            return Err(FlickError::Message(format!(
+                "failed to start screen recording: {error}"
+            )));
+        }
+    };
     recording_log("start_gif_recording: live frame stream opened");
 
     let mut sessions = sessions()
@@ -181,6 +206,9 @@ pub fn start_gif_recording(
         stopped.store(true, Ordering::SeqCst);
         drop(stream);
         drop(sender);
+        let _ = worker.join();
+        let _ = fs::remove_file(&writing_path);
+        cleanup_recording_windows(&app, &session_id);
         return Err(FlickError::Message(
             "recording session already active".into(),
         ));
@@ -206,6 +234,20 @@ pub fn start_gif_recording(
     ));
     let _ = app.emit("gif-recording-status", "recording");
     recording_log("start_gif_recording: emitted gif-recording-status=recording");
+    Ok(())
+}
+
+pub fn prepare_gif_recording_mode(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), FlickError> {
+    recording_log(format!(
+        "prepare_gif_recording_mode: enter session={session_id}"
+    ));
+    pending_selection(&state, &session_id)?;
+    finalize_pending_overlay_for_recording(&app, &state, &session_id)?;
+    recording_log("prepare_gif_recording_mode: complete");
     Ok(())
 }
 
@@ -240,6 +282,7 @@ pub fn finish_gif_recording(
     recording_log("finish_gif_recording: live stream dropped");
     drop(session.sender);
     recording_log("finish_gif_recording: sender dropped; encoder will drain queued frames");
+    cleanup_recording_windows(&app, &session_id);
 
     let frame_count = session
         .worker
@@ -299,10 +342,11 @@ pub fn finish_gif_recording(
     Ok(record)
 }
 
-pub fn cancel_gif_recording(session_id: String) -> Result<(), FlickError> {
+pub fn cancel_gif_recording(app: AppHandle, session_id: String) -> Result<(), FlickError> {
     recording_log(format!("cancel_gif_recording: enter session={session_id}"));
     let Ok(mut session) = remove_session(&session_id) else {
         recording_log("cancel_gif_recording: no active session");
+        cleanup_recording_windows(&app, &session_id);
         return Ok(());
     };
     recording_log("cancel_gif_recording: session removed from registry");
@@ -320,6 +364,7 @@ pub fn cancel_gif_recording(session_id: String) -> Result<(), FlickError> {
         "cancel_gif_recording: removed writing file {}",
         session.writing_path.display()
     ));
+    cleanup_recording_windows(&app, &session_id);
     Ok(())
 }
 
@@ -396,6 +441,64 @@ pub fn close_gif_recording_toolbar_window(app: AppHandle, session_id: String) {
         "close_gif_recording_toolbar_window: enter session={session_id}"
     ));
     windows::close_gif_recording_toolbar_window(&app, &session_id);
+}
+
+#[cfg(target_os = "windows")]
+fn capture_initial_recording_frame(selection: &SelectionRect) -> Option<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+    match ScreenCaptureService::default().capture_selection(selection, &[]) {
+        Ok(frame) => {
+            recording_log(format!(
+                "capture_initial_recording_frame: captured {}x{}",
+                frame.width(),
+                frame.height()
+            ));
+            Some(frame)
+        }
+        Err(error) => {
+            recording_log(format!(
+                "capture_initial_recording_frame: failed; continuing with live stream only: {error}"
+            ));
+            None
+        }
+    }
+}
+
+fn prepare_recording_windows(app: &AppHandle, session_id: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        platform::set_overlay_capture_sharing(app, false);
+        if let Some(window) = screenshot_editor_window(app, session_id) {
+            platform::set_window_capture_sharing(&window, false);
+        }
+        if let Some(window) = gif_recording_toolbar_window(app, session_id) {
+            platform::set_window_capture_sharing(&window, false);
+        }
+        recording_log("prepare_recording_windows/windows: excluded overlay/editor/toolbar");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, session_id);
+    }
+}
+
+fn cleanup_recording_windows(app: &AppHandle, session_id: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        platform::set_overlay_capture_sharing(app, true);
+        if let Some(window) = screenshot_editor_window(app, session_id) {
+            platform::set_window_capture_sharing(&window, true);
+        }
+        if let Some(window) = gif_recording_toolbar_window(app, session_id) {
+            platform::set_window_capture_sharing(&window, true);
+        }
+        recording_log("cleanup_recording_windows/windows: restored overlay/editor/toolbar");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, session_id);
+    }
 }
 
 fn pending_selection(
@@ -637,6 +740,12 @@ fn screenshot_editor_window_cross_platform(
 #[cfg(target_os = "windows")]
 fn screenshot_editor_window(app: &AppHandle, session_id: &str) -> Option<tauri::WebviewWindow> {
     screenshot_editor_window_cross_platform(app, session_id)
+}
+
+#[cfg(target_os = "windows")]
+fn gif_recording_toolbar_window(app: &AppHandle, session_id: &str) -> Option<tauri::WebviewWindow> {
+    let label = format!("gif-recording-toolbar-{session_id}");
+    app.get_webview_window(&label)
 }
 
 #[cfg(target_os = "windows")]
