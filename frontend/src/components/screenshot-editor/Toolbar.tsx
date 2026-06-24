@@ -19,21 +19,23 @@ import {
   Undo2,
   X,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { Tool } from './types';
 
 const toolbarButtonClass = 'flex h-8 w-8 items-center justify-center rounded-md border border-outline-variant/30 bg-surface-container text-on-surface transition-colors hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-40';
 const toolOptionPanelClass = 'absolute left-0 z-50 w-40 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl';
 const toolbarSeparatorClass = 'h-6 w-px shrink-0 bg-outline-variant/40';
+const toolbarTooltipClass = 'pointer-events-none absolute left-1/2 z-[80] -translate-x-1/2 whitespace-nowrap rounded-md bg-surface-container-highest px-2 py-1 text-xs font-semibold text-on-surface opacity-0 shadow-lg ring-1 ring-outline-variant/30 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100';
 
-const tools: Array<{ id: Tool; label: string; icon: React.ComponentType<{ size?: number; active?: boolean }> }> = [
-  { id: 'pen', label: 'Brush', icon: Brush },
-  { id: 'line', label: 'Line', icon: Slash },
-  { id: 'arrow', label: 'Arrow', icon: ArrowUpRight },
-  { id: 'ellipse', label: 'Circle', icon: Circle },
-  { id: 'rect', label: 'Rectangle', icon: Square },
-  { id: 'mosaic', label: 'Mosaic', icon: CheckerboardIcon },
-  { id: 'text', label: 'Text', icon: Type },
-  { id: 'emoji', label: 'Emoji', icon: Smile },
+const tools: Array<{ id: Tool; labelKey: string; icon: React.ComponentType<{ size?: number; active?: boolean }> }> = [
+  { id: 'pen', labelKey: 'screenshotEditor.tools.brush', icon: Brush },
+  { id: 'line', labelKey: 'screenshotEditor.tools.line', icon: Slash },
+  { id: 'arrow', labelKey: 'screenshotEditor.tools.arrow', icon: ArrowUpRight },
+  { id: 'ellipse', labelKey: 'screenshotEditor.tools.circle', icon: Circle },
+  { id: 'rect', labelKey: 'screenshotEditor.tools.rectangle', icon: Square },
+  { id: 'mosaic', labelKey: 'screenshotEditor.tools.mosaic', icon: CheckerboardIcon },
+  { id: 'text', labelKey: 'screenshotEditor.tools.text', icon: Type },
+  { id: 'emoji', labelKey: 'screenshotEditor.tools.emoji', icon: Smile },
 ];
 
 type ScreenshotEditorToolbarProps = {
@@ -129,10 +131,12 @@ export function ScreenshotEditorToolbar({
   embedded = false,
   showLongCapture = true,
 }: ScreenshotEditorToolbarProps) {
+  const { t } = useTranslation();
   const hsvColor = hexToHsv(color);
   const toolbarClassName = embedded
     ? 'relative z-40 flex max-w-[calc(100vw-16px)] items-center gap-1.5 bg-transparent p-0'
     : 'absolute z-40 flex max-w-[calc(100vw-16px)] items-center gap-1.5 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/95 p-1.5 shadow-xl backdrop-blur';
+  const tooltipPositionClass = embedded ? 'top-full mt-2' : 'bottom-full mb-2';
 
   return (
     <div
@@ -154,11 +158,13 @@ export function ScreenshotEditorToolbar({
         {tools.map((item) => {
           const Icon = item.icon;
           const isActive = tool === item.id;
+          const label = t(item.labelKey);
           return (
-            <div key={item.id} className="relative shrink-0">
+            <div key={item.id} className="group relative shrink-0">
               <button
                 type="button"
-                title={item.label}
+                title={label}
+                aria-label={label}
                 onClick={() => onToolClick(item.id)}
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
                   isActive
@@ -168,8 +174,9 @@ export function ScreenshotEditorToolbar({
               >
                 <Icon size={18} active={isActive} />
               </button>
+              <ToolbarTooltip label={label} positionClass={tooltipPositionClass} />
               {isActive && item.id !== 'mosaic' && item.id !== 'text' && item.id !== 'emoji' && (
-                <ToolOptionPanel label="Size" positionClass={popupPositionClass}>
+                <ToolOptionPanel label={t('screenshotEditor.options.size')} positionClass={popupPositionClass}>
                   <input
                     type="range"
                     min="2"
@@ -181,7 +188,7 @@ export function ScreenshotEditorToolbar({
                 </ToolOptionPanel>
               )}
               {isActive && item.id === 'mosaic' && (
-                <ToolOptionPanel label="Brush" positionClass={popupPositionClass}>
+                <ToolOptionPanel label={t('screenshotEditor.options.brush')} positionClass={popupPositionClass}>
                   <input
                     type="range"
                     min="12"
@@ -190,7 +197,7 @@ export function ScreenshotEditorToolbar({
                     onChange={(event) => setMosaicWidth(Number(event.target.value))}
                     className="w-full accent-primary"
                   />
-                  <div className="mt-3 text-xs font-semibold text-on-surface-variant">Block</div>
+                  <div className="mt-3 text-xs font-semibold text-on-surface-variant">{t('screenshotEditor.options.block')}</div>
                   <input
                     type="range"
                     min="6"
@@ -202,7 +209,7 @@ export function ScreenshotEditorToolbar({
                 </ToolOptionPanel>
               )}
               {isActive && item.id === 'text' && (
-                <ToolOptionPanel label="Text" positionClass={popupPositionClass}>
+                <ToolOptionPanel label={t('screenshotEditor.options.text')} positionClass={popupPositionClass}>
                   <input
                     type="range"
                     min="14"
@@ -224,6 +231,7 @@ export function ScreenshotEditorToolbar({
                         key={emoji}
                         type="button"
                         title={emoji}
+                        aria-label={emoji}
                         onClick={() => onEmojiChoice(emoji)}
                         className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none hover:bg-surface-container-high"
                       >
@@ -232,27 +240,39 @@ export function ScreenshotEditorToolbar({
                     ))}
                   </div>
                   <div className="mt-2 flex items-center justify-between border-t border-outline-variant/30 pt-2">
-                    <button
-                      type="button"
-                      title="Previous"
-                      disabled={emojiPage === 0}
-                      onClick={() => setEmojiPage((page) => Math.max(page - 1, 0))}
-                      className={toolbarButtonClass}
+                    <TooltipButton
+                      label={t('screenshotEditor.actions.previous')}
+                      positionClass="bottom-full mb-2"
                     >
-                      <ChevronLeft size={16} />
-                    </button>
+                      <button
+                        type="button"
+                        title={t('screenshotEditor.actions.previous')}
+                        aria-label={t('screenshotEditor.actions.previous')}
+                        disabled={emojiPage === 0}
+                        onClick={() => setEmojiPage((page) => Math.max(page - 1, 0))}
+                        className={toolbarButtonClass}
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                    </TooltipButton>
                     <div className="px-2 text-xs font-semibold text-on-surface-variant">
                       {emojiPage + 1}/{emojiPageCount} · {emojiCount}
                     </div>
-                    <button
-                      type="button"
-                      title="Next"
-                      disabled={emojiPage >= emojiPageCount - 1}
-                      onClick={() => setEmojiPage((page) => Math.min(page + 1, emojiPageCount - 1))}
-                      className={toolbarButtonClass}
+                    <TooltipButton
+                      label={t('screenshotEditor.actions.next')}
+                      positionClass="bottom-full mb-2"
                     >
-                      <ChevronRight size={16} />
-                    </button>
+                      <button
+                        type="button"
+                        title={t('screenshotEditor.actions.next')}
+                        aria-label={t('screenshotEditor.actions.next')}
+                        disabled={emojiPage >= emojiPageCount - 1}
+                        onClick={() => setEmojiPage((page) => Math.min(page + 1, emojiPageCount - 1))}
+                        className={toolbarButtonClass}
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </TooltipButton>
                   </div>
                 </div>
               )}
@@ -263,10 +283,11 @@ export function ScreenshotEditorToolbar({
 
       <div className={toolbarSeparatorClass} />
 
-      <div className="relative shrink-0">
+      <div className="group relative shrink-0">
         <button
           type="button"
-          title="Color"
+          title={t('screenshotEditor.actions.color')}
+          aria-label={t('screenshotEditor.actions.color')}
           onClick={() => {
             setEmojiPickerOpen(false);
             setColorPickerOpen((open) => !open);
@@ -274,6 +295,7 @@ export function ScreenshotEditorToolbar({
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-outline-variant/30 shadow-inner"
           style={{ backgroundColor: color }}
         />
+        <ToolbarTooltip label={t('screenshotEditor.actions.color')} positionClass={tooltipPositionClass} />
         {colorPickerOpen && (
           <div
             className={`absolute left-0 ${popupPositionClass} z-50 w-56 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl`}
@@ -340,15 +362,21 @@ export function ScreenshotEditorToolbar({
           <div className={toolbarSeparatorClass} />
 
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              title="Long screenshot"
-              disabled={isSaving || !imageLoaded}
-              onClick={onLongCapture}
-              className={toolbarButtonClass}
+            <TooltipButton
+              label={t('screenshotEditor.actions.longScreenshot')}
+              positionClass={tooltipPositionClass}
             >
-              <LongScreenshotIcon />
-            </button>
+              <button
+                type="button"
+                title={t('screenshotEditor.actions.longScreenshot')}
+                aria-label={t('screenshotEditor.actions.longScreenshot')}
+                disabled={isSaving || !imageLoaded}
+                onClick={onLongCapture}
+                className={toolbarButtonClass}
+              >
+                <LongScreenshotIcon />
+              </button>
+            </TooltipButton>
           </div>
         </>
       )}
@@ -356,37 +384,49 @@ export function ScreenshotEditorToolbar({
       <div className={toolbarSeparatorClass} />
 
       <div className="flex items-center gap-1">
-        <button type="button" title="Undo" onClick={undo} disabled={!canUndo} className={toolbarButtonClass}>
-          <Undo2 size={18} />
-        </button>
-        <button type="button" title="Redo" onClick={redo} disabled={!canRedo} className={toolbarButtonClass}>
-          <Redo2 size={18} />
-        </button>
+        <TooltipButton label={t('screenshotEditor.actions.undo')} positionClass={tooltipPositionClass}>
+          <button type="button" title={t('screenshotEditor.actions.undo')} aria-label={t('screenshotEditor.actions.undo')} onClick={undo} disabled={!canUndo} className={toolbarButtonClass}>
+            <Undo2 size={18} />
+          </button>
+        </TooltipButton>
+        <TooltipButton label={t('screenshotEditor.actions.redo')} positionClass={tooltipPositionClass}>
+          <button type="button" title={t('screenshotEditor.actions.redo')} aria-label={t('screenshotEditor.actions.redo')} onClick={redo} disabled={!canRedo} className={toolbarButtonClass}>
+            <Redo2 size={18} />
+          </button>
+        </TooltipButton>
       </div>
 
       <div className={toolbarSeparatorClass} />
 
       <div className="flex items-center gap-1">
-        <button type="button" title="Clear" onClick={clearAnnotations} className={toolbarButtonClass}>
-          <Trash2 size={18} />
-        </button>
-        <button
-          type="button"
-          title="Cancel"
-          onClick={onCancel}
-          className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <X size={18} />
-        </button>
-        <button
-          type="button"
-          title="Confirm"
-          disabled={isSaving || !imageLoaded}
-          onClick={onConfirm}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-green-600 text-white transition-colors hover:bg-green-700 disabled:opacity-50"
-        >
-          <Check size={18} />
-        </button>
+        <TooltipButton label={t('screenshotEditor.actions.clear')} positionClass={tooltipPositionClass}>
+          <button type="button" title={t('screenshotEditor.actions.clear')} aria-label={t('screenshotEditor.actions.clear')} onClick={clearAnnotations} className={toolbarButtonClass}>
+            <Trash2 size={18} />
+          </button>
+        </TooltipButton>
+        <TooltipButton label={t('screenshotEditor.actions.cancel')} positionClass={tooltipPositionClass}>
+          <button
+            type="button"
+            title={t('screenshotEditor.actions.cancel')}
+            aria-label={t('screenshotEditor.actions.cancel')}
+            onClick={onCancel}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <X size={18} />
+          </button>
+        </TooltipButton>
+        <TooltipButton label={t('screenshotEditor.actions.confirm')} positionClass={tooltipPositionClass}>
+          <button
+            type="button"
+            title={t('screenshotEditor.actions.confirm')}
+            aria-label={t('screenshotEditor.actions.confirm')}
+            disabled={isSaving || !imageLoaded}
+            onClick={onConfirm}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-green-600 text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+          >
+            <Check size={18} />
+          </button>
+        </TooltipButton>
       </div>
     </div>
   );
@@ -417,6 +457,7 @@ export function LongScreenshotToolbar({
   isSaving,
   imageLoaded,
 }: LongScreenshotToolbarProps) {
+  const { t } = useTranslation();
   return (
     <div
       ref={toolbarRef}
@@ -428,64 +469,100 @@ export function LongScreenshotToolbar({
         pointerEvents: editorVisible ? 'auto' : 'none',
       }}
     >
-      <button
-        type="button"
-        title="Edit"
-        disabled={isSaving || !imageLoaded}
-        onClick={onEdit}
-        className={toolbarButtonClass}
-      >
-        <Edit3 size={18} />
-      </button>
-      <button
-        type="button"
-        title="Scroll up"
-        disabled={isSaving || !imageLoaded}
-        onPointerDown={(event) => {
-          event.preventDefault();
-          event.currentTarget.setPointerCapture(event.pointerId);
-          onScrollStart('up');
-        }}
-        onPointerUp={onScrollStop}
-        onPointerCancel={onScrollStop}
-        className={toolbarButtonClass}
-      >
-        <ChevronUp size={18} />
-      </button>
-      <button
-        type="button"
-        title="Scroll down"
-        disabled={isSaving || !imageLoaded}
-        onPointerDown={(event) => {
-          event.preventDefault();
-          event.currentTarget.setPointerCapture(event.pointerId);
-          onScrollStart('down');
-        }}
-        onPointerUp={onScrollStop}
-        onPointerCancel={onScrollStop}
-        className={toolbarButtonClass}
-      >
-        <ChevronDown size={18} />
-      </button>
-      <button
-        type="button"
-        title="Cancel"
-        onClick={onCancel}
-        className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        <X size={18} />
-      </button>
-      <button
-        type="button"
-        title="Confirm"
-        disabled={isSaving || !imageLoaded}
-        onClick={onConfirm}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-green-600 text-white transition-colors hover:bg-green-700 disabled:opacity-50"
-      >
-        <Check size={18} />
-      </button>
+      <TooltipButton label={t('screenshotEditor.actions.edit')} positionClass="bottom-full mb-2">
+        <button
+          type="button"
+          title={t('screenshotEditor.actions.edit')}
+          aria-label={t('screenshotEditor.actions.edit')}
+          disabled={isSaving || !imageLoaded}
+          onClick={onEdit}
+          className={toolbarButtonClass}
+        >
+          <Edit3 size={18} />
+        </button>
+      </TooltipButton>
+      <TooltipButton label={t('screenshotEditor.actions.scrollUp')} positionClass="bottom-full mb-2">
+        <button
+          type="button"
+          title={t('screenshotEditor.actions.scrollUp')}
+          aria-label={t('screenshotEditor.actions.scrollUp')}
+          disabled={isSaving || !imageLoaded}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            onScrollStart('up');
+          }}
+          onPointerUp={onScrollStop}
+          onPointerCancel={onScrollStop}
+          className={toolbarButtonClass}
+        >
+          <ChevronUp size={18} />
+        </button>
+      </TooltipButton>
+      <TooltipButton label={t('screenshotEditor.actions.scrollDown')} positionClass="bottom-full mb-2">
+        <button
+          type="button"
+          title={t('screenshotEditor.actions.scrollDown')}
+          aria-label={t('screenshotEditor.actions.scrollDown')}
+          disabled={isSaving || !imageLoaded}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            onScrollStart('down');
+          }}
+          onPointerUp={onScrollStop}
+          onPointerCancel={onScrollStop}
+          className={toolbarButtonClass}
+        >
+          <ChevronDown size={18} />
+        </button>
+      </TooltipButton>
+      <TooltipButton label={t('screenshotEditor.actions.cancel')} positionClass="bottom-full mb-2">
+        <button
+          type="button"
+          title={t('screenshotEditor.actions.cancel')}
+          aria-label={t('screenshotEditor.actions.cancel')}
+          onClick={onCancel}
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <X size={18} />
+        </button>
+      </TooltipButton>
+      <TooltipButton label={t('screenshotEditor.actions.confirm')} positionClass="bottom-full mb-2">
+        <button
+          type="button"
+          title={t('screenshotEditor.actions.confirm')}
+          aria-label={t('screenshotEditor.actions.confirm')}
+          disabled={isSaving || !imageLoaded}
+          onClick={onConfirm}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-green-600 text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+        >
+          <Check size={18} />
+        </button>
+      </TooltipButton>
     </div>
   );
+}
+
+function TooltipButton({
+  label,
+  positionClass,
+  children,
+}: {
+  label: string;
+  positionClass: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="group relative shrink-0">
+      {children}
+      <ToolbarTooltip label={label} positionClass={positionClass} />
+    </div>
+  );
+}
+
+function ToolbarTooltip({ label, positionClass }: { label: string; positionClass: string }) {
+  return <span className={`${toolbarTooltipClass} ${positionClass}`}>{label}</span>;
 }
 
 function ToolOptionPanel({

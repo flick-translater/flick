@@ -44,6 +44,10 @@ export default function GeneralSettings() {
     () => /Win/i.test(navigator.platform),
     [],
   );
+  const isLinux = useMemo(
+    () => /Linux/i.test(navigator.platform),
+    [],
+  );
 
   useEffect(() => {
     void Promise.all([
@@ -297,35 +301,37 @@ export default function GeneralSettings() {
           </div>
         </section>
 
-        <section className="flex flex-col justify-between rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="mb-0.5 font-headline text-base font-bold text-primary">{t('general.screenshotEditorToolbar')}</h2>
-              <p className="text-xs leading-relaxed text-on-surface-variant">{t('general.screenshotEditorToolbarDesc')}</p>
+        {!isLinux && (
+          <section className="flex flex-col justify-between rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="mb-0.5 font-headline text-base font-bold text-primary">{t('general.screenshotEditorToolbar')}</h2>
+                <p className="text-xs leading-relaxed text-on-surface-variant">{t('general.screenshotEditorToolbarDesc')}</p>
+              </div>
+              <div className="rounded-lg bg-primary/5 p-2 text-primary">
+                <Paintbrush size={20} />
+              </div>
             </div>
-            <div className="rounded-lg bg-primary/5 p-2 text-primary">
-              <Paintbrush size={20} />
+            <div className="mt-4 flex items-center justify-between gap-4">
+              <span className="text-sm font-semibold text-on-surface">{t('general.showScreenshotEditorToolbar')}</span>
+              <Toggle
+                checked={settings?.screenshot_editor_toolbar_enabled ?? true}
+                onChange={(enabled) => {
+                  setSettings((current) => current ? { ...current, screenshot_editor_toolbar_enabled: enabled } : current);
+                  void invoke<AppSettings>('update_screenshot_editor_toolbar_enabled', { enabled })
+                    .then((updated) => {
+                      setSettings(updated);
+                      setGeneralError('');
+                    })
+                    .catch((error: unknown) => {
+                      setSettings((current) => current ? { ...current, screenshot_editor_toolbar_enabled: !enabled } : current);
+                      setGeneralError(String(error));
+                    });
+                }}
+              />
             </div>
-          </div>
-          <div className="mt-4 flex items-center justify-between gap-4">
-            <span className="text-sm font-semibold text-on-surface">{t('general.showScreenshotEditorToolbar')}</span>
-            <Toggle
-              checked={settings?.screenshot_editor_toolbar_enabled ?? true}
-              onChange={(enabled) => {
-                setSettings((current) => current ? { ...current, screenshot_editor_toolbar_enabled: enabled } : current);
-                void invoke<AppSettings>('update_screenshot_editor_toolbar_enabled', { enabled })
-                  .then((updated) => {
-                    setSettings(updated);
-                    setGeneralError('');
-                  })
-                  .catch((error: unknown) => {
-                    setSettings((current) => current ? { ...current, screenshot_editor_toolbar_enabled: !enabled } : current);
-                    setGeneralError(String(error));
-                  });
-              }}
-            />
-          </div>
-        </section>
+          </section>
+        )}
 
         <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2">
           <div className="mb-3 flex items-start justify-between gap-4">

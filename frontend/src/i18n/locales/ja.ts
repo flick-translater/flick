@@ -41,6 +41,38 @@ export default {
       discardChanges: "変更を破棄",
       savePreferences: "設定を保存"
     },
+    screenshotEditor: {
+      tools: {
+        brush: "ブラシ",
+        line: "直線",
+        arrow: "矢印",
+        circle: "円",
+        rectangle: "四角形",
+        mosaic: "モザイク",
+        text: "テキスト",
+        emoji: "絵文字"
+      },
+      actions: {
+        color: "色",
+        longScreenshot: "長いスクリーンショット",
+        undo: "元に戻す",
+        redo: "やり直す",
+        clear: "クリア",
+        cancel: "キャンセル",
+        confirm: "確定",
+        edit: "編集",
+        scrollUp: "上へスクロール",
+        scrollDown: "下へスクロール",
+        previous: "前へ",
+        next: "次へ"
+      },
+      options: {
+        size: "サイズ",
+        brush: "ブラシ",
+        block: "ブロック",
+        text: "テキスト"
+      }
+    },
     ocr: {
       autoTranslate: "自動翻訳",
       ocrEngine: "OCR エンジン",

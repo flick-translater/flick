@@ -41,6 +41,38 @@ export default {
       discardChanges: "Discard Changes",
       savePreferences: "Save Preferences"
     },
+    screenshotEditor: {
+      tools: {
+        brush: "Brush",
+        line: "Line",
+        arrow: "Arrow",
+        circle: "Circle",
+        rectangle: "Rectangle",
+        mosaic: "Mosaic",
+        text: "Text",
+        emoji: "Emoji"
+      },
+      actions: {
+        color: "Color",
+        longScreenshot: "Long screenshot",
+        undo: "Undo",
+        redo: "Redo",
+        clear: "Clear",
+        cancel: "Cancel",
+        confirm: "Confirm",
+        edit: "Edit",
+        scrollUp: "Scroll up",
+        scrollDown: "Scroll down",
+        previous: "Previous",
+        next: "Next"
+      },
+      options: {
+        size: "Size",
+        brush: "Brush",
+        block: "Block",
+        text: "Text"
+      }
+    },
     ocr: {
       autoTranslate: "Auto-Translate",
       ocrEngine: "OCR Engine",

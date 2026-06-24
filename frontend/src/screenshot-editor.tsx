@@ -11,6 +11,7 @@ import './index.css';
 import { ScreenshotEditorCanvas } from './components/screenshot-editor/Canvas';
 import { emojiChoices } from './components/screenshot-editor/emoji-data';
 import { LongScreenshotToolbar, ScreenshotEditorToolbar } from './components/screenshot-editor/Toolbar';
+import { normalizeLanguage, setupI18n } from './i18n/config';
 import type {
   Annotation,
   AnnotationDragState,
@@ -95,6 +96,7 @@ function ScreenshotEditor() {
   const sessionId = query.get('session_id') ?? '';
   const isPreload = query.get('preload') === '1';
   const isLongEditLaunch = query.get('long_edit') === '1';
+  const isLinux = useMemo(() => /Linux/i.test(navigator.platform), []);
   const windowLabel = appWindow.label;
   const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const draftCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -904,6 +906,10 @@ function ScreenshotEditor() {
       editorLog('long start ignored: missing session or saving');
       return;
     }
+    if (isLinux) {
+      editorLog('long start ignored: unsupported on linux');
+      return;
+    }
     setTool(null);
     setColorPickerOpen(false);
     setEmojiPickerOpen(false);
@@ -1330,6 +1336,7 @@ function ScreenshotEditor() {
                   onConfirm={() => void handleConfirm()}
                   isSaving={isSaving}
                   imageLoaded={imageLoaded}
+                  showLongCapture={!isLinux}
                 />
               ) : (
                 <LongScreenshotToolbar
@@ -2068,4 +2075,18 @@ function rgbToHex(red: number, green: number, blue: number) {
     .join('')}`;
 }
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(<ScreenshotEditor />);
+async function bootstrapScreenshotEditor() {
+  let initialLanguage = normalizeLanguage(navigator.language);
+
+  try {
+    const settings = await invoke<AppSettings>('get_app_settings');
+    initialLanguage = normalizeLanguage(settings.interface_language);
+  } catch {
+    initialLanguage = normalizeLanguage(navigator.language);
+  }
+
+  await setupI18n(initialLanguage);
+  ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(<ScreenshotEditor />);
+}
+
+void bootstrapScreenshotEditor();

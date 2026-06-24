@@ -297,6 +297,7 @@ pub fn start_long_capture(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<LongCaptureUpdate, FlickError> {
+    ensure_long_capture_supported()?;
     long_log("============================================================");
     long_log(format!("start: session={session_id}"));
     let selection = pending_selection(&state, &session_id)?;
@@ -370,6 +371,20 @@ pub fn start_long_capture(
         }),
     });
     Ok(update)
+}
+
+fn ensure_long_capture_supported() -> Result<(), FlickError> {
+    #[cfg(target_os = "linux")]
+    {
+        return Err(FlickError::Message(
+            "long screenshot is not supported on Linux".into(),
+        ));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(())
+    }
 }
 
 pub fn get_long_capture_image(session_id: String) -> Result<String, FlickError> {

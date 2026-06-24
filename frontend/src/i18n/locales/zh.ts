@@ -41,6 +41,38 @@ export default {
       discardChanges: "放弃更改",
       savePreferences: "保存首选项"
     },
+    screenshotEditor: {
+      tools: {
+        brush: "画笔",
+        line: "直线",
+        arrow: "箭头",
+        circle: "圆形",
+        rectangle: "矩形",
+        mosaic: "马赛克",
+        text: "文字",
+        emoji: "表情"
+      },
+      actions: {
+        color: "颜色",
+        longScreenshot: "长截图",
+        undo: "撤销",
+        redo: "重做",
+        clear: "清空",
+        cancel: "取消",
+        confirm: "确认",
+        edit: "编辑",
+        scrollUp: "向上滚动",
+        scrollDown: "向下滚动",
+        previous: "上一页",
+        next: "下一页"
+      },
+      options: {
+        size: "大小",
+        brush: "画笔",
+        block: "块大小",
+        text: "文字"
+      }
+    },
     ocr: {
       autoTranslate: "自动翻译",
       ocrEngine: "OCR 引擎",
