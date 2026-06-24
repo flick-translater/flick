@@ -261,7 +261,13 @@ pub fn hide_overlay_for_live_capture(app: &AppHandle, state: &State<'_, AppState
         return;
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows_platform::hide_overlay_for_live_capture(app, state);
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
     {
         let _ = (app, state);
     }
@@ -278,7 +284,13 @@ pub fn restore_overlay_after_live_capture(
         return;
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows_platform::restore_overlay_after_live_capture(app, state, selection);
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
     {
         let _ = (app, state, selection);
     }

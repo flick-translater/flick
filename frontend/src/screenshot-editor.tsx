@@ -169,6 +169,7 @@ function ScreenshotEditor() {
   const longScreenshotThumbnailHeightFromQuery = Number(query.get('thumbnail_height')) || 0;
   const longScreenshotThumbnailLeftFromQuery = Number(query.get('thumbnail_left'));
   const longScreenshotThumbnailTopFromQuery = Number(query.get('thumbnail_top'));
+  const longScreenshotThumbnailRegionTopFromQuery = Number(query.get('thumbnail_region_top'));
   const popupPlacement = query.get('popup_placement') === 'up' ? 'up' : 'down';
   const popupPositionClass = popupPlacement === 'up' ? 'bottom-[calc(100%+8px)]' : 'top-[calc(100%+8px)]';
   const [toolbarPosition, setToolbarPosition] = useState(toolbarOffset);
@@ -1094,7 +1095,8 @@ function ScreenshotEditor() {
     }
   }
 
-  const thumbnailMaxHeight = longScreenshotThumbnailHeightFromQuery || 560;
+  const thumbnailMaxHeight = longScreenshotThumbnailHeightFromQuery
+    || Math.max(96, window.innerHeight - 16);
   const thumbnailHeight = Math.min(
     thumbnailMaxHeight,
     Math.max(
@@ -1106,9 +1108,16 @@ function ScreenshotEditor() {
   const thumbnailLeft = Number.isFinite(longScreenshotThumbnailLeftFromQuery)
     ? longScreenshotThumbnailLeftFromQuery
     : 8;
-  const thumbnailTop = Number.isFinite(longScreenshotThumbnailTopFromQuery)
+  const thumbnailAnchorTop = Number.isFinite(longScreenshotThumbnailTopFromQuery)
     ? longScreenshotThumbnailTopFromQuery
     : 8;
+  const thumbnailRegionTop = Number.isFinite(longScreenshotThumbnailRegionTopFromQuery)
+    ? longScreenshotThumbnailRegionTopFromQuery
+    : 8;
+  const thumbnailTop = Math.max(
+    thumbnailRegionTop,
+    Math.min(thumbnailAnchorTop, window.innerHeight - thumbnailHeight - 8),
+  );
   const thumbnailTotalHeight = Math.max(longScreenshot.totalHeight || imageSize.height, 1);
   const thumbnailViewportHeight = Math.min(
     longScreenshot.frameHeight || imageSize.height,

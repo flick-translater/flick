@@ -289,6 +289,47 @@ pub(super) fn set_capture_sharing(include_in_capture: bool) {
     }
 }
 
+pub(super) fn hide_for_live_capture() {
+    if let Ok(state) = overlay_state().lock() {
+        crate::features::capture::long_capture::long_log(format!(
+            "capture_live_frame/windows: hide frozen overlay windows={} visible={}",
+            state.windows.len(),
+            state.overlay_visible
+        ));
+        for window in &state.windows {
+            crate::features::capture::long_capture::long_log(format!(
+                "capture_live_frame/windows: hide frozen overlay hwnd={:#x}",
+                window.hwnd
+            ));
+            hide_overlay_window(window.hwnd as HWND);
+        }
+    }
+}
+
+pub(super) fn restore_after_live_capture() {
+    if let Ok(mut state) = overlay_state().lock() {
+        crate::features::capture::long_capture::long_log(format!(
+            "capture_live_frame/windows: restore frozen overlay windows={} visible={}",
+            state.windows.len(),
+            state.overlay_visible
+        ));
+        if !state.overlay_visible {
+            return;
+        }
+        for window in &mut state.windows {
+            let Some(data) = window.data.as_mut() else {
+                continue;
+            };
+            crate::features::capture::long_capture::long_log(format!(
+                "capture_live_frame/windows: restore frozen overlay hwnd={:#x} bounds=({},{} {}x{})",
+                window.hwnd, data.bounds.x, data.bounds.y, data.bounds.width, data.bounds.height
+            ));
+            let _ = show_overlay_window(window.hwnd as HWND, &data.bounds);
+            let _ = render_overlay_window(window.hwnd as HWND, data);
+        }
+    }
+}
+
 pub(super) fn set_mouse_passthrough(passthrough: bool) {
     if let Ok(state) = overlay_state().lock() {
         crate::features::capture::long_capture::long_log(format!(

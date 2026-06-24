@@ -255,7 +255,7 @@ fn run_button_scroll_loop(
 ) {
     let target_x = selection.x + (selection.width / 2) as i32;
     let target_y = selection.y + (selection.height / 2) as i32;
-    let wheel_delta = -direction.signum() * BUTTON_SCROLL_DELTA_PER_STEP;
+    let wheel_delta = direction.signum() * BUTTON_SCROLL_DELTA_PER_STEP;
 
     restore_editor_cursor(&app, &session_id);
     long_log(format!(

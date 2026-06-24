@@ -129,7 +129,7 @@ pub fn show_screenshot_editor_window(
             .min((desktop_width - toolbar_width - 8.0).max(8.0))
     };
     let long_thumbnail_width = 300.0;
-    let long_thumbnail_height = 560.0_f64.min(desktop_height - 16.0).max(96.0);
+    let long_thumbnail_height = (desktop_height - 16.0).max(96.0);
     let long_thumbnail_gap = 12.0;
     let long_thumbnail_left =
         if selection_left + selection.width as f64 + long_thumbnail_gap + long_thumbnail_width
@@ -139,9 +139,10 @@ pub fn show_screenshot_editor_window(
         } else {
             (selection_left - long_thumbnail_gap - long_thumbnail_width).max(8.0)
         };
+    let long_thumbnail_region_top = 8.0;
     let long_thumbnail_top = selection_top
         .max(8.0)
-        .min((desktop_height - long_thumbnail_height - 8.0).max(8.0));
+        .min((desktop_height - 96.0 - 8.0).max(8.0));
     let content_margin = 8.0;
     let content_left = selection_left
         .min(toolbar_left)
@@ -149,7 +150,7 @@ pub fn show_screenshot_editor_window(
         .max(0.0);
     let content_top = selection_top
         .min(toolbar_region_top)
-        .min(long_thumbnail_top)
+        .min(long_thumbnail_region_top)
         .max(0.0);
     let content_right = (selection_left + selection.width as f64)
         .max(toolbar_left + toolbar_width)
@@ -157,7 +158,7 @@ pub fn show_screenshot_editor_window(
         .min(desktop_width);
     let content_bottom = (selection_top + selection.height as f64)
         .max(toolbar_region_top + toolbar_region_height)
-        .max(long_thumbnail_top + long_thumbnail_height)
+        .max(long_thumbnail_region_top + long_thumbnail_height)
         .min(desktop_height);
     let window_left = (content_left - content_margin).max(0.0);
     let window_top = (content_top - content_margin).max(0.0);
@@ -201,6 +202,7 @@ pub fn show_screenshot_editor_window(
     let toolbar_region_window_top = toolbar_region_top - window_top;
     let long_thumbnail_window_left = long_thumbnail_left - window_left;
     let long_thumbnail_window_top = long_thumbnail_top - window_top;
+    let long_thumbnail_region_window_top = long_thumbnail_region_top - window_top;
     let window_regions = vec![
         SelectionRect {
             x: selection_window_left.floor() as i32,
@@ -216,7 +218,7 @@ pub fn show_screenshot_editor_window(
         },
         SelectionRect {
             x: long_thumbnail_window_left.floor() as i32,
-            y: long_thumbnail_window_top.floor() as i32,
+            y: long_thumbnail_region_window_top.floor() as i32,
             width: long_thumbnail_width.ceil() as u32,
             height: long_thumbnail_height.ceil() as u32,
         },
@@ -231,7 +233,7 @@ pub fn show_screenshot_editor_window(
         }
     };
     let url = format!(
-        "screenshot-editor.html?session_id={session_id}&display_width={}&display_height={}&selection_left={selection_window_left}&selection_top={selection_window_top}&toolbar_left={toolbar_window_left}&toolbar_top={toolbar_window_top}&thumbnail_left={long_thumbnail_window_left}&thumbnail_top={long_thumbnail_window_top}&thumbnail_width={long_thumbnail_width}&thumbnail_height={long_thumbnail_height}&popup_placement={}&color={color_param}",
+        "screenshot-editor.html?session_id={session_id}&display_width={}&display_height={}&selection_left={selection_window_left}&selection_top={selection_window_top}&toolbar_left={toolbar_window_left}&toolbar_top={toolbar_window_top}&thumbnail_left={long_thumbnail_window_left}&thumbnail_top={long_thumbnail_window_top}&thumbnail_region_top={long_thumbnail_region_window_top}&thumbnail_width={long_thumbnail_width}&thumbnail_height={long_thumbnail_height}&popup_placement={}&color={color_param}",
         selection.width,
         selection.height,
         if toolbar_placement_below {

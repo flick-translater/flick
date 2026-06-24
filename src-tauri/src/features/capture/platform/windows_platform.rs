@@ -143,6 +143,24 @@ pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
     }
 }
 
+pub fn hide_overlay_for_live_capture(_app: &AppHandle, _state: &State<'_, AppState>) {
+    crate::features::capture::long_capture::long_log(
+        "capture_live_frame/windows: hide frozen overlay start",
+    );
+    frozen_overlay::hide_for_live_capture();
+}
+
+pub fn restore_overlay_after_live_capture(
+    _app: &AppHandle,
+    _state: &State<'_, AppState>,
+    _selection: &SelectionRect,
+) {
+    crate::features::capture::long_capture::long_log(
+        "capture_live_frame/windows: restore frozen overlay start",
+    );
+    frozen_overlay::restore_after_live_capture();
+}
+
 pub fn set_overlay_capture_sharing(_app: &AppHandle, include_in_capture: bool) {
     crate::features::capture::long_capture::long_log(format!(
         "scroll_controller/windows: set overlay capture sharing include={include_in_capture}"

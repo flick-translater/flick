@@ -419,9 +419,6 @@ pub fn scroll_long_capture(
             session.button_scroll_running.clone(),
         )
     };
-    #[cfg(target_os = "windows")]
-    let pipeline_direction = -signed_direction;
-    #[cfg(not(target_os = "windows"))]
     let pipeline_direction = signed_direction;
     last_scroll_delta.store(i64::from(pipeline_direction), Ordering::SeqCst);
     long_log(format!(
@@ -1297,6 +1294,7 @@ fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
         let toolbar_top = query_f64(&url, "toolbar_top").unwrap_or(8.0);
         let thumbnail_left = query_f64(&url, "thumbnail_left").unwrap_or(8.0);
         let thumbnail_top = query_f64(&url, "thumbnail_top").unwrap_or(8.0);
+        let thumbnail_region_top = query_f64(&url, "thumbnail_region_top").unwrap_or(thumbnail_top);
         let thumbnail_width = query_f64(&url, "thumbnail_width").unwrap_or(300.0);
         let thumbnail_height = query_f64(&url, "thumbnail_height").unwrap_or(560.0);
 
@@ -1311,22 +1309,23 @@ fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
             },
             SelectionRect {
                 x: thumbnail_left.floor() as i32,
-                y: thumbnail_top.floor() as i32,
+                y: thumbnail_region_top.floor() as i32,
                 width: thumbnail_width.ceil() as u32,
                 height: thumbnail_height.ceil() as u32,
             },
         ];
         crate::app::platform::configure_screenshot_editor_window_shape(&window, &regions);
         long_log(format!(
-            "long window shape: label={label} regions=toolbar({:.0},{:.0} {:.0}x{:.0}) thumbnail({:.0},{:.0} {:.0}x{:.0})",
+            "long window shape: label={label} regions=toolbar({:.0},{:.0} {:.0}x{:.0}) thumbnail({:.0},{:.0} {:.0}x{:.0}) anchor_top={:.0}",
             toolbar_left,
             toolbar_top,
             toolbar_width,
             toolbar_height,
             thumbnail_left,
-            thumbnail_top,
+            thumbnail_region_top,
             thumbnail_width,
-            thumbnail_height
+            thumbnail_height,
+            thumbnail_top
         ));
     }
 
