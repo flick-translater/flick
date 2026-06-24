@@ -40,6 +40,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Default)]
+#[allow(dead_code)]
 pub(crate) struct ScrollTarget {
     /// Foreground application process id at the moment the capture session started.
     ///
@@ -54,9 +55,11 @@ pub(crate) struct ScrollControllerOptions {
     pub session_id: String,
     pub selection: SelectionRect,
     pub stop: Arc<AtomicBool>,
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub cursor_passthrough: Arc<AtomicBool>,
     pub last_scroll_millis: Arc<AtomicI64>,
     pub last_scroll_delta: Arc<AtomicI64>,
+    #[allow(dead_code)]
     pub target: ScrollTarget,
     pub should_throttle_scroll: Arc<dyn Fn() -> bool + Send + Sync>,
 }
@@ -288,7 +291,13 @@ pub fn set_overlay_capture_sharing(app: &AppHandle, include_in_capture: bool) {
         return;
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows_platform::set_overlay_capture_sharing(app, include_in_capture);
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
     {
         let _ = (app, include_in_capture);
     }
@@ -301,7 +310,13 @@ pub fn set_overlay_mouse_passthrough(app: &AppHandle, passthrough: bool) {
         return;
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows_platform::set_overlay_mouse_passthrough(app, passthrough);
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
     {
         let _ = (app, passthrough);
     }
@@ -314,7 +329,13 @@ pub fn set_window_capture_sharing(window: &tauri::WebviewWindow, include_in_capt
         return;
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows_platform::set_window_capture_sharing(window, include_in_capture);
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
     {
         let _ = (window, include_in_capture);
     }

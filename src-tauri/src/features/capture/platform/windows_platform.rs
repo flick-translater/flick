@@ -18,9 +18,11 @@ use windows_sys::Win32::{
     UI::{
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE},
         WindowsAndMessaging::{
-            CallNextHookEx, HC_ACTION, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PeekMessageW,
-            SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN,
-            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN,
+            CallNextHookEx, GWL_EXSTYLE, GetWindowLongPtrW, HC_ACTION, KBDLLHOOKSTRUCT, MSG,
+            PM_NOREMOVE, PeekMessageW, SetWindowDisplayAffinity, SetWindowLongPtrW,
+            SetWindowsHookExW, UnhookWindowsHookEx, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+            WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN,
+            WM_RBUTTONUP, WM_SYSKEYDOWN, WS_EX_TRANSPARENT,
         },
     },
 };
@@ -112,6 +114,7 @@ pub fn begin_interactive_capture_session(
 }
 
 pub fn cancel_interactive_capture_session(_app: &AppHandle, _state: &State<'_, AppState>) {
+    crate::features::capture::capture_editor_log("windows native capture: cancel requested");
     uninstall_input_hooks();
     clear_active_session();
 }
@@ -163,6 +166,67 @@ pub fn cleanup_after_cancel(app: &AppHandle, state: &State<'_, AppState>) {
     clear_active_session();
     if let Ok(mut snapshots) = state.capture_snapshots.lock() {
         snapshots.clear();
+    }
+}
+
+pub fn set_overlay_capture_sharing(_app: &AppHandle, include_in_capture: bool) {
+    crate::features::capture::long_capture::long_log(format!(
+        "scroll_controller/windows: set overlay capture sharing include={include_in_capture}"
+    ));
+    frozen_overlay::set_capture_sharing(include_in_capture);
+}
+
+pub fn set_overlay_mouse_passthrough(_app: &AppHandle, passthrough: bool) {
+    crate::features::capture::long_capture::long_log(format!(
+        "scroll_controller/windows: set overlay mouse passthrough={passthrough}"
+    ));
+    frozen_overlay::set_mouse_passthrough(passthrough);
+}
+
+pub fn overlay_window_handles() -> Vec<windows_sys::Win32::Foundation::HWND> {
+    frozen_overlay::window_handles()
+}
+
+pub fn set_window_capture_sharing(window: &tauri::WebviewWindow, include_in_capture: bool) {
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    let affinity = if include_in_capture {
+        WDA_NONE
+    } else {
+        WDA_EXCLUDEFROMCAPTURE
+    };
+    let ok = unsafe { SetWindowDisplayAffinity(hwnd.0 as _, affinity) };
+    crate::features::capture::long_capture::long_log(format!(
+        "scroll_controller/windows: set window capture sharing hwnd={:#x} include={} affinity={} ok={}",
+        hwnd.0 as usize, include_in_capture, affinity, ok
+    ));
+}
+
+pub fn set_window_mouse_passthrough(window: &tauri::WebviewWindow, passthrough: bool) {
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    crate::features::capture::long_capture::long_log(format!(
+        "scroll_controller/windows: set editor mouse passthrough hwnd={:#x} passthrough={passthrough}",
+        hwnd.0 as usize
+    ));
+    set_hwnd_mouse_passthrough(hwnd.0 as _, passthrough);
+}
+
+fn set_hwnd_mouse_passthrough(hwnd: windows_sys::Win32::Foundation::HWND, passthrough: bool) {
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let next = if passthrough {
+            style | WS_EX_TRANSPARENT as isize
+        } else {
+            style & !(WS_EX_TRANSPARENT as isize)
+        };
+        let previous = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+        crate::features::capture::long_capture::long_log(format!(
+            "scroll_controller/windows: set hwnd transparent hwnd={:#x} passthrough={} old_style={:#x} new_style={:#x} previous={:#x}",
+            hwnd as usize, passthrough, style, next, previous
+        ));
     }
 }
 
@@ -383,6 +447,7 @@ fn cache_frozen_desktop_snapshots(
 fn install_input_hooks(_session_id: u64) -> Result<(), FlickError> {
     ensure_thread_message_queue();
     reset_input_state();
+    crate::features::capture::capture_editor_log("windows native capture: installing input hooks");
 
     let mouse_hook =
         unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(low_level_mouse_proc), null_mut(), 0) };
@@ -409,6 +474,7 @@ fn install_input_hooks(_session_id: u64) -> Result<(), FlickError> {
             keyboard_hook: keyboard_hook as isize,
         });
     }
+    crate::features::capture::capture_editor_log("windows native capture: input hooks installed");
     Ok(())
 }
 
@@ -422,6 +488,9 @@ fn uninstall_input_hooks() {
     };
 
     if let Some(handles) = handles {
+        crate::features::capture::capture_editor_log(
+            "windows native capture: uninstalling input hooks",
+        );
         unsafe {
             if handles.mouse_hook != 0 {
                 UnhookWindowsHookEx(handles.mouse_hook as _);
@@ -430,6 +499,9 @@ fn uninstall_input_hooks() {
                 UnhookWindowsHookEx(handles.keyboard_hook as _);
             }
         }
+        crate::features::capture::capture_editor_log(
+            "windows native capture: input hooks uninstalled",
+        );
     }
 }
 

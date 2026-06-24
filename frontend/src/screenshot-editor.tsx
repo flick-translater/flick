@@ -376,6 +376,11 @@ function ScreenshotEditor() {
       event.preventDefault();
       isClosingRef.current = true;
       isFinishedRef.current = true;
+      stopLongScroll();
+      if (editorMode === 'long-capture') {
+        editorLog(`window close prevented: invoke cancel_long_capture label=${windowLabel}`);
+        await invoke('cancel_long_capture', { sessionId }).catch(() => undefined);
+      }
       editorLog(`window close prevented: invoke cancel_capture_edit label=${windowLabel}`);
       await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
       editorLog(`window close prevented: closing label=${windowLabel}`);

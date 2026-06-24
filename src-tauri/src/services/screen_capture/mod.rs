@@ -59,19 +59,16 @@ pub struct CachedScreenCapture {
 /// Handle owning a running live stream that pushes frames into a callback. Dropping it stops the
 /// stream. Each frame is delivered already decoded to RGBA (the stream backend decodes on its
 /// delivery thread so its pixel-buffer pool is freed immediately and it can keep emitting).
-#[cfg(target_os = "macos")]
 pub struct LiveFrameStream {
     // Owned purely so dropping `LiveFrameStream` (or calling `stop`) stops the underlying stream.
     #[allow(dead_code)]
     inner: Box<dyn LiveFrameStreamHandle>,
 }
 
-#[cfg(target_os = "macos")]
 impl LiveFrameStream {
     pub fn stop(self) {}
 }
 
-#[cfg(target_os = "macos")]
 pub(crate) trait LiveFrameStreamHandle: Send {}
 
 impl CachedScreenCapture {
@@ -179,14 +176,32 @@ pub struct ScreenCaptureService;
 impl ScreenCaptureService {
     /// Open a push-based live stream: every delivered frame is handed to `on_frame` (which must be
     /// cheap — enqueue only). Returns a handle; drop/stop it to end the stream. macOS only.
-    #[cfg(target_os = "macos")]
     pub fn open_live_frame_stream(
         &self,
         selection: &SelectionRect,
         on_frame: Box<dyn FnMut(ImageBuffer<Rgba<u8>, Vec<u8>>) + Send>,
     ) -> anyhow::Result<LiveFrameStream> {
-        let inner = macos_screen_capture_kit_platform::open_live_frame_stream(selection, on_frame)?;
-        Ok(LiveFrameStream { inner })
+        #[cfg(target_os = "macos")]
+        {
+            let inner =
+                macos_screen_capture_kit_platform::open_live_frame_stream(selection, on_frame)?;
+            return Ok(LiveFrameStream { inner });
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        {
+            let inner = windows_platform::open_live_frame_stream(selection, on_frame)?;
+            return Ok(LiveFrameStream { inner });
+        }
+
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        {
+            let _ = (selection, on_frame);
+            Err(anyhow::anyhow!(
+                "live frame stream is not implemented on this platform"
+            ))
+        }
     }
 
     pub fn capture_selection(

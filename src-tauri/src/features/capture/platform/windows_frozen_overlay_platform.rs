@@ -15,11 +15,12 @@ use windows_sys::Win32::{
         DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC, SRCCOPY, SelectObject,
     },
     UI::WindowsAndMessaging::{
-        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, IDC_CROSS,
-        LoadCursorW, RegisterClassW, SW_HIDE, SW_SHOWNA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-        SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WM_DESTROY, WM_ERASEBKGND,
-        WM_NCCREATE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-        WS_POPUP,
+        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE,
+        GetWindowLongPtrW, IDC_CROSS, LoadCursorW, RegisterClassW, SW_HIDE, SW_SHOWNA,
+        SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPos,
+        ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_DESTROY,
+        WM_ERASEBKGND, WM_NCCREATE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
     },
 };
 
@@ -306,6 +307,52 @@ pub(super) fn update_crosshair(
     Ok(())
 }
 
+pub(super) fn set_capture_sharing(include_in_capture: bool) {
+    let affinity = if include_in_capture {
+        WDA_NONE
+    } else {
+        WDA_EXCLUDEFROMCAPTURE
+    };
+    if let Ok(state) = overlay_state().lock() {
+        crate::features::capture::long_capture::long_log(format!(
+            "scroll_controller/windows: overlay capture sharing windows={} include={include_in_capture}",
+            state.windows.len()
+        ));
+        for window in &state.windows {
+            let ok = unsafe { SetWindowDisplayAffinity(window.hwnd as HWND, affinity) };
+            crate::features::capture::long_capture::long_log(format!(
+                "scroll_controller/windows: overlay capture sharing hwnd={:#x} affinity={} ok={}",
+                window.hwnd, affinity, ok
+            ));
+        }
+    }
+}
+
+pub(super) fn set_mouse_passthrough(passthrough: bool) {
+    if let Ok(state) = overlay_state().lock() {
+        crate::features::capture::long_capture::long_log(format!(
+            "scroll_controller/windows: overlay mouse passthrough windows={} passthrough={passthrough}",
+            state.windows.len()
+        ));
+        for window in &state.windows {
+            set_hwnd_mouse_passthrough(window.hwnd as HWND, passthrough);
+        }
+    }
+}
+
+pub(super) fn window_handles() -> Vec<HWND> {
+    overlay_state()
+        .lock()
+        .map(|state| {
+            state
+                .windows
+                .iter()
+                .map(|window| window.hwnd as HWND)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub(super) fn pump_native_overlay_messages() {
     let mut message = windows_sys::Win32::UI::WindowsAndMessaging::MSG {
         hwnd: null_mut(),
@@ -330,6 +377,22 @@ pub(super) fn pump_native_overlay_messages() {
             windows_sys::Win32::UI::WindowsAndMessaging::TranslateMessage(&message);
             windows_sys::Win32::UI::WindowsAndMessaging::DispatchMessageW(&message);
         }
+    }
+}
+
+fn set_hwnd_mouse_passthrough(hwnd: HWND, passthrough: bool) {
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let next = if passthrough {
+            style | WS_EX_TRANSPARENT as isize
+        } else {
+            style & !(WS_EX_TRANSPARENT as isize)
+        };
+        let previous = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+        crate::features::capture::long_capture::long_log(format!(
+            "scroll_controller/windows: overlay transparent hwnd={:#x} passthrough={} old_style={:#x} new_style={:#x} previous={:#x}",
+            hwnd as usize, passthrough, style, next, previous
+        ));
     }
 }
 

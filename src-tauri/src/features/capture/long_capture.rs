@@ -1,8 +1,10 @@
+use std::collections::VecDeque;
+use std::sync::Condvar;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     path::Path,
     sync::{
-        Arc, Condvar, Mutex, OnceLock,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
     },
     thread,
@@ -180,14 +182,12 @@ struct LongCaptureSession {
 
 /// Shared reference to a captured frame. `Arc` lets the same pixels flow capture → compute → merge
 /// without cloning the (large) image at each hand-off.
-#[cfg(target_os = "macos")]
 type SharedFrame = Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>;
 
 /// Stage 1 item: a decoded frame plus its predecessor, awaiting relative-delta computation. The
 /// previous frame travels with it so a compute worker can measure the inter-frame shift without any
 /// shared accumulated state — that is what makes the (expensive) delta search parallelizable. Frames
 /// are already decoded to RGBA by the stream callback, so the pipeline never holds a pixel buffer.
-#[cfg(target_os = "macos")]
 struct RawJob {
     index: u64,
     session_id: String,
@@ -198,7 +198,6 @@ struct RawJob {
 
 /// Stage 2 item: the result of a compute worker — the measured relative delta (None if the frame
 /// couldn't be aligned to its predecessor). Merged strictly in `index` order.
-#[cfg(target_os = "macos")]
 struct ComputedJob {
     session_id: String,
     frame: SharedFrame,
@@ -210,56 +209,45 @@ struct ComputedJob {
 /// Number of parallel delta-compute workers. The relative-delta search (~80ms on a tall frame) is
 /// the throughput bottleneck; running it on several frames at once lets the pipeline keep up with the
 /// ~45ms capture cadence, so the queue stops backing up and scroll no longer has to be throttled.
-#[cfg(target_os = "macos")]
 const COMPUTE_WORKERS: usize = 3;
 
 /// Capacity of the raw (stage-1) queue. Deep enough that no captured frame is ever dropped while the
 /// compute workers catch up; backpressure throttles scroll long before this fills.
-#[cfg(target_os = "macos")]
 const FRAME_QUEUE_CAPACITY: usize = 30;
 
 /// Raw-queue depth at which the event tap starts dropping wheel events (closed-loop speed limit).
-#[cfg(target_os = "macos")]
 const FRAME_QUEUE_BACKPRESSURE_NUM: usize = FRAME_QUEUE_CAPACITY / 2;
 
 /// Stage 1: capture thread → compute workers. FIFO; any idle worker takes the next frame.
-#[cfg(target_os = "macos")]
 static RAW_QUEUE: std::sync::OnceLock<(Mutex<VecDeque<RawJob>>, Condvar)> =
     std::sync::OnceLock::new();
 
 /// Stage 2: compute workers → merge thread. Keyed by `index` so the single merge thread can consume
 /// strictly in order regardless of which worker finished first.
-#[cfg(target_os = "macos")]
 static COMPUTED_QUEUE: std::sync::OnceLock<(
     Mutex<std::collections::BTreeMap<u64, ComputedJob>>,
     Condvar,
 )> = std::sync::OnceLock::new();
 
 /// Depth of the raw queue, mirrored as an atomic so the event tap reads backpressure without locking.
-#[cfg(target_os = "macos")]
 static FRAME_QUEUE_LEN: AtomicUsize = AtomicUsize::new(0);
 
 /// Depth of the computed queue (delta workers -> merge thread). This shows merge/UI backlog, which
 /// raw-queue backpressure alone cannot see.
-#[cfg(target_os = "macos")]
 static COMPUTED_QUEUE_LEN: AtomicUsize = AtomicUsize::new(0);
 
 /// Monotonic capture index. Stamped on every RawJob so the merge thread can reassemble strict order
 /// after frames are processed out-of-order by the parallel compute workers.
-#[cfg(target_os = "macos")]
 static FRAME_INDEX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Best-effort scroll-speed prior shared with compute workers (they have no per-frame accumulated
 /// state). Only seeds the search hint, so an approximate value is fine.
-#[cfg(target_os = "macos")]
 static SHARED_LAST_SHIFT: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(target_os = "macos")]
 fn raw_queue() -> &'static (Mutex<VecDeque<RawJob>>, Condvar) {
     RAW_QUEUE.get_or_init(|| (Mutex::new(VecDeque::new()), Condvar::new()))
 }
 
-#[cfg(target_os = "macos")]
 fn computed_queue() -> &'static (Mutex<std::collections::BTreeMap<u64, ComputedJob>>, Condvar) {
     COMPUTED_QUEUE.get_or_init(|| {
         (
@@ -269,7 +257,6 @@ fn computed_queue() -> &'static (Mutex<std::collections::BTreeMap<u64, ComputedJ
     })
 }
 
-#[cfg(target_os = "macos")]
 fn clear_pipeline_queues() {
     if let Ok(mut queue) = raw_queue().0.lock() {
         queue.clear();
@@ -281,7 +268,6 @@ fn clear_pipeline_queues() {
     }
 }
 
-#[cfg(target_os = "macos")]
 fn wake_pipeline_workers() {
     raw_queue().1.notify_all();
     computed_queue().1.notify_all();
@@ -366,12 +352,10 @@ pub fn start_long_capture(
         .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?
         .insert(session_id.clone(), session);
     long_log(format!("start: session stored session={session_id}"));
-    #[cfg(target_os = "macos")]
-    {
-        clear_pipeline_queues();
-        spawn_pipeline_workers(app.clone(), stop.clone());
-    }
+    clear_pipeline_queues();
+    spawn_pipeline_workers(app.clone(), stop.clone());
     ensure_sampling_running(
+        app.clone(),
         session_id.clone(),
         capture_pending.clone(),
         stop.clone(),
@@ -387,15 +371,7 @@ pub fn start_long_capture(
         last_scroll_delta,
         target: scroll_target,
         should_throttle_scroll: Arc::new(|| {
-            #[cfg(target_os = "macos")]
-            {
-                FRAME_QUEUE_LEN.load(Ordering::SeqCst) >= FRAME_QUEUE_BACKPRESSURE_NUM
-            }
-
-            #[cfg(not(target_os = "macos"))]
-            {
-                false
-            }
+            FRAME_QUEUE_LEN.load(Ordering::SeqCst) >= FRAME_QUEUE_BACKPRESSURE_NUM
         }),
     });
     Ok(update)
@@ -472,8 +448,8 @@ pub fn stop_long_capture_scroll(session_id: String) -> Result<(), FlickError> {
 ///
 /// Called from the event tap on every wheel event. The `capture_pending` flag doubles as a
 /// "sampling loop active" guard so concurrent wheel events don't spawn duplicate loops.
-#[cfg(target_os = "macos")]
 fn ensure_sampling_running(
+    app: AppHandle,
     session_id: String,
     capture_pending: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
@@ -577,8 +553,11 @@ fn ensure_sampling_running(
         let stream = match ScreenCaptureService.open_live_frame_stream(&selection, on_frame) {
             Ok(stream) => stream,
             Err(error) => {
-                long_log(format!("sampling: failed to open live stream {error}"));
+                long_log(format!(
+                    "sampling: failed to open live stream {error}; falling back to polling"
+                ));
                 capture_pending.store(false, Ordering::SeqCst);
+                spawn_polling_sampling(app, session_id, capture_pending, stop, last_scroll_delta);
                 return;
             }
         };
@@ -596,22 +575,103 @@ fn ensure_sampling_running(
     });
 }
 
-#[cfg(not(target_os = "macos"))]
-fn ensure_sampling_running(
-    _session_id: String,
+fn spawn_polling_sampling(
+    app: AppHandle,
+    session_id: String,
     capture_pending: Arc<AtomicBool>,
-    _stop: Arc<AtomicBool>,
-    _last_scroll_delta: Arc<AtomicI64>,
+    stop: Arc<AtomicBool>,
+    last_scroll_delta: Arc<AtomicI64>,
 ) {
-    capture_pending.store(false, Ordering::SeqCst);
-    long_log("sampling: live frame stream is not implemented on this platform");
+    thread::spawn(move || {
+        long_log("sampling: polling live frame capture started");
+        let mut prev_frame: Option<ImageBuffer<Rgba<u8>, Vec<u8>>> = None;
+
+        while !stop.load(Ordering::SeqCst) {
+            if last_scroll_delta.load(Ordering::SeqCst) == 0 {
+                thread::sleep(Duration::from_millis(40));
+                continue;
+            }
+
+            let selection = {
+                let guard = match sessions().lock() {
+                    Ok(guard) => guard,
+                    Err(_) => break,
+                };
+                match guard.get(&session_id) {
+                    Some(session) => session.selection.clone(),
+                    None => break,
+                }
+            };
+
+            capture_pending.store(true, Ordering::SeqCst);
+            let state = app.state::<AppState>();
+            let frame = match capture_live_frame(&app, &state, &session_id, &selection) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    long_log(format!("sampling: polling capture failed {error}"));
+                    capture_pending.store(false, Ordering::SeqCst);
+                    thread::sleep(Duration::from_millis(120));
+                    continue;
+                }
+            };
+            capture_pending.store(false, Ordering::SeqCst);
+
+            if prev_frame
+                .as_ref()
+                .is_some_and(|prev| frames_nearly_identical(prev, &frame))
+            {
+                thread::sleep(Duration::from_millis(35));
+                continue;
+            }
+
+            let direction = last_scroll_delta.load(Ordering::SeqCst);
+            let last_shift = SHARED_LAST_SHIFT.load(Ordering::SeqCst) as u32;
+            let delta = match prev_frame.as_ref() {
+                Some(prev) => compute_relative_delta(prev, &frame, direction, last_shift),
+                None => Some(0),
+            };
+
+            let update = {
+                let mut guard = match sessions().lock() {
+                    Ok(guard) => guard,
+                    Err(_) => break,
+                };
+                let Some(session) = guard.get_mut(&session_id) else {
+                    break;
+                };
+                let preview_update = merge_computed_frame(session, frame.clone(), delta, direction);
+                if matches!(preview_update, PreviewUpdate::None) {
+                    None
+                } else {
+                    match encode_build(collect_build_inputs(session, preview_update)) {
+                        Ok(update) => Some(update),
+                        Err(error) => {
+                            long_log(format!("sampling: encode update failed {error}"));
+                            None
+                        }
+                    }
+                }
+            };
+
+            if let Some(update) = update {
+                if let Err(error) = emit_long_capture_update(&app, &session_id, update) {
+                    long_log(format!("sampling: emit update failed {error}"));
+                }
+            }
+
+            prev_frame = Some(frame);
+            thread::sleep(Duration::from_millis(45));
+        }
+
+        capture_pending.store(false, Ordering::SeqCst);
+        long_log("sampling: polling live frame capture stopped");
+    });
 }
 
 /// Spawn the pipeline (compute workers + merge thread) for the current long-capture session.
 ///
 /// These threads live for the whole session. They wait while queues are idle and exit only when the
 /// session stop flag is set by confirm/cancel/close.
-#[cfg(target_os = "macos")]
 fn spawn_pipeline_workers(app: AppHandle, stop: Arc<AtomicBool>) {
     static PIPELINE_RUNNING: AtomicBool = AtomicBool::new(false);
     if PIPELINE_RUNNING
@@ -748,7 +808,6 @@ fn spawn_pipeline_workers(app: AppHandle, stop: Arc<AtomicBool>) {
 /// Merge-thread consumer: apply one computed job (relative delta already measured) to the stitch and
 /// emit a preview. The session lock is held only for the cheap stitch + input gathering; the
 /// expensive PNG/base64 encoding runs without it.
-#[cfg(target_os = "macos")]
 fn merge_pipeline_job(app: &AppHandle, job: ComputedJob) -> Result<(), FlickError> {
     let total_started = Instant::now();
     let ComputedJob {
@@ -854,7 +913,6 @@ pub fn cancel_long_capture(
         .remove(&session_id)
     {
         session.stop.store(true, Ordering::SeqCst);
-        #[cfg(target_os = "macos")]
         wake_pipeline_workers();
     }
     cleanup_long_capture_ui(&app, &state, &session_id);
@@ -874,7 +932,6 @@ pub fn prepare_long_capture_edit(
         .remove(&session_id)
     {
         session.stop.store(true, Ordering::SeqCst);
-        #[cfg(target_os = "macos")]
         wake_pipeline_workers();
     }
     if let Some((label, window)) = screenshot_editor_window(&app, &session_id) {
@@ -996,7 +1053,6 @@ fn finalize_long_capture(
                 .ok_or_else(|| FlickError::Message("long capture session not found".into()))?
         };
         stop.store(true, Ordering::SeqCst);
-        #[cfg(target_os = "macos")]
         wake_pipeline_workers();
     }
     wait_for_pending_capture(&session_id)?;
@@ -1152,6 +1208,11 @@ fn capture_live_frame(
             .map(|(label, _)| label.as_str())
             .unwrap_or("<none>")
     ));
+    #[cfg(target_os = "windows")]
+    if let Some((_, window)) = window.as_ref() {
+        platform::set_window_capture_sharing(window, false);
+    }
+    #[cfg(not(target_os = "windows"))]
     if let Some((_, window)) = window.as_ref() {
         long_log("capture_live_frame: hide editor start");
         let _ = window.hide();
@@ -1176,6 +1237,7 @@ fn capture_live_frame(
     long_log("capture_live_frame: restore overlay start");
     platform::restore_overlay_after_live_capture(app, state, selection);
     long_log("capture_live_frame: restore overlay complete");
+    #[cfg(not(target_os = "windows"))]
     if let Some((_, window)) = window.as_ref() {
         long_log("capture_live_frame: show editor start");
         let _ = window.show();
@@ -1240,7 +1302,6 @@ fn long_capture_scroll_target(state: &State<'_, AppState>) -> ScrollTarget {
 /// delta search. Measuring *displacement* (not a content-% diff) keeps it consistent with the
 /// MIN_SCROLL_DELTA gate in the stitcher, so 1..(threshold-1)px moves no longer slip through and get
 /// snapped to the boundary delta (the slow-scroll duplicate).
-#[cfg(target_os = "macos")]
 fn frames_nearly_identical(
     a: &ImageBuffer<Rgba<u8>, Vec<u8>>,
     b: &ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -1318,7 +1379,6 @@ fn frames_nearly_identical(
 /// This is the expensive, self-contained part of stitching — it needs only the two frames, the wheel
 /// direction, and a speed hint, with NO accumulated/stitched state — which is exactly why it can run
 /// on several frames concurrently. Returns the inter-frame delta (rows), or None if they don't align.
-#[cfg(target_os = "macos")]
 fn compute_relative_delta(
     prev_frame: &ImageBuffer<Rgba<u8>, Vec<u8>>,
     frame: &ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -1344,7 +1404,6 @@ fn compute_relative_delta(
     overlap_result.overlap.map(|overlap| overlap.delta_y)
 }
 
-#[cfg(target_os = "macos")]
 fn same_position_frame(last_sig: &RowSignatures, next_sig: &RowSignatures) -> bool {
     let rows = last_sig.len().min(next_sig.len()) as usize;
     if rows == 0 {
@@ -1387,7 +1446,6 @@ fn same_position_frame(last_sig: &RowSignatures, next_sig: &RowSignatures) -> bo
 /// drift-correct against the stitched image, recover from stalls, paste the frame, and produce the
 /// preview update. `delta == None` means the compute worker couldn't align this frame to its
 /// predecessor (fast scroll); we then try a wide stall-recovery anchor before giving up.
-#[cfg(target_os = "macos")]
 fn merge_computed_frame(
     session: &mut LongCaptureSession,
     frame: ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -2326,7 +2384,6 @@ fn frame_rows(
 /// Owned image data + metadata gathered under the session lock, ready to be encoded without it.
 /// Encoding (PNG + base64) is the expensive part and must not hold the lock or it serializes with
 /// the capture thread.
-#[cfg(target_os = "macos")]
 struct BuildInputs {
     current_frame: ImageBuffer<Rgba<u8>, Vec<u8>>,
     /// Full-stitched preview image, only for Replace.
@@ -2341,7 +2398,6 @@ struct BuildInputs {
 }
 
 /// Cheap phase, run under the session lock: clone the images the encoder needs and copy scalars.
-#[cfg(target_os = "macos")]
 fn collect_build_inputs(
     session: &LongCaptureSession,
     preview_update: PreviewUpdate,
@@ -2372,7 +2428,6 @@ fn collect_build_inputs(
 }
 
 /// Expensive phase, run WITHOUT the lock: PNG-encode + base64 the gathered images.
-#[cfg(target_os = "macos")]
 fn encode_build(inputs: BuildInputs) -> Result<LongCaptureUpdate, FlickError> {
     let total_started = Instant::now();
     let current_frame_data_url = image_to_data_url(&inputs.current_frame)?;
@@ -2449,6 +2504,7 @@ fn image_to_data_url(image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> Result<String, F
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use super::*;
 
