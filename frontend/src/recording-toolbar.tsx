@@ -7,11 +7,6 @@ import './index.css';
 
 type RecordingStatus = 'idle' | 'recording' | 'paused' | 'saving';
 
-function log(message: string) {
-  console.info(`[gif-recording/toolbar] ${message}`);
-  void invoke('capture_editor_frontend_log', { message: `gif-recording toolbar: ${message}` }).catch(() => undefined);
-}
-
 function RecordingToolbar() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
   const sessionId = query.get('session_id') ?? '';
@@ -20,7 +15,6 @@ function RecordingToolbar() {
   const appWindow = useMemo(() => getCurrentWindow(), []);
 
   async function startOrResume() {
-    log(`start/resume click session=${sessionId || '<missing>'} status=${status}`);
     if (!sessionId || status === 'recording' || status === 'saving') {
       return;
     }
@@ -33,16 +27,13 @@ function RecordingToolbar() {
         await invoke('start_gif_recording', { sessionId });
       }
       setStatus('recording');
-      log('status=recording');
     } catch (err) {
       setError(String(err));
       setStatus('idle');
-      log(`start/resume failed ${String(err)}`);
     }
   }
 
   async function pause() {
-    log(`pause click session=${sessionId || '<missing>'} status=${status}`);
     if (!sessionId || status !== 'recording') {
       return;
     }
@@ -50,15 +41,12 @@ function RecordingToolbar() {
     try {
       await invoke('pause_gif_recording', { sessionId });
       setStatus('paused');
-      log('status=paused');
     } catch (err) {
       setError(String(err));
-      log(`pause failed ${String(err)}`);
     }
   }
 
   async function finish() {
-    log(`finish click session=${sessionId || '<missing>'} status=${status}`);
     if (!sessionId || status === 'idle' || status === 'saving') {
       return;
     }
@@ -68,16 +56,13 @@ function RecordingToolbar() {
       await invoke('finish_gif_recording', { sessionId });
       await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
       await appWindow.close();
-      log('finish complete');
     } catch (err) {
       setStatus('paused');
       setError(String(err));
-      log(`finish failed ${String(err)}`);
     }
   }
 
   async function cancel() {
-    log(`cancel click session=${sessionId || '<missing>'} status=${status}`);
     if (!sessionId) {
       await appWindow.close();
       return;

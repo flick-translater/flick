@@ -58,29 +58,16 @@ fn sessions() -> &'static Mutex<HashMap<String, RecordingSession>> {
     RECORDING_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn recording_log(message: impl AsRef<str>) {
-    eprintln!("[gif-recording] {}", message.as_ref());
-}
-
 pub fn start_gif_recording(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), FlickError> {
-    recording_log(format!("start_gif_recording: enter session={session_id}"));
     let selection = pending_selection(&state, &session_id)?;
-    recording_log(format!(
-        "start_gif_recording: selection x={} y={} width={} height={}",
-        selection.x, selection.y, selection.width, selection.height
-    ));
     validate_recording_size(&selection)?;
     finalize_pending_overlay_for_recording(&app, &state, &session_id)?;
 
     let screenshot_dir = history::current_screenshot_dir(&state)?;
-    recording_log(format!(
-        "start_gif_recording: screenshot_dir={}",
-        screenshot_dir.display()
-    ));
     fs::create_dir_all(&screenshot_dir).map_err(|error| {
         FlickError::Message(format!("failed to create screenshot dir: {error}"))
     })?;
@@ -94,13 +81,6 @@ pub fn start_gif_recording(
     let width = selection.width;
     let height = selection.height;
     let (max_gif_width, max_gif_height) = recording_size_limits(&state)?;
-    recording_log(format!(
-        "start_gif_recording: final_path={} writing_path={} max_gif={}x{}",
-        final_path.display(),
-        writing_path.display(),
-        max_gif_width,
-        max_gif_height
-    ));
     let worker = thread::spawn(move || {
         encode_gif(
             worker_path,
@@ -119,48 +99,18 @@ pub fn start_gif_recording(
     let stream_stopped = Arc::clone(&stopped);
     let last_frame_at = Arc::new(Mutex::new(Instant::now() - RECORDING_FRAME_INTERVAL));
     let stream_last_frame_at = Arc::clone(&last_frame_at);
-    let delivered_frames = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let queued_frames = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let dropped_frames = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let stream_delivered_frames = Arc::clone(&delivered_frames);
-    let stream_queued_frames = Arc::clone(&queued_frames);
-    let stream_dropped_frames = Arc::clone(&dropped_frames);
     let on_frame = Box::new(move |frame: ImageBuffer<Rgba<u8>, Vec<u8>>| {
-        let delivered = stream_delivered_frames.fetch_add(1, Ordering::SeqCst) + 1;
         if stream_stopped.load(Ordering::SeqCst) || stream_paused.load(Ordering::SeqCst) {
-            if delivered <= 3 || delivered % 60 == 0 {
-                recording_log(format!(
-                    "stream callback: drop delivered={delivered} reason=stopped_or_paused"
-                ));
-            }
             return;
         }
         let Ok(mut last_frame_at) = stream_last_frame_at.lock() else {
-            recording_log("stream callback: drop reason=last_frame_at mutex poisoned");
             return;
         };
         if last_frame_at.elapsed() < RECORDING_FRAME_INTERVAL {
             return;
         }
         *last_frame_at = Instant::now();
-        match stream_sender.try_send(RecordingMessage::Frame(frame)) {
-            Ok(()) => {
-                let queued = stream_queued_frames.fetch_add(1, Ordering::SeqCst) + 1;
-                if queued <= 3 || queued % 30 == 0 {
-                    recording_log(format!(
-                        "stream callback: queued frame delivered={delivered} queued={queued}"
-                    ));
-                }
-            }
-            Err(_) => {
-                let dropped = stream_dropped_frames.fetch_add(1, Ordering::SeqCst) + 1;
-                if dropped <= 3 || dropped % 30 == 0 {
-                    recording_log(format!(
-                        "stream callback: drop delivered={delivered} dropped={dropped} reason=queue_full_or_closed"
-                    ));
-                }
-            }
-        }
+        let _ = stream_sender.try_send(RecordingMessage::Frame(frame));
     });
 
     prepare_recording_windows(&app, &session_id);
@@ -171,14 +121,10 @@ pub fn start_gif_recording(
         }
     }
 
-    recording_log("start_gif_recording: opening live frame stream");
     let stream = match ScreenCaptureService::default().open_live_frame_stream(&selection, on_frame)
     {
         Ok(stream) => stream,
         Err(error) => {
-            recording_log(format!(
-                "start_gif_recording: failed to open live frame stream: {error}"
-            ));
             stopped.store(true, Ordering::SeqCst);
             drop(sender);
             let _ = worker.join();
@@ -189,15 +135,11 @@ pub fn start_gif_recording(
             )));
         }
     };
-    recording_log("start_gif_recording: live frame stream opened");
 
     let mut sessions = sessions()
         .lock()
         .map_err(|_| FlickError::Message("recording session mutex poisoned".into()))?;
     if sessions.contains_key(&session_id) {
-        recording_log(format!(
-            "start_gif_recording: duplicate active session session={session_id}"
-        ));
         stopped.store(true, Ordering::SeqCst);
         drop(stream);
         drop(sender);
@@ -224,28 +166,20 @@ pub fn start_gif_recording(
         },
     );
 
-    recording_log(format!(
-        "start_gif_recording: session stored session={session_id}"
-    ));
     let _ = app.emit("gif-recording-status", "recording");
-    recording_log("start_gif_recording: emitted gif-recording-status=recording");
     Ok(())
 }
 
 pub fn pause_gif_recording(session_id: String) -> Result<(), FlickError> {
-    recording_log(format!("pause_gif_recording: enter session={session_id}"));
     with_session(&session_id, |session| {
         session.paused.store(true, Ordering::SeqCst);
-        recording_log("pause_gif_recording: paused=true");
         Ok(())
     })
 }
 
 pub fn resume_gif_recording(session_id: String) -> Result<(), FlickError> {
-    recording_log(format!("resume_gif_recording: enter session={session_id}"));
     with_session(&session_id, |session| {
         session.paused.store(false, Ordering::SeqCst);
-        recording_log("resume_gif_recording: paused=false");
         Ok(())
     })
 }
@@ -255,14 +189,10 @@ pub fn finish_gif_recording(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<CaptureRecord, FlickError> {
-    recording_log(format!("finish_gif_recording: enter session={session_id}"));
     let mut session = remove_session(&session_id)?;
-    recording_log("finish_gif_recording: session removed from registry");
     session.stopped.store(true, Ordering::SeqCst);
     drop(session.stream.take());
-    recording_log("finish_gif_recording: live stream dropped");
     drop(session.sender);
-    recording_log("finish_gif_recording: sender dropped; encoder will drain queued frames");
     cleanup_recording_windows(&app, &session_id);
 
     let frame_count = session
@@ -272,21 +202,12 @@ pub fn finish_gif_recording(
         .join()
         .map_err(|_| FlickError::Message("recording encoder worker panicked".into()))?
         .map_err(|error| FlickError::Message(format!("failed to encode gif: {error}")))?;
-    recording_log(format!(
-        "finish_gif_recording: encoder joined frame_count={frame_count}"
-    ));
 
     if frame_count == 0 {
-        recording_log("finish_gif_recording: no frames recorded; removing writing file");
         let _ = fs::remove_file(&session.writing_path);
         return Err(FlickError::Message("no frames were recorded".into()));
     }
 
-    recording_log(format!(
-        "finish_gif_recording: rename {} -> {}",
-        session.writing_path.display(),
-        session.final_path.display()
-    ));
     fs::rename(&session.writing_path, &session.final_path)
         .map_err(|error| FlickError::Message(format!("failed to save gif recording: {error}")))?;
 
@@ -304,12 +225,7 @@ pub fn finish_gif_recording(
     };
 
     let _ = copy_path_to_clipboard(&record.path);
-    recording_log(format!(
-        "finish_gif_recording: copied gif file/path to clipboard path={}",
-        record.path
-    ));
     let _ = app.emit("capture-finished", record.clone());
-    recording_log("finish_gif_recording: emitted capture-finished");
 
     let max_screenshots = state
         .settings
@@ -318,33 +234,22 @@ pub fn finish_gif_recording(
         .max_screenshots;
     let screenshot_dir = history::current_screenshot_dir(&state)?;
     let _ = history::prune_capture_history(&screenshot_dir, max_screenshots);
-    recording_log("finish_gif_recording: prune history attempted");
 
     Ok(record)
 }
 
 pub fn cancel_gif_recording(app: AppHandle, session_id: String) -> Result<(), FlickError> {
-    recording_log(format!("cancel_gif_recording: enter session={session_id}"));
     let Ok(mut session) = remove_session(&session_id) else {
-        recording_log("cancel_gif_recording: no active session");
         cleanup_recording_windows(&app, &session_id);
         return Ok(());
     };
-    recording_log("cancel_gif_recording: session removed from registry");
     session.stopped.store(true, Ordering::SeqCst);
     drop(session.stream.take());
-    recording_log("cancel_gif_recording: live stream dropped");
     drop(session.sender);
-    recording_log("cancel_gif_recording: sender dropped");
     if let Some(worker) = session.worker.take() {
         let _ = worker.join();
-        recording_log("cancel_gif_recording: encoder worker joined");
     }
     let _ = fs::remove_file(&session.writing_path);
-    recording_log(format!(
-        "cancel_gif_recording: removed writing file {}",
-        session.writing_path.display()
-    ));
     cleanup_recording_windows(&app, &session_id);
     Ok(())
 }
@@ -362,19 +267,12 @@ pub fn open_gif_recording_toolbar_window(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), FlickError> {
-    recording_log(format!(
-        "open_gif_recording_toolbar_window: enter session={session_id}"
-    ));
     finalize_pending_overlay_for_recording(&app, &state, &session_id)?;
     windows::show_gif_recording_toolbar_window(&app, &session_id)?;
-    recording_log("open_gif_recording_toolbar_window: complete");
     Ok(())
 }
 
 pub fn close_gif_recording_toolbar_window(app: AppHandle, session_id: String) {
-    recording_log(format!(
-        "close_gif_recording_toolbar_window: enter session={session_id}"
-    ));
     windows::close_gif_recording_toolbar_window(&app, &session_id);
 }
 
@@ -430,12 +328,8 @@ fn finalize_pending_overlay_for_recording(
             false
         }
     };
-    recording_log(format!(
-        "finalize_pending_overlay_for_recording: should_finalize={should_finalize}"
-    ));
     if should_finalize {
         platform::finalize_capture_session(app, state, true);
-        recording_log("finalize_pending_overlay_for_recording: platform finalize complete");
     }
     Ok(())
 }
@@ -483,10 +377,7 @@ fn encode_gif(
     max_gif_height: u32,
     receiver: mpsc::Receiver<RecordingMessage>,
 ) -> anyhow::Result<u32> {
-    recording_log(format!(
-        "encode_gif: start path={} nominal_width={width} nominal_height={height}",
-        path.display()
-    ));
+    let _ = (width, height);
     let file = fs::File::create(&path)
         .with_context(|| format!("failed to create gif recording file at {}", path.display()))?;
     let mut writer = Some(BufWriter::new(file));
@@ -509,13 +400,6 @@ fn encode_gif(
                     output_height = scaled_height;
                     let width_u16 = u16::try_from(output_width).context("invalid GIF width")?;
                     let height_u16 = u16::try_from(output_height).context("invalid GIF height")?;
-                    recording_log(format!(
-                        "encode_gif: first frame actual_width={} actual_height={} output_width={} output_height={} fps={RECORDING_FPS}",
-                        frame.width(),
-                        frame.height(),
-                        output_width,
-                        output_height
-                    ));
                     let mut next_encoder = gif::Encoder::new(
                         writer
                             .take()
@@ -553,31 +437,19 @@ fn encode_gif(
                     .write_frame(&gif_frame)
                     .context("failed to write GIF frame")?;
                 frame_count += 1;
-                if frame_count <= 3 || frame_count % 30 == 0 {
-                    recording_log(format!("encode_gif: wrote frame_count={frame_count}"));
-                }
             }
         }
     }
 
-    recording_log("encode_gif: channel closed");
-    recording_log(format!("encode_gif: complete frame_count={frame_count}"));
     Ok(frame_count)
 }
 
 fn copy_path_to_clipboard(path: &str) -> anyhow::Result<()> {
-    recording_log(format!("copy_path_to_clipboard: start path={path}"));
     let mut clipboard = arboard::Clipboard::new().context("failed to access clipboard")?;
     if let Err(file_error) = clipboard.set().file_list(&[Path::new(path)]) {
-        recording_log(format!(
-            "copy_path_to_clipboard: file_list failed; fallback to text error={file_error}"
-        ));
         clipboard
             .set_text(path.to_string())
             .with_context(|| format!("failed to copy gif file to clipboard: {file_error}"))?;
-        recording_log("copy_path_to_clipboard: text fallback complete");
-    } else {
-        recording_log("copy_path_to_clipboard: file_list complete");
     }
     Ok(())
 }

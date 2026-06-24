@@ -87,13 +87,7 @@ type LongCaptureUpdate = {
   max_offset: number;
 };
 
-function editorLog(step: string) {
-  if (!step.includes('gif recording') && !step.includes('gif-recording')) {
-    return;
-  }
-  console.info(`[gif-recording/frontend] ${step}`);
-  void invoke('capture_editor_frontend_log', { message: step }).catch(() => undefined);
-}
+function editorLog(_step: string) {}
 
 function ScreenshotEditor() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -403,9 +397,7 @@ function ScreenshotEditor() {
         await invoke('cancel_long_capture', { sessionId }).catch(() => undefined);
       }
       if (editorMode === 'recording') {
-        editorLog(`window close prevented: invoke cancel_gif_recording label=${windowLabel}`);
         await invoke('cancel_gif_recording', { sessionId }).catch(() => undefined);
-        editorLog(`gif recording window close: invoke cancel_gif_recording complete label=${windowLabel}`);
         await invoke('close_gif_recording_toolbar_window', { sessionId }).catch(() => undefined);
       }
       editorLog(`window close prevented: invoke cancel_capture_edit label=${windowLabel}`);
@@ -975,7 +967,6 @@ function ScreenshotEditor() {
       }
       await invoke('set_gif_recording_window_shape', { sessionId, recording: true });
     } catch (recordingModeError) {
-      editorLog(`gif recording mode failed ${String(recordingModeError)}`);
       await invoke('close_gif_recording_toolbar_window', { sessionId }).catch(() => undefined);
       await invoke('set_gif_recording_window_shape', { sessionId, recording: false }).catch(() => undefined);
       setEditorMode('edit');
@@ -984,78 +975,49 @@ function ScreenshotEditor() {
   }
 
   async function handleGifRecordingStart() {
-    editorLog(
-      `gif recording start click: session=${sessionId || '<missing>'} status=${gifRecordingStatus} mode=${editorMode}`,
-    );
     if (!sessionId || gifRecordingStatus === 'recording' || gifRecordingStatus === 'saving') {
-      editorLog('gif recording start ignored: missing session or already recording/saving');
       return;
     }
     setError('');
     try {
       await invoke('set_gif_recording_window_shape', { sessionId, recording: true });
       if (gifRecordingStatus === 'paused') {
-        editorLog('gif recording start: invoke resume_gif_recording start');
         await invoke('resume_gif_recording', { sessionId });
-        editorLog('gif recording start: invoke resume_gif_recording complete');
       } else {
-        editorLog('gif recording start: invoke start_gif_recording start');
         await invoke('start_gif_recording', { sessionId });
-        editorLog('gif recording start: invoke start_gif_recording complete');
       }
       setGifRecordingStatus('recording');
-      editorLog('gif recording start: status=recording');
     } catch (recordingError) {
-      editorLog(`gif recording start failed: ${String(recordingError)}`);
       setError(String(recordingError));
       setGifRecordingStatus('idle');
     }
   }
 
   async function handleGifRecordingPause() {
-    editorLog(
-      `gif recording pause click: session=${sessionId || '<missing>'} status=${gifRecordingStatus}`,
-    );
     if (!sessionId || gifRecordingStatus !== 'recording') {
-      editorLog('gif recording pause ignored: missing session or status is not recording');
       return;
     }
     setError('');
     try {
-      editorLog('gif recording pause: invoke pause_gif_recording start');
       await invoke('pause_gif_recording', { sessionId });
-      editorLog('gif recording pause: invoke pause_gif_recording complete');
       setGifRecordingStatus('paused');
-      editorLog('gif recording pause: status=paused');
     } catch (recordingError) {
-      editorLog(`gif recording pause failed: ${String(recordingError)}`);
       setError(String(recordingError));
     }
   }
 
   async function handleGifRecordingFinish() {
-    editorLog(
-      `gif recording finish click: session=${sessionId || '<missing>'} status=${gifRecordingStatus}`,
-    );
     if (!sessionId || gifRecordingStatus === 'idle' || gifRecordingStatus === 'saving') {
-      editorLog('gif recording finish ignored: missing session or idle/saving');
       return;
     }
     setError('');
     setGifRecordingStatus('saving');
     isFinishedRef.current = true;
-    editorLog('gif recording finish: status=saving finishedRef=true');
     try {
-      editorLog('gif recording finish: invoke finish_gif_recording start');
       await invoke('finish_gif_recording', { sessionId });
-      editorLog('gif recording finish: invoke finish_gif_recording complete');
-      editorLog('gif recording finish: invoke cancel_capture_edit start');
       await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
-      editorLog('gif recording finish: invoke cancel_capture_edit complete');
-      editorLog('gif recording finish: close window start');
       await getCurrentWindow().close();
     } catch (recordingError) {
-      editorLog(`gif recording finish failed: ${String(recordingError)}`);
       isFinishedRef.current = false;
       setGifRecordingStatus('paused');
       setError(String(recordingError));
@@ -1063,23 +1025,14 @@ function ScreenshotEditor() {
   }
 
   async function handleGifRecordingCancel() {
-    editorLog(
-      `gif recording cancel click: session=${sessionId || '<missing>'} status=${gifRecordingStatus}`,
-    );
     if (!sessionId) {
-      editorLog('gif recording cancel ignored: missing session');
       return;
     }
     isClosingRef.current = true;
     isFinishedRef.current = true;
-    editorLog('gif recording cancel: invoke cancel_gif_recording start');
     await invoke('cancel_gif_recording', { sessionId }).catch(() => undefined);
-    editorLog('gif recording cancel: invoke cancel_gif_recording complete');
     await invoke('close_gif_recording_toolbar_window', { sessionId }).catch(() => undefined);
-    editorLog('gif recording cancel: invoke cancel_capture_edit start');
     await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
-    editorLog('gif recording cancel: invoke cancel_capture_edit complete');
-    editorLog('gif recording cancel: close window start');
     await getCurrentWindow().close();
   }
 
@@ -1201,9 +1154,7 @@ function ScreenshotEditor() {
       editorLog('cancel click: invoke cancel_long_capture complete');
     }
     if (editorMode === 'recording') {
-      editorLog('gif recording generic cancel: invoke cancel_gif_recording start');
       await invoke('cancel_gif_recording', { sessionId }).catch(() => undefined);
-      editorLog('gif recording generic cancel: invoke cancel_gif_recording complete');
       await invoke('close_gif_recording_toolbar_window', { sessionId }).catch(() => undefined);
     }
     editorLog(`cancel click: invoke cancel_capture_edit start label=${windowLabel}`);
