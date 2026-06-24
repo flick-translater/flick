@@ -10,9 +10,9 @@ import {
   ChevronUp,
   Circle,
   Edit3,
-  Redo2,
   Pause,
   Play,
+  Redo2,
   Smile,
   Slash,
   Square,
@@ -477,6 +477,7 @@ export function GifRecordingToolbar({
   const isSaving = status === 'saving';
   const isRecording = status === 'recording';
   const isPaused = status === 'paused';
+
   return (
     <div
       ref={toolbarRef}

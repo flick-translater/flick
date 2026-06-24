@@ -232,16 +232,6 @@ pub fn start_gif_recording(
     Ok(())
 }
 
-pub fn prepare_gif_recording_mode(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<(), FlickError> {
-    pending_selection(&state, &session_id)?;
-    finalize_pending_overlay_for_recording(&app, &state, &session_id)?;
-    Ok(())
-}
-
 pub fn pause_gif_recording(session_id: String) -> Result<(), FlickError> {
     recording_log(format!("pause_gif_recording: enter session={session_id}"));
     with_session(&session_id, |session| {
@@ -364,30 +354,7 @@ pub fn set_gif_recording_window_shape(
     session_id: String,
     recording: bool,
 ) -> Result<(), FlickError> {
-    #[cfg(target_os = "windows")]
-    {
-        let Some(window) = screenshot_editor_window(&app, &session_id) else {
-            return Ok(());
-        };
-        let url = window
-            .url()
-            .map_err(|error| FlickError::Message(format!("failed to read editor url: {error}")))?;
-        let regions = if recording {
-            gif_recording_regions(&url)
-        } else {
-            regular_editor_regions(&url)
-        };
-        crate::app::platform::configure_screenshot_editor_window_shape(&window, &regions);
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        if let Some(window) = screenshot_editor_window_cross_platform(&app, &session_id) {
-            let _ = window.set_ignore_cursor_events(recording);
-        }
-    }
-
-    Ok(())
+    recording_window_mode::apply(&app, &session_id, recording)
 }
 
 pub fn open_gif_recording_toolbar_window(
@@ -412,46 +379,20 @@ pub fn close_gif_recording_toolbar_window(app: AppHandle, session_id: String) {
 }
 
 #[cfg(target_os = "windows")]
-fn capture_initial_recording_frame(selection: &SelectionRect) -> Option<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+fn capture_initial_recording_frame(
+    selection: &SelectionRect,
+) -> Option<ImageBuffer<Rgba<u8>, Vec<u8>>> {
     ScreenCaptureService::default()
         .capture_selection(selection, &[])
         .ok()
 }
 
 fn prepare_recording_windows(app: &AppHandle, session_id: &str) {
-    #[cfg(target_os = "windows")]
-    {
-        platform::set_overlay_capture_sharing(app, false);
-        if let Some(window) = screenshot_editor_window(app, session_id) {
-            platform::set_window_capture_sharing(&window, false);
-        }
-        if let Some(window) = gif_recording_toolbar_window(app, session_id) {
-            platform::set_window_capture_sharing(&window, false);
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (app, session_id);
-    }
+    recording_capture_visibility::prepare(app, session_id);
 }
 
 fn cleanup_recording_windows(app: &AppHandle, session_id: &str) {
-    #[cfg(target_os = "windows")]
-    {
-        platform::set_overlay_capture_sharing(app, true);
-        if let Some(window) = screenshot_editor_window(app, session_id) {
-            platform::set_window_capture_sharing(&window, true);
-        }
-        if let Some(window) = gif_recording_toolbar_window(app, session_id) {
-            platform::set_window_capture_sharing(&window, true);
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (app, session_id);
-    }
+    recording_capture_visibility::cleanup(app, session_id);
 }
 
 fn pending_selection(
@@ -667,7 +608,90 @@ fn recording_size_limits(state: &State<'_, AppState>) -> Result<(u32, u32), Flic
     })
 }
 
-#[cfg(target_os = "windows")]
+mod recording_window_mode {
+    use super::*;
+
+    pub fn apply(app: &AppHandle, session_id: &str, recording: bool) -> Result<(), FlickError> {
+        #[cfg(target_os = "windows")]
+        {
+            windows::apply(app, session_id, recording)
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            passthrough::apply(app, session_id, recording);
+            Ok(())
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    mod windows {
+        use super::*;
+
+        pub fn apply(app: &AppHandle, session_id: &str, recording: bool) -> Result<(), FlickError> {
+            let Some(window) = screenshot_editor_window(app, session_id) else {
+                return Ok(());
+            };
+            let url = window.url().map_err(|error| {
+                FlickError::Message(format!("failed to read editor url: {error}"))
+            })?;
+            let regions = if recording {
+                gif_recording_regions(&url)
+            } else {
+                regular_editor_regions(&url)
+            };
+            crate::app::platform::configure_screenshot_editor_window_shape(&window, &regions);
+            Ok(())
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    mod passthrough {
+        use super::*;
+
+        pub fn apply(app: &AppHandle, session_id: &str, recording: bool) {
+            if let Some(window) = screenshot_editor_window_cross_platform(app, session_id) {
+                let _ = window.set_ignore_cursor_events(recording);
+            }
+        }
+    }
+}
+
+mod recording_capture_visibility {
+    use super::*;
+
+    pub fn prepare(app: &AppHandle, session_id: &str) {
+        #[cfg(target_os = "windows")]
+        windows::set_capture_visibility(app, session_id, false);
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = (app, session_id);
+    }
+
+    pub fn cleanup(app: &AppHandle, session_id: &str) {
+        #[cfg(target_os = "windows")]
+        windows::set_capture_visibility(app, session_id, true);
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = (app, session_id);
+    }
+
+    #[cfg(target_os = "windows")]
+    mod windows {
+        use super::*;
+
+        pub fn set_capture_visibility(app: &AppHandle, session_id: &str, include_in_capture: bool) {
+            platform::set_overlay_capture_sharing(app, include_in_capture);
+            if let Some(window) = screenshot_editor_window(app, session_id) {
+                platform::set_window_capture_sharing(&window, include_in_capture);
+            }
+            if let Some(window) = gif_recording_toolbar_window(app, session_id) {
+                platform::set_window_capture_sharing(&window, include_in_capture);
+            }
+        }
+    }
+}
+
 fn screenshot_editor_window_cross_platform(
     app: &AppHandle,
     session_id: &str,

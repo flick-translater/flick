@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+use std::sync::mpsc;
 use std::{
     collections::{HashMap, VecDeque},
     path::Path,
@@ -8,8 +10,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-#[cfg(target_os = "macos")]
-use std::sync::mpsc;
 
 use base64::{Engine as _, engine::general_purpose};
 use image::{

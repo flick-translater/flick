@@ -22,8 +22,8 @@ pub use long_capture::{
 };
 pub use recording::{
     cancel_gif_recording, close_gif_recording_toolbar_window, finish_gif_recording,
-    open_gif_recording_toolbar_window, pause_gif_recording, prepare_gif_recording_mode,
-    resume_gif_recording, set_gif_recording_window_shape, start_gif_recording,
+    open_gif_recording_toolbar_window, pause_gif_recording, resume_gif_recording,
+    set_gif_recording_window_shape, start_gif_recording,
 };
 pub(crate) use session::capture_editor_log;
 pub use session::{

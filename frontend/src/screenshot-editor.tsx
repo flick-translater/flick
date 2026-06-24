@@ -108,6 +108,7 @@ function ScreenshotEditor() {
   const isLongEditLaunch = query.get('long_edit') === '1';
   const isLinux = useMemo(() => /Linux/i.test(navigator.platform), []);
   const isWindows = useMemo(() => /Win/i.test(navigator.platform), []);
+  const recordingControlsMode = isWindows ? 'embedded' : 'detached';
   const windowLabel = appWindow.label;
   const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const draftCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -967,12 +968,16 @@ function ScreenshotEditor() {
     setEditorMode('recording');
     try {
       await waitForNextPaint();
-      if (isWindows) {
-        await invoke('set_gif_recording_window_shape', { sessionId, recording: true });
+      if (recordingControlsMode === 'detached') {
+        await invoke('open_gif_recording_toolbar_window', { sessionId });
+      } else {
+        await invoke('close_gif_recording_toolbar_window', { sessionId }).catch(() => undefined);
       }
-      await invoke('prepare_gif_recording_mode', { sessionId });
+      await invoke('set_gif_recording_window_shape', { sessionId, recording: true });
     } catch (recordingModeError) {
       editorLog(`gif recording mode failed ${String(recordingModeError)}`);
+      await invoke('close_gif_recording_toolbar_window', { sessionId }).catch(() => undefined);
+      await invoke('set_gif_recording_window_shape', { sessionId, recording: false }).catch(() => undefined);
       setEditorMode('edit');
       setError(String(recordingModeError));
     }
@@ -1505,7 +1510,7 @@ function ScreenshotEditor() {
                   imageLoaded={imageLoaded}
                   useNativeTooltip={isWindows}
                 />
-              ) : editorMode === 'recording' ? (
+              ) : editorMode === 'recording' && recordingControlsMode === 'embedded' ? (
                 <GifRecordingToolbar
                   toolbarRef={toolbarRef}
                   toolbarPosition={toolbarPosition}
