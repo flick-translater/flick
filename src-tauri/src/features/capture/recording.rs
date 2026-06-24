@@ -167,12 +167,7 @@ pub fn start_gif_recording(
     #[cfg(target_os = "windows")]
     {
         if let Some(frame) = capture_initial_recording_frame(&selection) {
-            match sender.try_send(RecordingMessage::Frame(frame)) {
-                Ok(()) => recording_log("start_gif_recording: queued initial frame"),
-                Err(error) => recording_log(format!(
-                    "start_gif_recording: failed to queue initial frame: {error}"
-                )),
-            }
+            let _ = sender.try_send(RecordingMessage::Frame(frame));
         }
     }
 
@@ -242,12 +237,8 @@ pub fn prepare_gif_recording_mode(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), FlickError> {
-    recording_log(format!(
-        "prepare_gif_recording_mode: enter session={session_id}"
-    ));
     pending_selection(&state, &session_id)?;
     finalize_pending_overlay_for_recording(&app, &state, &session_id)?;
-    recording_log("prepare_gif_recording_mode: complete");
     Ok(())
 }
 
@@ -373,50 +364,27 @@ pub fn set_gif_recording_window_shape(
     session_id: String,
     recording: bool,
 ) -> Result<(), FlickError> {
-    recording_log(format!(
-        "set_gif_recording_window_shape: enter session={session_id} recording={recording}"
-    ));
     #[cfg(target_os = "windows")]
     {
         let Some(window) = screenshot_editor_window(&app, &session_id) else {
-            recording_log("set_gif_recording_window_shape/windows: editor window not found");
             return Ok(());
         };
-        recording_log(format!(
-            "set_gif_recording_window_shape/windows: window label={}",
-            window.label()
-        ));
         let url = window
             .url()
             .map_err(|error| FlickError::Message(format!("failed to read editor url: {error}")))?;
-        recording_log(format!("set_gif_recording_window_shape/windows: url={url}"));
         let regions = if recording {
             gif_recording_regions(&url)
         } else {
             regular_editor_regions(&url)
         };
-        recording_log(format!(
-            "set_gif_recording_window_shape/windows: apply regions={}",
-            format_regions(&regions)
-        ));
         crate::app::platform::configure_screenshot_editor_window_shape(&window, &regions);
-        recording_log("set_gif_recording_window_shape/windows: shape applied");
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         if let Some(window) = screenshot_editor_window_cross_platform(&app, &session_id) {
-            recording_log(format!(
-                "set_gif_recording_window_shape/non-windows: set_ignore_cursor_events={recording} label={}",
-                window.label()
-            ));
             let _ = window.set_ignore_cursor_events(recording);
-        } else {
-            recording_log("set_gif_recording_window_shape/non-windows: editor window not found");
         }
-        recording_log(
-            "set_gif_recording_window_shape: platform has no window shape implementation; using cursor passthrough",
-        );
     }
 
     Ok(())
@@ -445,22 +413,9 @@ pub fn close_gif_recording_toolbar_window(app: AppHandle, session_id: String) {
 
 #[cfg(target_os = "windows")]
 fn capture_initial_recording_frame(selection: &SelectionRect) -> Option<ImageBuffer<Rgba<u8>, Vec<u8>>> {
-    match ScreenCaptureService::default().capture_selection(selection, &[]) {
-        Ok(frame) => {
-            recording_log(format!(
-                "capture_initial_recording_frame: captured {}x{}",
-                frame.width(),
-                frame.height()
-            ));
-            Some(frame)
-        }
-        Err(error) => {
-            recording_log(format!(
-                "capture_initial_recording_frame: failed; continuing with live stream only: {error}"
-            ));
-            None
-        }
-    }
+    ScreenCaptureService::default()
+        .capture_selection(selection, &[])
+        .ok()
 }
 
 fn prepare_recording_windows(app: &AppHandle, session_id: &str) {
@@ -473,7 +428,6 @@ fn prepare_recording_windows(app: &AppHandle, session_id: &str) {
         if let Some(window) = gif_recording_toolbar_window(app, session_id) {
             platform::set_window_capture_sharing(&window, false);
         }
-        recording_log("prepare_recording_windows/windows: excluded overlay/editor/toolbar");
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -492,7 +446,6 @@ fn cleanup_recording_windows(app: &AppHandle, session_id: &str) {
         if let Some(window) = gif_recording_toolbar_window(app, session_id) {
             platform::set_window_capture_sharing(&window, true);
         }
-        recording_log("cleanup_recording_windows/windows: restored overlay/editor/toolbar");
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -715,19 +668,6 @@ fn recording_size_limits(state: &State<'_, AppState>) -> Result<(u32, u32), Flic
 }
 
 #[cfg(target_os = "windows")]
-fn format_regions(regions: &[SelectionRect]) -> String {
-    regions
-        .iter()
-        .map(|region| {
-            format!(
-                "({},{} {}x{})",
-                region.x, region.y, region.width, region.height
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 fn screenshot_editor_window_cross_platform(
     app: &AppHandle,
     session_id: &str,

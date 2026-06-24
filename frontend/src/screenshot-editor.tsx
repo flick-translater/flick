@@ -954,11 +954,7 @@ function ScreenshotEditor() {
   }
 
   async function handleGifRecordingModeStart() {
-    editorLog(
-      `gif recording mode click: session=${sessionId || '<missing>'} isSaving=${isSaving} imageLoaded=${imageLoaded} mode=${editorMode} selection=${selectionOffset.left},${selectionOffset.top},${displaySize.width}x${displaySize.height} toolbar=${toolbarPosition.left},${toolbarPosition.top}`,
-    );
     if (!sessionId || isSaving) {
-      editorLog('gif recording mode click ignored: missing session or saving');
       return;
     }
     setTool(null);
@@ -968,20 +964,13 @@ function ScreenshotEditor() {
     setTextDraft(null);
     setError('');
     setGifRecordingStatus('idle');
-    editorLog('gif recording mode: set editorMode=recording status=idle');
     setEditorMode('recording');
     try {
-      editorLog('gif recording mode: wait for recording frame paint start');
       await waitForNextPaint();
-      editorLog('gif recording mode: wait for recording frame paint complete');
       if (isWindows) {
-        editorLog('gif recording mode: invoke set_gif_recording_window_shape recording=true start');
         await invoke('set_gif_recording_window_shape', { sessionId, recording: true });
-        editorLog('gif recording mode: invoke set_gif_recording_window_shape recording=true complete');
       }
-      editorLog('gif recording mode: invoke prepare_gif_recording_mode start');
       await invoke('prepare_gif_recording_mode', { sessionId });
-      editorLog('gif recording mode: invoke prepare_gif_recording_mode complete');
     } catch (recordingModeError) {
       editorLog(`gif recording mode failed ${String(recordingModeError)}`);
       setEditorMode('edit');
@@ -999,9 +988,7 @@ function ScreenshotEditor() {
     }
     setError('');
     try {
-      editorLog('gif recording start: invoke set_gif_recording_window_shape recording=true start');
       await invoke('set_gif_recording_window_shape', { sessionId, recording: true });
-      editorLog('gif recording start: invoke set_gif_recording_window_shape recording=true complete');
       if (gifRecordingStatus === 'paused') {
         editorLog('gif recording start: invoke resume_gif_recording start');
         await invoke('resume_gif_recording', { sessionId });
