@@ -11,15 +11,6 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{SecondsFormat, Utc};
-#[cfg(target_os = "macos")]
-use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode};
-#[cfg(target_os = "macos")]
-use core_graphics::event::{
-    CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
-    CallbackResult, EventField, ScrollEventUnit,
-};
-#[cfg(target_os = "macos")]
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use image::{
     ImageBuffer, ImageEncoder, Rgba,
     codecs::png::{CompressionType, FilterType as PngFilterType},
@@ -36,7 +27,11 @@ use crate::{
     services::ScreenCaptureService,
 };
 
-use super::{history, platform, session};
+use super::{
+    history,
+    platform::{self, ScrollControllerOptions, ScrollTarget, start_scroll_controller},
+    session,
+};
 
 /// Hide the editor window before the initial live capture so the OS composites the frame
 /// without the editor on top of it. (Only used for the one-shot initial frame; the streaming
@@ -88,31 +83,6 @@ const MIN_QUALITY_ROWS: u32 = 6;
 /// trustworthy (a handful of rows can correlate by chance), small enough that a fast scroll leaving
 /// only a sliver of overlap can still be aligned.
 const MIN_OVERLAP_ROWS: i64 = 80;
-/// Factor applied to each forwarded wheel delta, slowing the page so per-frame scroll stays within the
-/// stitcher's alignable range. Lower = slower page / safer against big-jump seams / more "drag";
-/// higher = closer to native speed. ~0.35 brought the per-frame delta down from ~180px to a range the
-/// aligner handles without snapping to the search boundary.
-const SCROLL_SPEED_FACTOR: f64 = 0.35;
-/// Hard cap on the pixels a single forwarded wheel event may move the page. Scaling lowers the
-/// average speed, but one hard fling event can still carry a delta whose ×factor outruns capture for
-/// that frame (the residual big jump); clamping each event's forwarded magnitude削平s those peaks.
-const MAX_SCROLL_PX_PER_EVENT: f64 = 120.0;
-/// Sliding window for the scroll-rate limit. Must be ≥ the worst-case frame capture interval so that
-/// ANY single captured frame falls entirely within one window — then the per-window budget directly
-/// bounds per-frame scroll motion. A shorter window let one frame span several windows and accumulate
-/// multiples of the budget, which let big jumps through.
-const RATE_WINDOW_MS: i64 = 150;
-/// Absolute cap on scroll pixels per window. This is the hard speed ceiling: ≤ 200px per 150ms window
-/// (≈1300 px/s). Applied together with the frame-fraction cap below (whichever is smaller wins), so
-/// short selections are also protected.
-const RATE_MAX_PX_PER_WINDOW: f64 = 200.0;
-/// Scroll budget per window as a fraction of the selection's (logical) height — protects short
-/// selections where a fixed px cap would be too large a fraction of the frame. The factor folds in
-/// the ≈2× Retina logical→physical scale (0.5 ≈ 25% of the physical frame per window).
-const RATE_MAX_FRAME_FRACTION: f64 = 0.5;
-/// Sentinel written to a synthetic scroll event's user-data field so the event tap recognizes its own
-/// posted events and ignores them (prevents the synth → tap → synth re-entrancy loop).
-const SYNTHETIC_SCROLL_TAG: i64 = 0x466c_6b53; // "FlkS"
 /// Minimum overlap *to accept* a delta, as a fraction of frame height (the search floor above is
 /// smaller so the search can still range wide). A fast fling can move nearly a whole frame between
 /// two stream frames; the search then snaps to its upper edge (`max_delta`, overlap ≈ MIN_OVERLAP_ROWS)
@@ -141,7 +111,7 @@ const MIN_AVG_CORR_PERMILLE: u32 = 850;
 /// Fraction of the frame's non-trivial rows that must match before accepting a last/next delta.
 const MIN_RELATIVE_NONTRIVIAL_FRACTION: f64 = 0.25;
 
-fn long_log(message: impl AsRef<str>) {
+pub(super) fn long_log(message: impl AsRef<str>) {
     eprintln!(
         "[long-capture] {} {}",
         Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
@@ -149,7 +119,7 @@ fn long_log(message: impl AsRef<str>) {
     );
 }
 
-fn monotonic_millis() -> i64 {
+pub(super) fn monotonic_millis() -> i64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as i64
 }
@@ -358,7 +328,7 @@ pub fn start_long_capture(
     let cursor_passthrough = Arc::new(AtomicBool::new(false));
     let last_scroll_millis = Arc::new(AtomicI64::new(0));
     let last_scroll_delta = Arc::new(AtomicI64::new(0));
-    let target_pid = long_capture_target_pid(&state);
+    let scroll_target = long_capture_scroll_target(&state);
     let session = LongCaptureSession {
         selection: selection.clone(),
         stitched: frame.clone(),
@@ -394,17 +364,27 @@ pub fn start_long_capture(
         stop.clone(),
         last_scroll_delta.clone(),
     );
-    start_real_scroll_watcher(
+    start_scroll_controller(ScrollControllerOptions {
         app,
         session_id,
         selection,
         stop,
-        capture_pending,
         cursor_passthrough,
         last_scroll_millis,
         last_scroll_delta,
-        target_pid,
-    );
+        target: scroll_target,
+        should_throttle_scroll: Arc::new(|| {
+            #[cfg(target_os = "macos")]
+            {
+                FRAME_QUEUE_LEN.load(Ordering::SeqCst) >= FRAME_QUEUE_BACKPRESSURE_NUM
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                false
+            }
+        }),
+    });
     Ok(update)
 }
 
@@ -416,314 +396,6 @@ pub fn get_long_capture_image(session_id: String) -> Result<String, FlickError> 
         .get(&session_id)
         .ok_or_else(|| FlickError::Message("long capture session not found".into()))?;
     image_to_data_url(&session.stitched)
-}
-
-#[cfg(target_os = "macos")]
-fn start_real_scroll_watcher(
-    app: AppHandle,
-    session_id: String,
-    selection: SelectionRect,
-    stop: Arc<AtomicBool>,
-    capture_pending: Arc<AtomicBool>,
-    cursor_passthrough: Arc<AtomicBool>,
-    last_scroll_millis: Arc<AtomicI64>,
-    last_scroll_delta: Arc<AtomicI64>,
-    target_pid: Option<i32>,
-) {
-    long_log(format!(
-        "real_scroll_watcher: start session={session_id} selection=({},{} {}x{})",
-        selection.x, selection.y, selection.width, selection.height
-    ));
-    thread::spawn(move || {
-        run_real_scroll_watcher(
-            app,
-            session_id,
-            selection,
-            stop,
-            capture_pending,
-            cursor_passthrough,
-            last_scroll_millis,
-            last_scroll_delta,
-            target_pid,
-        );
-    });
-}
-
-#[cfg(not(target_os = "macos"))]
-fn start_real_scroll_watcher(
-    _app: AppHandle,
-    _session_id: String,
-    _selection: SelectionRect,
-    _stop: Arc<AtomicBool>,
-    _capture_pending: Arc<AtomicBool>,
-    _cursor_passthrough: Arc<AtomicBool>,
-    _last_scroll_millis: Arc<AtomicI64>,
-    _last_scroll_delta: Arc<AtomicI64>,
-    _target_pid: Option<i32>,
-) {
-}
-
-#[cfg(target_os = "macos")]
-fn run_real_scroll_watcher(
-    app: AppHandle,
-    session_id: String,
-    selection: SelectionRect,
-    stop: Arc<AtomicBool>,
-    capture_pending: Arc<AtomicBool>,
-    cursor_passthrough: Arc<AtomicBool>,
-    last_scroll_millis: Arc<AtomicI64>,
-    last_scroll_delta: Arc<AtomicI64>,
-    target_pid: Option<i32>,
-) {
-    platform::set_overlay_mouse_passthrough(&app, true);
-    // Exclude the overlay and editor window from screen capture for the whole session, instead
-    // of toggling it per frame. The sampling loop captures continuously while the user scrolls,
-    // so per-frame hide/show would add latency and flicker on every single frame.
-    platform::set_overlay_capture_sharing(&app, false);
-    if let Some((_, window)) = screenshot_editor_window(&app, &session_id) {
-        platform::set_window_capture_sharing(&window, false);
-    }
-    let event_types = vec![CGEventType::MouseMoved, CGEventType::ScrollWheel];
-    let app_for_tap = app.clone();
-    let session_for_tap = session_id.clone();
-    let selection_for_tap = selection.clone();
-    let stop_for_tap = stop.clone();
-    let cursor_passthrough_for_tap = cursor_passthrough.clone();
-    let last_scroll_millis_for_tap = last_scroll_millis.clone();
-    let last_scroll_delta_for_tap = last_scroll_delta.clone();
-    let _ = capture_pending;
-    // Synthetic-scroll setup: we drop the user's real wheel events and post our own discrete,
-    // pixel-unit, momentum-free scroll events to the target app instead. Real wheel events carry a
-    // velocity/phase that the OS turns into momentum scrolling, which amplifies the page's movement
-    // far beyond what we forward (observed ~3.5×) and causes big-jump seams; synthetic discrete events
-    // have no momentum, so the page moves exactly the amount we ask — making the capture track the
-    // wheel. Needs the target app's PID to post to.
-    // The source/pid are used only on the tap callback's thread, but CGEventTap::new requires a Send
-    // closure, so wrap them.
-    struct SendSynth {
-        source: CGEventSource,
-        pid: i32,
-    }
-    unsafe impl Send for SendSynth {}
-    let synth = match (
-        CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok(),
-        target_pid,
-    ) {
-        (Some(source), Some(pid)) => Some(SendSynth { source, pid }),
-        _ => None,
-    };
-    // Sliding-window scroll-rate limiter: a list of recent synthetic emits (timestamp_ms, px). On each
-    // event we drop entries older than RATE_WINDOW_MS, sum what's left to get the window's used budget,
-    // and only emit up to the remaining budget. This caps the page's speed over ANY 50ms window — far
-    // more precise than a fixed-boundary window (which let an event near the boundary spend ~2× budget)
-    // and bounds the per-event magnitude too. The list is tiny (a few entries per window). `Mutex`
-    // because the tap closure is `Fn` (no mutable captures).
-    let scroll_window = Arc::new(Mutex::new(Vec::<(i64, f64)>::new()));
-    // Per-window scroll budget = the smaller of the absolute cap and the frame-height fraction. The
-    // absolute cap (RATE_MAX_PX_PER_WINDOW) is the hard speed ceiling; the fraction protects short
-    // selections where the absolute cap would be too large a slice of the frame. `selection.height` is
-    // logical points; the stitcher works in physical pixels (≈2×), folded into RATE_MAX_FRAME_FRACTION.
-    let rate_max_px_per_window = ((selection.height as f64) * RATE_MAX_FRAME_FRACTION)
-        .min(RATE_MAX_PX_PER_WINDOW)
-        .max(40.0);
-    long_log(format!(
-        "real_scroll_watcher: synth setup available={} target_pid={:?} rate_max_px={rate_max_px_per_window:.0} window_ms={RATE_WINDOW_MS}",
-        synth.is_some(),
-        target_pid
-    ));
-
-    let tap = match CGEventTap::new(
-        CGEventTapLocation::HID,
-        CGEventTapPlacement::HeadInsertEventTap,
-        CGEventTapOptions::Default,
-        event_types,
-        move |_proxy, event_type, event| {
-            if stop_for_tap.load(Ordering::SeqCst) {
-                return CallbackResult::Keep;
-            }
-
-            let location = event.location();
-            let inside_selection = point_in_selection(location.x, location.y, &selection_for_tap);
-            update_editor_cursor_passthrough(
-                &app_for_tap,
-                &session_for_tap,
-                inside_selection,
-                &cursor_passthrough_for_tap,
-            );
-
-            if matches!(event_type, CGEventType::ScrollWheel) && inside_selection {
-                // Ignore our own synthetic scroll events (tagged via user-data) to avoid re-entrancy.
-                if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA)
-                    == SYNTHETIC_SCROLL_TAG
-                {
-                    return CallbackResult::Keep;
-                }
-                let delta_y = scroll_delta_y(event);
-                if delta_y == 0.0 {
-                    return CallbackResult::Keep;
-                }
-
-                // If we can't synthesize (no source/pid), fall back to scaling the real event through.
-                let Some(synth) = synth.as_ref() else {
-                    scale_scroll_event(event, SCROLL_SPEED_FACTOR, MAX_SCROLL_PX_PER_EVENT);
-                    last_scroll_millis_for_tap.store(monotonic_millis(), Ordering::SeqCst);
-                    last_scroll_delta_for_tap
-                        .store(delta_y.signum().round() as i64, Ordering::SeqCst);
-                    return CallbackResult::Keep;
-                };
-
-                let now = monotonic_millis();
-                last_scroll_millis_for_tap.store(now, Ordering::SeqCst);
-                last_scroll_delta_for_tap.store(delta_y.signum().round() as i64, Ordering::SeqCst);
-
-                // Backpressure: hold the page still while stitching catches up.
-                if FRAME_QUEUE_LEN.load(Ordering::SeqCst) >= FRAME_QUEUE_BACKPRESSURE_NUM {
-                    return CallbackResult::Drop;
-                }
-
-                // Sliding-window rate limit: this event wants to move `want` px (scaled). Expire window
-                // entries older than RATE_WINDOW_MS, sum the rest as `used`, and emit only up to the
-                // remaining budget — so total page motion in any RATE_WINDOW_MS stays ≤ the cap.
-                let want = (delta_y.abs() * SCROLL_SPEED_FACTOR).min(MAX_SCROLL_PX_PER_EVENT);
-                let emit = if let Ok(mut win) = scroll_window.lock() {
-                    win.retain(|(ts, _)| now - *ts < RATE_WINDOW_MS);
-                    let used: f64 = win.iter().map(|(_, px)| *px).sum();
-                    let remaining = (rate_max_px_per_window - used).max(0.0);
-                    let emit = want.min(remaining);
-                    if emit > 0.0 {
-                        win.push((now, emit));
-                    }
-                    emit
-                } else {
-                    0.0
-                };
-                if emit <= 0.0 {
-                    return CallbackResult::Drop; // window budget spent; swallow this event
-                }
-
-                // Post one discrete (momentum-free) pixel scroll of the allowed amount.
-                let signed = (emit * delta_y.signum()).round() as i32;
-                if signed != 0 {
-                    if let Ok(scroll) = CGEvent::new_scroll_event(
-                        synth.source.clone(),
-                        ScrollEventUnit::PIXEL,
-                        1,
-                        signed,
-                        0,
-                        0,
-                    ) {
-                        scroll.set_integer_value_field(
-                            EventField::EVENT_SOURCE_USER_DATA,
-                            SYNTHETIC_SCROLL_TAG,
-                        );
-                        scroll.set_location(location);
-                        scroll.post(CGEventTapLocation::HID);
-                        let _ = synth.pid;
-                    }
-                }
-                return CallbackResult::Drop;
-            }
-
-            CallbackResult::Keep
-        },
-    ) {
-        Ok(tap) => tap,
-        Err(()) => {
-            long_log("real_scroll_watcher: failed to create event tap");
-            return;
-        }
-    };
-
-    let source = match tap.mach_port().create_runloop_source(0) {
-        Ok(source) => source,
-        Err(()) => {
-            long_log("real_scroll_watcher: failed to create runloop source");
-            return;
-        }
-    };
-
-    let run_loop = CFRunLoop::get_current();
-    run_loop.add_source(&source, unsafe { kCFRunLoopCommonModes });
-    tap.enable();
-    long_log("real_scroll_watcher: event tap enabled");
-
-    while !stop.load(Ordering::SeqCst) {
-        CFRunLoop::run_in_mode(
-            unsafe { kCFRunLoopDefaultMode },
-            Duration::from_millis(50),
-            true,
-        );
-    }
-
-    set_editor_cursor_passthrough(&app, &session_id, false);
-    platform::set_overlay_mouse_passthrough(&app, false);
-    // Restore capture sharing that was disabled for the whole session above.
-    platform::set_overlay_capture_sharing(&app, true);
-    if let Some((_, window)) = screenshot_editor_window(&app, &session_id) {
-        platform::set_window_capture_sharing(&window, true);
-    }
-    long_log("real_scroll_watcher: stopped");
-}
-
-#[cfg(target_os = "macos")]
-fn point_in_selection(x: f64, y: f64, selection: &SelectionRect) -> bool {
-    x >= selection.x as f64
-        && x <= (selection.x + selection.width as i32) as f64
-        && y >= selection.y as f64
-        && y <= (selection.y + selection.height as i32) as f64
-}
-
-#[cfg(target_os = "macos")]
-fn scroll_delta_y(event: &core_graphics::event::CGEvent) -> f64 {
-    let point_delta =
-        event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
-    if point_delta != 0 {
-        return point_delta as f64;
-    }
-    let fixed_delta =
-        event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1);
-    if fixed_delta != 0.0 {
-        return fixed_delta;
-    }
-    event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1) as f64
-}
-
-/// Scale down the vertical scroll of `event` before it reaches the target window, so the page scrolls
-/// more slowly. With free-scroll the page moves at the system's native (often inertia-amplified) rate,
-/// which can outrun capture and produce big-jump seams; shrinking each wheel delta keeps per-frame
-/// motion within the stitcher's alignable range and makes the captured image track the wheel. All
-/// three delta representations are scaled together (an app may read any of them). A non-zero original
-/// delta keeps at least ±1 so very small scrolls still register.
-#[cfg(target_os = "macos")]
-fn scale_scroll_event(event: &core_graphics::event::CGEvent, factor: f64, max_px: f64) {
-    // The point-delta is the pixel-precise scroll that actually moves the page. Scaling alone lowers
-    // the *average* speed but a single hard fling event can still carry a huge delta whose ×factor is
-    // big enough to outrun capture for that one frame (the residual big jump). So also clamp the
-    // forwarded magnitude to `max_px`, which削平 the peaks without affecting normal scrolling.
-    let clamp = |v: f64| -> f64 {
-        let scaled = v * factor;
-        scaled.clamp(-max_px, max_px)
-    };
-    let point = event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
-    if point != 0 {
-        let out = clamp(point as f64).round() as i64;
-        let out = if out == 0 { point.signum() } else { out };
-        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1, out);
-    }
-    let fixed = event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1);
-    if fixed != 0.0 {
-        event.set_double_value_field(
-            EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1,
-            clamp(fixed),
-        );
-    }
-    // Line-delta is coarse (clicks, not pixels); scale it but don't pixel-clamp.
-    let line = event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
-    if line != 0 {
-        let out = ((line as f64) * factor).round() as i64;
-        let out = if out == 0 { line.signum() } else { out };
-        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1, out);
-    }
 }
 
 /// Ensure exactly one sampling loop is running for this session.
@@ -852,6 +524,17 @@ fn ensure_sampling_running(
         computed_queue().1.notify_all();
         long_log("sampling: supervisor stopped");
     });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_sampling_running(
+    _session_id: String,
+    capture_pending: Arc<AtomicBool>,
+    _stop: Arc<AtomicBool>,
+    _last_scroll_delta: Arc<AtomicI64>,
+) {
+    capture_pending.store(false, Ordering::SeqCst);
+    long_log("sampling: live frame stream is not implemented on this platform");
 }
 
 /// Spawn the pipeline (compute workers + merge thread) for the current long-capture session.
@@ -1071,29 +754,6 @@ fn emit_long_capture_update(
         FlickError::Message(format!("failed to emit long capture update: {error}"))
     })?;
     Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn update_editor_cursor_passthrough(
-    app: &AppHandle,
-    session_id: &str,
-    passthrough: bool,
-    current: &Arc<AtomicBool>,
-) {
-    if current.swap(passthrough, Ordering::SeqCst) == passthrough {
-        return;
-    }
-    set_editor_cursor_passthrough(app, session_id, passthrough);
-}
-
-#[cfg(target_os = "macos")]
-fn set_editor_cursor_passthrough(app: &AppHandle, session_id: &str, passthrough: bool) {
-    if let Some((label, window)) = screenshot_editor_window(app, session_id) {
-        long_log(format!(
-            "real_scroll_watcher: set_ignore_cursor_events label={label} passthrough={passthrough}"
-        ));
-        let _ = window.set_ignore_cursor_events(passthrough);
-    }
 }
 
 pub fn save_long_capture(
@@ -1455,7 +1115,7 @@ fn capture_live_frame(
     result
 }
 
-fn screenshot_editor_window(
+pub(super) fn screenshot_editor_window(
     app: &AppHandle,
     session_id: &str,
 ) -> Option<(String, tauri::WebviewWindow)> {
@@ -1481,20 +1141,22 @@ fn capture_live_frame_with_editor_hidden(
         .map_err(FlickError::from)
 }
 
-fn long_capture_target_pid(state: &State<'_, AppState>) -> Option<i32> {
+fn long_capture_scroll_target(state: &State<'_, AppState>) -> ScrollTarget {
     #[cfg(target_os = "macos")]
     {
-        return state
-            .previous_frontmost_app_pid
-            .lock()
-            .ok()
-            .and_then(|pid| *pid);
+        return ScrollTarget {
+            pid: state
+                .previous_frontmost_app_pid
+                .lock()
+                .ok()
+                .and_then(|pid| *pid),
+        };
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         let _ = state;
-        None
+        ScrollTarget::default()
     }
 }
 

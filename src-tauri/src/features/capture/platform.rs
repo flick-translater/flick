@@ -3,16 +3,30 @@
 //! This layer covers the parts that differ by OS beyond raw image capture, such as overlay
 //! cleanup, main-window suppression, and snapshot preparation.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicI64},
+};
+
 use tauri::{AppHandle, State};
 
 use crate::app::AppState;
 
 #[cfg(target_os = "linux")]
+#[path = "platform/linux_long_capture_scroll_platform.rs"]
+mod linux_long_capture_scroll_platform;
+#[cfg(target_os = "linux")]
 #[path = "platform/linux_platform.rs"]
 mod linux_platform;
 #[cfg(target_os = "macos")]
+#[path = "platform/macos_long_capture_scroll_platform.rs"]
+mod macos_long_capture_scroll_platform;
+#[cfg(target_os = "macos")]
 #[path = "platform/macos_platform.rs"]
 mod macos_platform;
+#[cfg(target_os = "windows")]
+#[path = "platform/windows_long_capture_scroll_platform.rs"]
+mod windows_long_capture_scroll_platform;
 #[cfg(target_os = "windows")]
 #[path = "platform/windows_platform.rs"]
 mod windows_platform;
@@ -24,6 +38,28 @@ use crate::{
     models::SelectionRect,
     services::{CachedScreenCapture, ScreenCaptureService},
 };
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ScrollTarget {
+    /// Foreground application process id at the moment the capture session started.
+    ///
+    /// macOS currently uses this as an availability signal before posting at HID scope. Windows can
+    /// extend this type with an HWND/thread id; X11 can add a window id/display handle. Wayland
+    /// should generally report unsupported.
+    pub pid: Option<i32>,
+}
+
+pub(crate) struct ScrollControllerOptions {
+    pub app: AppHandle,
+    pub session_id: String,
+    pub selection: SelectionRect,
+    pub stop: Arc<AtomicBool>,
+    pub cursor_passthrough: Arc<AtomicBool>,
+    pub last_scroll_millis: Arc<AtomicI64>,
+    pub last_scroll_delta: Arc<AtomicI64>,
+    pub target: ScrollTarget,
+    pub should_throttle_scroll: Arc<dyn Fn() -> bool + Send + Sync>,
+}
 
 pub fn start_interactive_capture(
     app: &AppHandle,
@@ -42,6 +78,24 @@ pub fn start_interactive_capture(
     #[cfg(target_os = "windows")]
     {
         windows_platform::begin_interactive_capture_session(app, state)
+    }
+}
+
+pub(crate) fn start_scroll_controller(options: ScrollControllerOptions) {
+    #[cfg(target_os = "macos")]
+    {
+        macos_long_capture_scroll_platform::start_scroll_controller(options);
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_long_capture_scroll_platform::start_scroll_controller(options);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        windows_long_capture_scroll_platform::start_scroll_controller(options);
     }
 }
 
