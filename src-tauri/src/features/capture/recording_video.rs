@@ -31,7 +31,6 @@ struct AudioCaptureContext {
     path: PathBuf,
     spec: SystemAudioSpec,
     bytes: Arc<AtomicU64>,
-    chunks: Arc<AtomicU64>,
 }
 
 #[cfg(target_os = "windows")]
@@ -63,7 +62,6 @@ pub(super) fn encode_video(
             }
         }
     } else {
-        eprintln!("[recording][audio] audio disabled mode={:?}", options.audio);
         None
     };
     let mut child = None;
@@ -71,7 +69,6 @@ pub(super) fn encode_video(
     let mut input_height = 0;
     let mut first_frame_elapsed: Option<Duration> = None;
     let mut last_pixels: Option<Vec<u8>> = None;
-    let mut frames_received = 0u32;
     let mut frames_written = 0u32;
 
     while let Ok(message) = receiver.recv() {
@@ -80,7 +77,6 @@ pub(super) fn encode_video(
                 image: frame,
                 elapsed,
             } => {
-                frames_received += 1;
                 if child.is_none() {
                     input_width = frame.width();
                     input_height = frame.height();
@@ -89,14 +85,6 @@ pub(super) fn encode_video(
                         input_height,
                         options.max_width,
                         options.max_height,
-                    );
-                    eprintln!(
-                        "[recording][video] starting ffmpeg rawvideo encoder path={} size={}x{} fps={} audio={:?}",
-                        silent_path.display(),
-                        scaled_width,
-                        scaled_height,
-                        options.fps,
-                        options.audio
                     );
                     child = Some(spawn_ffmpeg_encoder(
                         &silent_path,
@@ -130,23 +118,6 @@ pub(super) fn encode_video(
                     }
                     write_video_pixels(&mut child, &pixels)?;
                     frames_written += 1;
-                    if frames_written <= 3 || frames_written % 100 == 0 {
-                        eprintln!(
-                            "[recording][video] wrote frames={} received={} elapsed_ms={} target={}",
-                            frames_written,
-                            frames_received,
-                            elapsed.as_millis(),
-                            target_frame_count
-                        );
-                    }
-                } else if frames_received <= 3 || frames_received % 100 == 0 {
-                    eprintln!(
-                        "[recording][video] skipped early frame received={} written={} elapsed_ms={} target={}",
-                        frames_received,
-                        frames_written,
-                        elapsed.as_millis(),
-                        target_frame_count
-                    );
                 }
                 last_pixels = Some(pixels);
             }
@@ -161,31 +132,19 @@ pub(super) fn encode_video(
                         write_video_pixels(&mut child, last_pixels)?;
                         frames_written += 1;
                     }
-                    eprintln!(
-                        "[recording][video] padded to end frames={} received={} elapsed_ms={} target={}",
-                        frames_written,
-                        frames_received,
-                        elapsed.as_millis(),
-                        target_frame_count
-                    );
                 }
             }
         }
     }
 
-    let (audio_chunks, audio_bytes) = if let Some(audio) = audio.as_mut() {
-        eprintln!("[recording][audio] stopping system audio before video encoder flush");
+    let audio_bytes = if let Some(audio) = audio.as_mut() {
         stop_system_audio_capture(audio)?;
-        (
-            audio.chunks.load(Ordering::SeqCst),
-            audio.bytes.load(Ordering::SeqCst),
-        )
+        audio.bytes.load(Ordering::SeqCst)
     } else {
-        (0, 0)
+        0
     };
 
     if let Some(mut process) = child {
-        eprintln!("[recording][video] closing ffmpeg stdin and waiting for encoder flush");
         drop(process.stdin.take());
         let output = process
             .wait_with_output()
@@ -197,18 +156,11 @@ pub(super) fn encode_video(
             ));
         }
     }
-    eprintln!(
-        "[recording][video] silent video encoder finished path={} frames={} received={}",
-        silent_path.display(),
-        frames_written,
-        frames_received
-    );
 
     if let Some(audio) = audio {
         if audio_bytes > 0 {
             mux_video_with_pcm_audio(&ffmpeg_path, &silent_path, &audio.path, audio.spec, &path)?;
         } else {
-            eprintln!("[recording][audio] no audio bytes captured; using silent video");
             if silent_path != path {
                 fs::rename(&silent_path, &path).with_context(|| {
                     format!(
@@ -227,8 +179,6 @@ pub(super) fn encode_video(
 
     Ok(RecordingEncodeResult {
         frame_count: frames_written,
-        audio_bytes,
-        audio_chunks,
     })
 }
 
@@ -254,21 +204,10 @@ fn start_system_audio_capture(base_path: &Path) -> anyhow::Result<AudioCaptureCo
         .with_context(|| format!("failed to create audio temp file {}", audio_path.display()))?;
     let writer = Arc::new(Mutex::new(BufWriter::new(file)));
     let bytes = Arc::new(AtomicU64::new(0));
-    let chunks = Arc::new(AtomicU64::new(0));
     let callback_writer = Arc::clone(&writer);
     let callback_bytes = Arc::clone(&bytes);
-    let callback_chunks = Arc::clone(&chunks);
     let stream = SystemAudioCaptureService.open_system_output_stream(Box::new(move |chunk| {
-        let next_chunk = callback_chunks.fetch_add(1, Ordering::SeqCst) + 1;
         callback_bytes.fetch_add(chunk.data.len() as u64, Ordering::SeqCst);
-        if next_chunk <= 3 || next_chunk % 100 == 0 {
-            eprintln!(
-                "[recording][audio] pipeline chunk={} bytes={} frames={}",
-                next_chunk,
-                chunk.data.len(),
-                chunk.frames
-            );
-        }
         if let Ok(mut writer) = callback_writer.lock() {
             if let Err(error) = writer.write_all(&chunk.data) {
                 eprintln!("[recording][audio] failed to write pcm chunk: {error}");
@@ -276,20 +215,12 @@ fn start_system_audio_capture(base_path: &Path) -> anyhow::Result<AudioCaptureCo
         }
     }))?;
     let spec = stream.spec();
-    eprintln!(
-        "[recording][audio] system audio capture started path={} sample_rate={} channels={} format={:?}",
-        audio_path.display(),
-        spec.sample_rate,
-        spec.channels,
-        spec.sample_format
-    );
     Ok(AudioCaptureContext {
         stream: Some(stream),
         writer,
         path: audio_path,
         spec,
         bytes,
-        chunks,
     })
 }
 
@@ -300,11 +231,6 @@ fn stop_system_audio_capture(audio: &mut AudioCaptureContext) -> anyhow::Result<
     if let Ok(mut writer) = audio.writer.lock() {
         writer.flush().context("failed to flush audio pcm file")?;
     }
-    eprintln!(
-        "[recording][audio] system audio capture stopped chunks={} bytes={}",
-        audio.chunks.load(Ordering::SeqCst),
-        audio.bytes.load(Ordering::SeqCst)
-    );
     Ok(())
 }
 
@@ -319,15 +245,6 @@ fn mux_video_with_pcm_audio(
         SystemAudioSampleFormat::F32Le => "f32le",
         SystemAudioSampleFormat::S16Le => "s16le",
     };
-    eprintln!(
-        "[recording][mux] mux start video={} audio={} output={} format={} sample_rate={} channels={}",
-        video_path.display(),
-        audio_path.display(),
-        output_path.display(),
-        sample_format,
-        audio_spec.sample_rate,
-        audio_spec.channels
-    );
     let mut command = Command::new(ffmpeg_path);
     hide_command_window(&mut command);
     let output = command
@@ -360,10 +277,6 @@ fn mux_video_with_pcm_audio(
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    eprintln!(
-        "[recording][mux] mux complete output={}",
-        output_path.display()
-    );
     Ok(())
 }
 
@@ -415,10 +328,10 @@ fn spawn_ffmpeg_encoder(
         .context("failed to start ffmpeg")
 }
 
-fn hide_command_window(command: &mut Command) {
+fn hide_command_window(_command: &mut Command) {
     #[cfg(target_os = "windows")]
     {
-        command.creation_flags(CREATE_NO_WINDOW);
+        _command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 

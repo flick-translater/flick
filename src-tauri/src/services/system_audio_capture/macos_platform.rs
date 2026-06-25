@@ -28,7 +28,6 @@ impl LiveSystemAudioStreamHandle for MacosSystemAudioStreamHandle {}
 
 impl Drop for MacosSystemAudioStreamHandle {
     fn drop(&mut self) {
-        eprintln!("[recording][audio][macos] stopping ScreenCaptureKit audio stream");
         if let Some(handler_id) = self.handler_id.take() {
             let _ = self
                 .stream
@@ -42,8 +41,6 @@ impl Drop for MacosSystemAudioStreamHandle {
 
 struct SystemAudioHandler {
     on_audio: Mutex<Box<dyn FnMut(SystemAudioChunk) + Send>>,
-    callback_count: Mutex<u64>,
-    byte_count: Mutex<u64>,
 }
 
 impl SCStreamOutputTrait for SystemAudioHandler {
@@ -65,23 +62,6 @@ impl SCStreamOutputTrait for SystemAudioHandler {
         let frames = (data.len() / (usize::from(AUDIO_CHANNELS) * std::mem::size_of::<f32>()))
             .try_into()
             .unwrap_or(0);
-        if let Ok(mut callbacks) = self.callback_count.lock() {
-            *callbacks += 1;
-            if *callbacks <= 3 || *callbacks % 100 == 0 {
-                eprintln!(
-                    "[recording][audio][macos] callback={} buffers={} bytes={} frames={} sample_num={}",
-                    *callbacks,
-                    audio_buffers.num_buffers(),
-                    data.len(),
-                    frames,
-                    sample.num_samples()
-                );
-            }
-        }
-        if let Ok(mut bytes) = self.byte_count.lock() {
-            *bytes += data.len() as u64;
-        }
-
         if let Ok(mut on_audio) = self.on_audio.lock() {
             (on_audio)(SystemAudioChunk { data, frames });
         }
@@ -133,7 +113,6 @@ pub fn capabilities() -> SystemAudioCaptureCapabilities {
 pub fn open_system_output_stream(
     on_audio: Box<dyn FnMut(SystemAudioChunk) + Send>,
 ) -> anyhow::Result<(Box<dyn LiveSystemAudioStreamHandle>, SystemAudioSpec)> {
-    eprintln!("[recording][audio][macos] opening ScreenCaptureKit system audio stream");
     let content = SCShareableContent::get()
         .map_err(|error| anyhow!("failed to get shareable content: {error}"))?;
     let display = content
@@ -157,8 +136,6 @@ pub fn open_system_output_stream(
 
     let handler = SystemAudioHandler {
         on_audio: Mutex::new(on_audio),
-        callback_count: Mutex::new(0),
-        byte_count: Mutex::new(0),
     };
     let output_queue = DispatchQueue::new(
         "io.github.flick-translater.flick.recording.system-audio",
@@ -171,10 +148,6 @@ pub fn open_system_output_stream(
     stream
         .start_capture()
         .map_err(|error| anyhow!("failed to start ScreenCaptureKit audio stream: {error}"))?;
-    eprintln!(
-        "[recording][audio][macos] audio stream started sample_rate={} channels={}",
-        AUDIO_SAMPLE_RATE, AUDIO_CHANNELS
-    );
 
     Ok((
         Box::new(MacosSystemAudioStreamHandle {

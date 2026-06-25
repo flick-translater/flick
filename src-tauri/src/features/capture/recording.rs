@@ -4,8 +4,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{self, SyncSender, TrySendError},
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
     },
     thread,
     time::{Duration, Instant},
@@ -120,15 +120,6 @@ pub(super) struct RecordingEncoderOptions {
 
 pub(super) struct RecordingEncodeResult {
     pub(super) frame_count: u32,
-    pub(super) audio_bytes: u64,
-    pub(super) audio_chunks: u64,
-}
-
-struct RecordingCaptureMetrics {
-    accepted_frames: Arc<AtomicU64>,
-    throttled_frames: Arc<AtomicU64>,
-    queue_full_drops: Arc<AtomicU64>,
-    disconnected_drops: Arc<AtomicU64>,
 }
 
 struct RecordingSession {
@@ -140,7 +131,6 @@ struct RecordingSession {
     output_paths: RecordingOutputPaths,
     format: RecordingFormat,
     started_at: Instant,
-    metrics: RecordingCaptureMetrics,
     width: u32,
     height: u32,
 }
@@ -181,14 +171,6 @@ pub fn start_recording(
     let output_paths = recording_output_paths(&output_dir, format);
     let (sender, receiver) = mpsc::sync_channel(RECORDING_QUEUE_CAPACITY);
     let encoder_options = recording_encoder_options(&state, profile)?;
-    eprintln!(
-        "[recording] start session={} format={:?} audio={:?} fps={} output={}",
-        session_id,
-        profile.format,
-        profile.audio,
-        encoder_options.fps,
-        output_paths.final_path.display()
-    );
     let frame_interval = recording_frame_interval(encoder_options.fps);
     let worker = start_recording_encoder(
         format,
@@ -206,14 +188,6 @@ pub fn start_recording(
     let stream_started_at = started_at;
     let next_frame_due = Arc::new(Mutex::new(Instant::now()));
     let stream_next_frame_due = Arc::clone(&next_frame_due);
-    let accepted_frames = Arc::new(AtomicU64::new(0));
-    let throttled_frames = Arc::new(AtomicU64::new(0));
-    let queue_full_drops = Arc::new(AtomicU64::new(0));
-    let disconnected_drops = Arc::new(AtomicU64::new(0));
-    let stream_accepted_frames = Arc::clone(&accepted_frames);
-    let stream_throttled_frames = Arc::clone(&throttled_frames);
-    let stream_queue_full_drops = Arc::clone(&queue_full_drops);
-    let stream_disconnected_drops = Arc::clone(&disconnected_drops);
     let on_frame = Box::new(move |frame: ImageBuffer<Rgba<u8>, Vec<u8>>| {
         if stream_stopped.load(Ordering::SeqCst) || stream_paused.load(Ordering::SeqCst) {
             return;
@@ -223,49 +197,16 @@ pub fn start_recording(
             return;
         };
         if now < *next_frame_due {
-            let skipped = stream_throttled_frames.fetch_add(1, Ordering::SeqCst) + 1;
-            if skipped <= 3 || skipped % 100 == 0 {
-                eprintln!("[recording][capture] throttled frames={skipped}");
-            }
             return;
         }
         while *next_frame_due <= now {
             *next_frame_due += frame_interval;
         }
         let elapsed = now.duration_since(stream_started_at);
-        match stream_sender.try_send(RecordingMessage::Frame {
+        let _ = stream_sender.try_send(RecordingMessage::Frame {
             image: frame,
             elapsed,
-        }) {
-            Ok(()) => {
-                let accepted = stream_accepted_frames.fetch_add(1, Ordering::SeqCst) + 1;
-                if accepted <= 3 || accepted % 100 == 0 {
-                    eprintln!(
-                        "[recording][capture] accepted frames={} elapsed_ms={}",
-                        accepted,
-                        elapsed.as_millis()
-                    );
-                }
-            }
-            Err(TrySendError::Full(_)) => {
-                let dropped = stream_queue_full_drops.fetch_add(1, Ordering::SeqCst) + 1;
-                eprintln!(
-                    "[recording][capture] dropped queue_full={} elapsed_ms={}",
-                    dropped,
-                    elapsed.as_millis()
-                );
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                let dropped = stream_disconnected_drops.fetch_add(1, Ordering::SeqCst) + 1;
-                if dropped <= 3 || dropped % 100 == 0 {
-                    eprintln!(
-                        "[recording][capture] dropped disconnected={} elapsed_ms={}",
-                        dropped,
-                        elapsed.as_millis()
-                    );
-                }
-            }
-        }
+        });
     });
 
     prepare_recording_capture_visibility(&app, &session_id);
@@ -320,12 +261,6 @@ pub fn start_recording(
             output_paths,
             format,
             started_at,
-            metrics: RecordingCaptureMetrics {
-                accepted_frames,
-                throttled_frames,
-                queue_full_drops,
-                disconnected_drops,
-            },
             width: selection.width,
             height: selection.height,
         },
@@ -391,18 +326,6 @@ pub fn finish_recording(
         let _ = fs::remove_file(&session.output_paths.writing_path);
         return Err(FlickError::Message("no frames were recorded".into()));
     }
-    eprintln!(
-        "[recording] encoder finished format={:?} frames={} capture_accepted={} capture_throttled={} capture_queue_full_drops={} capture_disconnected_drops={} audio_chunks={} audio_bytes={} writing={}",
-        session.format,
-        result.frame_count,
-        session.metrics.accepted_frames.load(Ordering::SeqCst),
-        session.metrics.throttled_frames.load(Ordering::SeqCst),
-        session.metrics.queue_full_drops.load(Ordering::SeqCst),
-        session.metrics.disconnected_drops.load(Ordering::SeqCst),
-        result.audio_chunks,
-        result.audio_bytes,
-        session.output_paths.writing_path.display()
-    );
 
     fs::rename(
         &session.output_paths.writing_path,

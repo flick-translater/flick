@@ -64,7 +64,6 @@ pub fn capabilities() -> SystemAudioCaptureCapabilities {
 pub fn open_system_output_stream(
     on_audio: Box<dyn FnMut(SystemAudioChunk) + Send>,
 ) -> anyhow::Result<(Box<dyn LiveSystemAudioStreamHandle>, SystemAudioSpec)> {
-    eprintln!("[recording][audio][windows] opening WASAPI loopback stream");
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop);
     let (spec_sender, spec_receiver) = mpsc::sync_channel(1);
@@ -165,10 +164,6 @@ unsafe fn open_wasapi_loopback_inner(co_uninitialize: bool) -> anyhow::Result<Wa
     let capture: IAudioCaptureClient =
         unsafe { client.GetService() }.context("failed to get IAudioCaptureClient")?;
     unsafe { client.Start() }.context("failed to start WASAPI loopback client")?;
-    eprintln!(
-        "[recording][audio][windows] audio stream started sample_rate={} channels={} format={:?}",
-        spec.sample_rate, spec.channels, spec.sample_format
-    );
 
     Ok(WasapiLoopback {
         client,
@@ -207,7 +202,6 @@ fn run_capture_loop(
     stop: Arc<AtomicBool>,
     mut on_audio: Box<dyn FnMut(SystemAudioChunk) + Send>,
 ) -> anyhow::Result<()> {
-    let mut callback_count = 0u64;
     while !stop.load(Ordering::SeqCst) {
         let mut packet_size = unsafe { audio.capture.GetNextPacketSize() }
             .context("failed to get WASAPI packet size")?;
@@ -239,15 +233,6 @@ fn run_capture_loop(
                 .context("failed to release WASAPI packet")?;
 
             if !data.is_empty() {
-                callback_count += 1;
-                if callback_count <= 3 || callback_count % 100 == 0 {
-                    eprintln!(
-                        "[recording][audio][windows] callback={} bytes={} frames={}",
-                        callback_count,
-                        data.len(),
-                        frames
-                    );
-                }
                 on_audio(SystemAudioChunk { data, frames });
             }
 

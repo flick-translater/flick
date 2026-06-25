@@ -74,11 +74,7 @@ pub(super) fn encode_gif(
         }
     }
 
-    Ok(RecordingEncodeResult {
-        frame_count,
-        audio_bytes: 0,
-        audio_chunks: 0,
-    })
+    Ok(RecordingEncodeResult { frame_count })
 }
 
 fn scaled_gif_size(width: u32, height: u32, max_width: u32, max_height: u32) -> (u32, u32) {
