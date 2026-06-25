@@ -79,6 +79,7 @@ export default {
       },
       actions: {
         color: "颜色",
+        pinToDesktop: "钉到桌面",
         longScreenshot: "长截图",
         recordGif: "录制",
         recordingFormatGif: "GIF",

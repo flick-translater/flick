@@ -1,9 +1,11 @@
 //! Window creation and visibility helpers.
 
+use base64::{Engine as _, engine::general_purpose};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder,
 };
+use uuid::Uuid;
 
 use crate::models::SelectionRect;
 
@@ -14,6 +16,7 @@ const TRANSLATE_WINDOW_LABEL: &str = "translate";
 const SCREENSHOT_EDITOR_WINDOW_PREFIX: &str = "screenshot-editor";
 const PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL: &str = "screenshot-editor-preload";
 const GIF_RECORDING_TOOLBAR_WINDOW_PREFIX: &str = "gif-recording-toolbar";
+const PINNED_IMAGE_WINDOW_PREFIX: &str = "pinned-image";
 const RECORDING_TOOLBAR_WINDOW_WIDTH: f64 = 360.0;
 const RECORDING_TOOLBAR_WINDOW_HEIGHT: f64 = 88.0;
 
@@ -446,6 +449,67 @@ pub fn close_gif_recording_toolbar_window(app: &AppHandle, session_id: &str) {
         let _ = window.hide();
         let _ = window.close();
     }
+}
+
+pub fn show_pinned_image_window(
+    app: &AppHandle,
+    image_path: &str,
+    image_width: u32,
+    image_height: u32,
+) -> Result<WebviewWindow, crate::error::FlickError> {
+    if !platform::pinned_image_supported() {
+        return Err(crate::error::FlickError::Message(
+            "pinned images are not supported on this platform/session".into(),
+        ));
+    }
+
+    let (monitor_x, monitor_y, monitor_width, monitor_height) = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| {
+            let scale = monitor.scale_factor();
+            (
+                monitor.position().x as f64 / scale,
+                monitor.position().y as f64 / scale,
+                monitor.size().width as f64 / scale,
+                monitor.size().height as f64 / scale,
+            )
+        })
+        .unwrap_or((0.0, 0.0, 1280.0, 800.0));
+    let image_width = f64::from(image_width.max(1));
+    let image_height = f64::from(image_height.max(1));
+    let max_width = (monitor_width * 0.72).max(160.0);
+    let max_height = (monitor_height * 0.72).max(120.0);
+    let scale = (max_width / image_width)
+        .min(max_height / image_height)
+        .min(1.0);
+    let window_width = (image_width * scale).max(80.0);
+    let window_height = (image_height * scale).max(60.0);
+    let window_x = monitor_x + (monitor_width - window_width) / 2.0;
+    let window_y = monitor_y + (monitor_height - window_height) / 2.0;
+    let encoded_path = general_purpose::URL_SAFE_NO_PAD.encode(image_path.as_bytes());
+    let label = format!("{PINNED_IMAGE_WINDOW_PREFIX}-{}", Uuid::new_v4());
+    let url = format!("pin-image.html?path={encoded_path}");
+
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+        .title("Flick Pinned Image")
+        .devtools(false)
+        .inner_size(window_width, window_height)
+        .position(window_x, window_y)
+        .resizable(false)
+        .visible(false)
+        .focused(false)
+        .always_on_top(true)
+        .accept_first_mouse(true)
+        .decorations(false)
+        .transparent(true)
+        .shadow(true)
+        .build()?;
+    platform::configure_built_window(&window);
+    platform::configure_pinned_image_window(&window);
+    let _ = window.show();
+    Ok(window)
 }
 
 fn query_f64(url: &tauri::Url, key: &str) -> Option<f64> {

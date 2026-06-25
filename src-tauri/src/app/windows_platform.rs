@@ -154,6 +154,12 @@ pub fn configure_screenshot_editor_window(window: &WebviewWindow) {
     }
 }
 
+pub fn configure_pinned_image_window(window: &WebviewWindow) {
+    if let Err(error) = disable_window_transitions(window) {
+        eprintln!("failed to disable pinned image window transitions: {error}");
+    }
+}
+
 pub fn configure_screenshot_editor_window_shape(window: &WebviewWindow, regions: &[SelectionRect]) {
     let Ok(hwnd) = window.hwnd() else {
         return;

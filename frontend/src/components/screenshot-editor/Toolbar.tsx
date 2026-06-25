@@ -11,6 +11,7 @@ import {
   Circle,
   Edit3,
   Pause,
+  Pin,
   Play,
   Redo2,
   Smile,
@@ -81,6 +82,8 @@ type ScreenshotEditorToolbarProps = {
   clearAnnotations: () => void;
   onLongCapture: () => void;
   onGifRecording: () => void;
+  pinToDesktop: boolean;
+  onPinToDesktopChange: (pinned: boolean) => void;
   onCancel: () => void;
   onConfirm: () => void;
   isSaving: boolean;
@@ -130,6 +133,8 @@ export function ScreenshotEditorToolbar({
   clearAnnotations,
   onLongCapture,
   onGifRecording,
+  pinToDesktop,
+  onPinToDesktopChange,
   onCancel,
   onConfirm,
   isSaving,
@@ -392,6 +397,22 @@ export function ScreenshotEditorToolbar({
       <div className={toolbarSeparatorClass} />
 
       <div className="flex items-center gap-1">
+        <TooltipButton label={t('screenshotEditor.actions.pinToDesktop')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
+          <button
+            type="button"
+            aria-label={t('screenshotEditor.actions.pinToDesktop')}
+            aria-pressed={pinToDesktop}
+            disabled={isSaving || !imageLoaded}
+            onClick={() => onPinToDesktopChange(!pinToDesktop)}
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              pinToDesktop
+                ? 'border-primary bg-primary text-white'
+                : 'border-outline-variant/30 bg-surface-container text-on-surface hover:bg-surface-container-high'
+            }`}
+          >
+            <Pin size={18} />
+          </button>
+        </TooltipButton>
         <TooltipButton label={t('screenshotEditor.actions.undo')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
           <button type="button" aria-label={t('screenshotEditor.actions.undo')} onClick={undo} disabled={!canUndo} className={toolbarButtonClass}>
             <Undo2 size={18} />
@@ -558,6 +579,8 @@ type LongScreenshotToolbarProps = {
   onEdit: () => void;
   onScrollStart: (direction: 'up' | 'down') => void;
   onScrollStop: () => void;
+  pinToDesktop: boolean;
+  onPinToDesktopChange: (pinned: boolean) => void;
   onCancel: () => void;
   onConfirm: () => void;
   isSaving: boolean;
@@ -572,6 +595,8 @@ export function LongScreenshotToolbar({
   onEdit,
   onScrollStart,
   onScrollStop,
+  pinToDesktop,
+  onPinToDesktopChange,
   onCancel,
   onConfirm,
   isSaving,
@@ -635,6 +660,24 @@ export function LongScreenshotToolbar({
           <ChevronDown size={18} />
         </button>
       </TooltipButton>
+      <div className={toolbarSeparatorClass} />
+      <TooltipButton label={t('screenshotEditor.actions.pinToDesktop')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
+        <button
+          type="button"
+          aria-label={t('screenshotEditor.actions.pinToDesktop')}
+          aria-pressed={pinToDesktop}
+          disabled={isSaving || !imageLoaded}
+          onClick={() => onPinToDesktopChange(!pinToDesktop)}
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            pinToDesktop
+              ? 'border-primary bg-primary text-white'
+              : 'border-outline-variant/30 bg-surface-container text-on-surface hover:bg-surface-container-high'
+          }`}
+        >
+          <Pin size={18} />
+        </button>
+      </TooltipButton>
+      <div className={toolbarSeparatorClass} />
       <TooltipButton label={t('screenshotEditor.actions.cancel')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"

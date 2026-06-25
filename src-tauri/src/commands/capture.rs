@@ -108,8 +108,9 @@ pub fn confirm_regular_capture_edit(
     state: State<'_, AppState>,
     session_id: String,
     png_base64: String,
+    pin_to_desktop: bool,
 ) -> Result<CaptureRecord, FlickError> {
-    capture::confirm_regular_capture_edit(app, state, session_id, png_base64)
+    capture::confirm_regular_capture_edit(app, state, session_id, png_base64, pin_to_desktop)
 }
 
 #[tauri::command]
@@ -182,8 +183,9 @@ pub fn confirm_long_capture(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
+    pin_to_desktop: bool,
 ) -> Result<CaptureRecord, FlickError> {
-    capture::confirm_long_capture(app, state, session_id)
+    capture::confirm_long_capture(app, state, session_id, pin_to_desktop)
 }
 
 #[tauri::command]

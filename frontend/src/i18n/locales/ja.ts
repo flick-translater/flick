@@ -79,6 +79,7 @@ export default {
       },
       actions: {
         color: "色",
+        pinToDesktop: "デスクトップに固定",
         longScreenshot: "長いスクリーンショット",
         recordGif: "録画",
         recordingFormatGif: "GIF",

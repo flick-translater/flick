@@ -135,6 +135,19 @@ pub fn configure_screenshot_editor_window(window: &tauri::WebviewWindow) {
         .ok();
 }
 
+pub fn configure_pinned_image_window(window: &tauri::WebviewWindow) {
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    let ns_window = ns_window as usize;
+    window
+        .run_on_main_thread(move || {
+            let window = unsafe { &*(ns_window as *mut std::ffi::c_void).cast::<NSWindow>() };
+            window.orderFrontRegardless();
+        })
+        .ok();
+}
+
 pub fn refresh_previous_frontmost_app(app: &AppHandle) {
     remember_previous_frontmost_app(app);
 }

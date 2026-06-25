@@ -902,15 +902,16 @@ pub fn save_long_capture(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<CaptureRecord, FlickError> {
-    finalize_long_capture(app, state, session_id, false)
+    finalize_long_capture(app, state, session_id, false, false)
 }
 
 pub fn confirm_long_capture(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
+    pin_to_desktop: bool,
 ) -> Result<CaptureRecord, FlickError> {
-    finalize_long_capture(app, state, session_id, true)
+    finalize_long_capture(app, state, session_id, true, pin_to_desktop)
 }
 
 pub fn cancel_long_capture(
@@ -1050,6 +1051,7 @@ fn finalize_long_capture(
     state: State<'_, AppState>,
     session_id: String,
     copy_to_clipboard: bool,
+    pin_to_desktop: bool,
 ) -> Result<CaptureRecord, FlickError> {
     long_log(format!(
         "finalize: enter session={session_id} copy_to_clipboard={copy_to_clipboard}"
@@ -1123,6 +1125,16 @@ fn finalize_long_capture(
     history_guard.truncate(max_screenshots as usize);
     drop(history_guard);
     crate::app::windows::emit_capture_status(&app, "capture-finished", &record);
+    if pin_to_desktop {
+        if let Err(error) = crate::app::windows::show_pinned_image_window(
+            &app,
+            &record.path,
+            image.width(),
+            image.height(),
+        ) {
+            eprintln!("failed to show pinned image window: {error}");
+        }
+    }
     long_log("finalize: complete");
     Ok(record)
 }

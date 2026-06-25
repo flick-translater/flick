@@ -79,6 +79,7 @@ export default {
       },
       actions: {
         color: "Color",
+        pinToDesktop: "Pin to desktop",
         longScreenshot: "Long screenshot",
         recordGif: "Record",
         recordingFormatGif: "GIF",

@@ -18,7 +18,8 @@ use crate::{
         AppState, CaptureIntent,
         windows::{
             close_screenshot_editor_window, emit_capture_status, preload_screenshot_editor_window,
-            selection_spans_multiple_monitors, show_screenshot_editor_window,
+            selection_spans_multiple_monitors, show_pinned_image_window,
+            show_screenshot_editor_window,
         },
     },
     error::FlickError,
@@ -348,6 +349,7 @@ pub fn confirm_regular_capture_edit(
     state: State<'_, AppState>,
     session_id: String,
     png_base64: String,
+    pin_to_desktop: bool,
 ) -> Result<CaptureRecord, FlickError> {
     capture_editor_log("confirm_regular_capture_edit: start");
     platform::finalize_capture_session(&app, &state, true);
@@ -402,9 +404,19 @@ pub fn confirm_regular_capture_edit(
                 &state,
                 &screenshot_dir,
                 &image,
-                record,
+                record.clone(),
                 max_screenshots,
             )?;
+            if pin_to_desktop {
+                if let Err(error) = show_pinned_image_window(
+                    &app_for_save,
+                    &record.path,
+                    image.width(),
+                    image.height(),
+                ) {
+                    eprintln!("failed to show pinned image window: {error}");
+                }
+            }
             Ok(())
         };
 

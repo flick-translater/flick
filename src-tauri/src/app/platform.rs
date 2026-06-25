@@ -193,6 +193,34 @@ pub fn configure_screenshot_editor_window(window: &WebviewWindow) {
     let _ = window;
 }
 
+pub fn configure_pinned_image_window(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    macos_platform::configure_pinned_image_window(window);
+
+    #[cfg(target_os = "windows")]
+    windows_platform::configure_pinned_image_window(window);
+
+    #[cfg(target_os = "linux")]
+    let _ = window;
+}
+
+pub fn pinned_image_supported() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        true
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        true
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_platform::translate_window_pinning_supported()
+    }
+}
+
 pub fn configure_screenshot_editor_window_shape(
     window: &WebviewWindow,
     regions: &[crate::models::SelectionRect],
