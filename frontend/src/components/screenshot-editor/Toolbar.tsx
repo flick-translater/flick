@@ -246,39 +246,27 @@ export function ScreenshotEditorToolbar({
                     ))}
                   </div>
                   <div className="mt-2 flex items-center justify-between border-t border-outline-variant/30 pt-2">
-                    <TooltipButton
-                      label={t('screenshotEditor.actions.previous')}
-                      positionClass="bottom-full mb-2"
-                      useNativeTooltip={useNativeTooltip}
+                    <button
+                      type="button"
+                      aria-label={t('screenshotEditor.actions.previous')}
+                      disabled={emojiPage === 0}
+                      onClick={() => setEmojiPage((page) => Math.max(page - 1, 0))}
+                      className={toolbarButtonClass}
                     >
-                      <button
-                        type="button"
-                        aria-label={t('screenshotEditor.actions.previous')}
-                        disabled={emojiPage === 0}
-                        onClick={() => setEmojiPage((page) => Math.max(page - 1, 0))}
-                        className={toolbarButtonClass}
-                      >
-                        <ChevronLeft size={16} />
-                      </button>
-                    </TooltipButton>
+                      <ChevronLeft size={16} />
+                    </button>
                     <div className="px-2 text-xs font-semibold text-on-surface-variant">
                       {emojiPage + 1}/{emojiPageCount} · {emojiCount}
                     </div>
-                    <TooltipButton
-                      label={t('screenshotEditor.actions.next')}
-                      positionClass="bottom-full mb-2"
-                      useNativeTooltip={useNativeTooltip}
+                    <button
+                      type="button"
+                      aria-label={t('screenshotEditor.actions.next')}
+                      disabled={emojiPage >= emojiPageCount - 1}
+                      onClick={() => setEmojiPage((page) => Math.min(page + 1, emojiPageCount - 1))}
+                      className={toolbarButtonClass}
                     >
-                      <button
-                        type="button"
-                        aria-label={t('screenshotEditor.actions.next')}
-                        disabled={emojiPage >= emojiPageCount - 1}
-                        onClick={() => setEmojiPage((page) => Math.min(page + 1, emojiPageCount - 1))}
-                        className={toolbarButtonClass}
-                      >
-                        <ChevronRight size={16} />
-                      </button>
-                    </TooltipButton>
+                      <ChevronRight size={16} />
+                    </button>
                   </div>
                 </div>
               )}
