@@ -411,12 +411,14 @@ pub fn show_gif_recording_toolbar_window(
     } else {
         (80.0, 80.0)
     };
+    let window_x = (x - 50.0).max(0.0);
+    let window_y = (y - 40.0).max(0.0);
     let url = format!("recording-toolbar.html?session_id={session_id}");
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title("Flick GIF Recording")
         .devtools(false)
-        .inner_size(220.0, 48.0)
-        .position(x, y)
+        .inner_size(320.0, 88.0)
+        .position(window_x, window_y)
         .resizable(false)
         .visible(false)
         .focused(false)
