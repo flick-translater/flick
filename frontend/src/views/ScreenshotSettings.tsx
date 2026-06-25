@@ -6,6 +6,7 @@ import Toggle from '../components/Toggle';
 import { AppSettings } from '../types';
 
 type GifSize = '540p' | '720p';
+type GifFps = 6 | 8 | 10;
 
 export default function ScreenshotSettings() {
   const { t } = useTranslation();
@@ -13,6 +14,7 @@ export default function ScreenshotSettings() {
   const [error, setError] = useState('');
   const isLinux = useMemo(() => /Linux/i.test(navigator.platform), []);
   const gifSize = normalizeGifSize(settings?.gif_recording_size);
+  const gifFps = normalizeGifFps(settings?.gif_recording_fps);
 
   useEffect(() => {
     void invoke<AppSettings>('get_app_settings')
@@ -34,6 +36,19 @@ export default function ScreenshotSettings() {
       })
       .catch((updateError: unknown) => {
         setSettings((current) => current ? { ...current, gif_recording_size: gifSize } : current);
+        setError(String(updateError));
+      });
+  }
+
+  function updateGifFps(fps: GifFps) {
+    setSettings((current) => current ? { ...current, gif_recording_fps: fps } : current);
+    void invoke<AppSettings>('update_gif_recording_fps', { fps })
+      .then((updated) => {
+        setSettings(updated);
+        setError('');
+      })
+      .catch((updateError: unknown) => {
+        setSettings((current) => current ? { ...current, gif_recording_fps: gifFps } : current);
         setError(String(updateError));
       });
   }
@@ -91,26 +106,51 @@ export default function ScreenshotSettings() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-3 rounded-lg bg-surface-container-low p-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="text-sm font-bold text-on-surface">{t('screenshotSettings.gifSize')}</h3>
-              <p className="mt-0.5 text-xs leading-relaxed text-on-surface-variant">{t('screenshotSettings.gifSizeDesc')}</p>
+          <div className="space-y-3 rounded-lg bg-surface-container-low p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-on-surface">{t('screenshotSettings.gifSize')}</h3>
+                <p className="mt-0.5 text-xs leading-relaxed text-on-surface-variant">{t('screenshotSettings.gifSizeDesc')}</p>
+              </div>
+              <div className="inline-flex shrink-0 rounded-lg border border-outline-variant/30 bg-surface-container p-1">
+                {(['540p', '720p'] as GifSize[]).map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => updateGifSize(size)}
+                    className={`min-w-20 rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
+                      gifSize === size
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="inline-flex shrink-0 rounded-lg border border-outline-variant/30 bg-surface-container p-1">
-              {(['540p', '720p'] as GifSize[]).map((size) => (
-                <button
-                  key={size}
-                  type="button"
-                  onClick={() => updateGifSize(size)}
-                  className={`min-w-20 rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
-                    gifSize === size
-                      ? 'bg-primary text-white shadow-sm'
-                      : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-                  }`}
-                >
-                  {size}
-                </button>
-              ))}
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-on-surface">{t('screenshotSettings.gifFps')}</h3>
+                <p className="mt-0.5 text-xs leading-relaxed text-on-surface-variant">{t('screenshotSettings.gifFpsDesc')}</p>
+              </div>
+              <div className="inline-flex shrink-0 rounded-lg border border-outline-variant/30 bg-surface-container p-1">
+                {([6, 8, 10] as GifFps[]).map((fps) => (
+                  <button
+                    key={fps}
+                    type="button"
+                    onClick={() => updateGifFps(fps)}
+                    className={`min-w-20 rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
+                      gifFps === fps
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                    }`}
+                  >
+                    {fps} FPS
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </section>
@@ -123,4 +163,8 @@ export default function ScreenshotSettings() {
 
 function normalizeGifSize(value?: string): GifSize {
   return value === '540p' ? '540p' : '720p';
+}
+
+function normalizeGifFps(value?: number): GifFps {
+  return value === 8 || value === 10 ? value : 6;
 }

@@ -450,7 +450,7 @@ export function ScreenshotEditorToolbar({
   );
 }
 
-type GifRecordingToolbarProps = {
+type RecordingControlsToolbarProps = {
   toolbarRef: React.RefObject<HTMLDivElement | null>;
   toolbarPosition: { left: number; top: number };
   editorVisible: boolean;
@@ -462,7 +462,7 @@ type GifRecordingToolbarProps = {
   useNativeTooltip?: boolean;
 };
 
-export function GifRecordingToolbar({
+export function RecordingControlsToolbar({
   toolbarRef,
   toolbarPosition,
   editorVisible,
@@ -472,7 +472,7 @@ export function GifRecordingToolbar({
   onFinish,
   onCancel,
   useNativeTooltip = false,
-}: GifRecordingToolbarProps) {
+}: RecordingControlsToolbarProps) {
   const { t } = useTranslation();
   const isSaving = status === 'saving';
   const isRecording = status === 'recording';

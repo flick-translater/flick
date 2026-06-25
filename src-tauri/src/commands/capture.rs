@@ -191,13 +191,33 @@ pub fn start_gif_recording(
 }
 
 #[tauri::command]
+pub fn start_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    format: String,
+) -> Result<(), FlickError> {
+    capture::start_recording(app, state, session_id, format)
+}
+
+#[tauri::command]
 pub fn pause_gif_recording(session_id: String) -> Result<(), FlickError> {
     capture::pause_gif_recording(session_id)
 }
 
 #[tauri::command]
+pub fn pause_recording(session_id: String) -> Result<(), FlickError> {
+    capture::pause_recording(session_id)
+}
+
+#[tauri::command]
 pub fn resume_gif_recording(session_id: String) -> Result<(), FlickError> {
     capture::resume_gif_recording(session_id)
+}
+
+#[tauri::command]
+pub fn resume_recording(session_id: String) -> Result<(), FlickError> {
+    capture::resume_recording(session_id)
 }
 
 #[tauri::command]
@@ -210,8 +230,22 @@ pub fn finish_gif_recording(
 }
 
 #[tauri::command]
+pub fn finish_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<CaptureRecord, FlickError> {
+    capture::finish_recording(app, state, session_id)
+}
+
+#[tauri::command]
 pub fn cancel_gif_recording(app: AppHandle, session_id: String) -> Result<(), FlickError> {
     capture::cancel_gif_recording(app, session_id)
+}
+
+#[tauri::command]
+pub fn cancel_recording(app: AppHandle, session_id: String) -> Result<(), FlickError> {
+    capture::cancel_recording(app, session_id)
 }
 
 #[tauri::command]
@@ -224,6 +258,15 @@ pub fn set_gif_recording_window_shape(
 }
 
 #[tauri::command]
+pub fn set_recording_window_mode(
+    app: AppHandle,
+    session_id: String,
+    recording: bool,
+) -> Result<(), FlickError> {
+    capture::set_recording_window_mode(app, session_id, recording)
+}
+
+#[tauri::command]
 pub fn open_gif_recording_toolbar_window(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -233,8 +276,22 @@ pub fn open_gif_recording_toolbar_window(
 }
 
 #[tauri::command]
+pub fn open_recording_controls_window(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), FlickError> {
+    capture::open_recording_controls_window(app, state, session_id)
+}
+
+#[tauri::command]
 pub fn close_gif_recording_toolbar_window(app: AppHandle, session_id: String) {
     capture::close_gif_recording_toolbar_window(app, session_id);
+}
+
+#[tauri::command]
+pub fn close_recording_controls_window(app: AppHandle, session_id: String) {
+    capture::close_recording_controls_window(app, session_id);
 }
 
 #[tauri::command]

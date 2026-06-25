@@ -48,9 +48,11 @@ export default {
       screenshotEditorToolbar: "Screenshot Editor Toolbar",
       screenshotEditorToolbarDesc: "Shows the editor only after plain screenshots. Screenshot & Translate keeps the existing flow.",
       gifRecording: "GIF Recording",
-      gifRecordingDesc: "Control the output size and file size of recorded GIFs.",
+      gifRecordingDesc: "Control the output size, frame rate, and file size of recorded GIFs.",
       gifSize: "Maximum GIF Size",
-      gifSizeDesc: "Recordings larger than the selected size are scaled proportionally."
+      gifSizeDesc: "Recordings larger than the selected size are scaled proportionally.",
+      gifFps: "GIF Frame Rate",
+      gifFpsDesc: "Higher FPS makes motion smoother and increases file size."
     },
     screenshotEditor: {
       tools: {

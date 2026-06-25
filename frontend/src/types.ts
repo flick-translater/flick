@@ -33,6 +33,7 @@ export type AppSettings = {
   screenshot_editor_toolbar_enabled: boolean;
   screenshot_editor_color: string;
   gif_recording_size: '540p' | '720p' | string;
+  gif_recording_fps: 6 | 8 | 10 | number;
   ocr_auto_translate: boolean;
   ocr_target_language: string;
   selected_replace_target_language: string;

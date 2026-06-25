@@ -15,7 +15,7 @@ use std::{
 use anyhow::Context;
 use chrono::Utc;
 use image::{ImageBuffer, Rgba, imageops::FilterType};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::{
@@ -27,9 +27,7 @@ use crate::{
 
 use super::{history, platform};
 
-const RECORDING_FPS: u64 = 6;
-const RECORDING_FRAME_INTERVAL: Duration = Duration::from_millis(1000 / RECORDING_FPS);
-const RECORDING_GIF_DELAY_CS: u16 = (100 / RECORDING_FPS) as u16;
+const DEFAULT_RECORDING_FPS: u32 = 6;
 const RECORDING_QUEUE_CAPACITY: usize = 8;
 const RECORDING_540P_MAX_GIF_WIDTH: u32 = 960;
 const RECORDING_540P_MAX_GIF_HEIGHT: u32 = 540;
@@ -40,14 +38,48 @@ enum RecordingMessage {
     Frame(ImageBuffer<Rgba<u8>, Vec<u8>>),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecordingFormat {
+    Gif,
+}
+
+impl RecordingFormat {
+    fn parse(value: &str) -> Result<Self, FlickError> {
+        match value.trim().to_lowercase().as_str() {
+            "gif" => Ok(Self::Gif),
+            _ => Err(FlickError::Message("unsupported recording format".into())),
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Gif => "gif",
+        }
+    }
+}
+
+struct RecordingOutputPaths {
+    final_path: PathBuf,
+    writing_path: PathBuf,
+}
+
+struct RecordingEncoderOptions {
+    max_width: u32,
+    max_height: u32,
+    fps: u32,
+}
+
+struct RecordingEncodeResult {
+    frame_count: u32,
+}
+
 struct RecordingSession {
     stream: Option<LiveFrameStream>,
     sender: SyncSender<RecordingMessage>,
-    worker: Option<thread::JoinHandle<anyhow::Result<u32>>>,
+    worker: Option<thread::JoinHandle<anyhow::Result<RecordingEncodeResult>>>,
     paused: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
-    final_path: PathBuf,
-    writing_path: PathBuf,
+    output_paths: RecordingOutputPaths,
     width: u32,
     height: u32,
 }
@@ -63,6 +95,16 @@ pub fn start_gif_recording(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), FlickError> {
+    start_recording(app, state, session_id, "gif".into())
+}
+
+pub fn start_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    format: String,
+) -> Result<(), FlickError> {
+    let format = RecordingFormat::parse(&format)?;
     let selection = pending_selection(&state, &session_id)?;
     validate_recording_size(&selection)?;
     finalize_pending_overlay_for_recording(&app, &state, &session_id)?;
@@ -72,32 +114,23 @@ pub fn start_gif_recording(
         FlickError::Message(format!("failed to create screenshot dir: {error}"))
     })?;
 
-    let id = Uuid::new_v4().to_string();
-    let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
-    let final_path = screenshot_dir.join(format!("recording-{timestamp}-{id}.gif"));
-    let writing_path = screenshot_dir.join(format!("recording-{timestamp}-{id}.writing.gif"));
+    let output_paths = recording_output_paths(&screenshot_dir, format);
     let (sender, receiver) = mpsc::sync_channel(RECORDING_QUEUE_CAPACITY);
-    let worker_path = writing_path.clone();
-    let width = selection.width;
-    let height = selection.height;
-    let (max_gif_width, max_gif_height) = recording_size_limits(&state)?;
-    let worker = thread::spawn(move || {
-        encode_gif(
-            worker_path,
-            width,
-            height,
-            max_gif_width,
-            max_gif_height,
-            receiver,
-        )
-    });
+    let encoder_options = recording_encoder_options(&state, format)?;
+    let frame_interval = recording_frame_interval(encoder_options.fps);
+    let worker = start_recording_encoder(
+        format,
+        output_paths.writing_path.clone(),
+        encoder_options,
+        receiver,
+    );
 
     let paused = Arc::new(AtomicBool::new(false));
     let stopped = Arc::new(AtomicBool::new(false));
     let stream_sender = sender.clone();
     let stream_paused = Arc::clone(&paused);
     let stream_stopped = Arc::clone(&stopped);
-    let last_frame_at = Arc::new(Mutex::new(Instant::now() - RECORDING_FRAME_INTERVAL));
+    let last_frame_at = Arc::new(Mutex::new(Instant::now() - frame_interval));
     let stream_last_frame_at = Arc::clone(&last_frame_at);
     let on_frame = Box::new(move |frame: ImageBuffer<Rgba<u8>, Vec<u8>>| {
         if stream_stopped.load(Ordering::SeqCst) || stream_paused.load(Ordering::SeqCst) {
@@ -106,14 +139,14 @@ pub fn start_gif_recording(
         let Ok(mut last_frame_at) = stream_last_frame_at.lock() else {
             return;
         };
-        if last_frame_at.elapsed() < RECORDING_FRAME_INTERVAL {
+        if last_frame_at.elapsed() < frame_interval {
             return;
         }
         *last_frame_at = Instant::now();
         let _ = stream_sender.try_send(RecordingMessage::Frame(frame));
     });
 
-    prepare_recording_windows(&app, &session_id);
+    prepare_recording_capture_visibility(&app, &session_id);
     #[cfg(target_os = "windows")]
     {
         if let Some(frame) = capture_initial_recording_frame(&selection) {
@@ -128,8 +161,8 @@ pub fn start_gif_recording(
             stopped.store(true, Ordering::SeqCst);
             drop(sender);
             let _ = worker.join();
-            let _ = fs::remove_file(&writing_path);
-            cleanup_recording_windows(&app, &session_id);
+            let _ = fs::remove_file(&output_paths.writing_path);
+            cleanup_recording_capture_visibility(&app, &session_id);
             return Err(FlickError::Message(format!(
                 "failed to start screen recording: {error}"
             )));
@@ -144,8 +177,8 @@ pub fn start_gif_recording(
         drop(stream);
         drop(sender);
         let _ = worker.join();
-        let _ = fs::remove_file(&writing_path);
-        cleanup_recording_windows(&app, &session_id);
+        let _ = fs::remove_file(&output_paths.writing_path);
+        cleanup_recording_capture_visibility(&app, &session_id);
         return Err(FlickError::Message(
             "recording session already active".into(),
         ));
@@ -159,10 +192,9 @@ pub fn start_gif_recording(
             worker: Some(worker),
             paused,
             stopped,
-            final_path,
-            writing_path,
-            width,
-            height,
+            output_paths,
+            width: selection.width,
+            height: selection.height,
         },
     );
 
@@ -171,6 +203,10 @@ pub fn start_gif_recording(
 }
 
 pub fn pause_gif_recording(session_id: String) -> Result<(), FlickError> {
+    pause_recording(session_id)
+}
+
+pub fn pause_recording(session_id: String) -> Result<(), FlickError> {
     with_session(&session_id, |session| {
         session.paused.store(true, Ordering::SeqCst);
         Ok(())
@@ -178,6 +214,10 @@ pub fn pause_gif_recording(session_id: String) -> Result<(), FlickError> {
 }
 
 pub fn resume_gif_recording(session_id: String) -> Result<(), FlickError> {
+    resume_recording(session_id)
+}
+
+pub fn resume_recording(session_id: String) -> Result<(), FlickError> {
     with_session(&session_id, |session| {
         session.paused.store(false, Ordering::SeqCst);
         Ok(())
@@ -189,30 +229,42 @@ pub fn finish_gif_recording(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<CaptureRecord, FlickError> {
+    finish_recording(app, state, session_id)
+}
+
+pub fn finish_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<CaptureRecord, FlickError> {
     let mut session = remove_session(&session_id)?;
     session.stopped.store(true, Ordering::SeqCst);
     drop(session.stream.take());
     drop(session.sender);
-    cleanup_recording_windows(&app, &session_id);
+    cleanup_recording_capture_visibility(&app, &session_id);
 
-    let frame_count = session
+    let result = session
         .worker
         .take()
         .ok_or_else(|| FlickError::Message("recording encoder worker is missing".into()))?
         .join()
         .map_err(|_| FlickError::Message("recording encoder worker panicked".into()))?
-        .map_err(|error| FlickError::Message(format!("failed to encode gif: {error}")))?;
+        .map_err(|error| FlickError::Message(format!("failed to encode recording: {error}")))?;
 
-    if frame_count == 0 {
-        let _ = fs::remove_file(&session.writing_path);
+    if result.frame_count == 0 {
+        let _ = fs::remove_file(&session.output_paths.writing_path);
         return Err(FlickError::Message("no frames were recorded".into()));
     }
 
-    fs::rename(&session.writing_path, &session.final_path)
-        .map_err(|error| FlickError::Message(format!("failed to save gif recording: {error}")))?;
+    fs::rename(
+        &session.output_paths.writing_path,
+        &session.output_paths.final_path,
+    )
+    .map_err(|error| FlickError::Message(format!("failed to save recording: {error}")))?;
 
     let record = CaptureRecord {
         id: session
+            .output_paths
             .final_path
             .file_stem()
             .and_then(|stem| stem.to_str())
@@ -221,7 +273,7 @@ pub fn finish_gif_recording(
         created_at: Utc::now(),
         width: session.width,
         height: session.height,
-        path: session.final_path.display().to_string(),
+        path: session.output_paths.final_path.display().to_string(),
     };
 
     let _ = copy_path_to_clipboard(&record.path);
@@ -239,8 +291,12 @@ pub fn finish_gif_recording(
 }
 
 pub fn cancel_gif_recording(app: AppHandle, session_id: String) -> Result<(), FlickError> {
+    cancel_recording(app, session_id)
+}
+
+pub fn cancel_recording(app: AppHandle, session_id: String) -> Result<(), FlickError> {
     let Ok(mut session) = remove_session(&session_id) else {
-        cleanup_recording_windows(&app, &session_id);
+        cleanup_recording_capture_visibility(&app, &session_id);
         return Ok(());
     };
     session.stopped.store(true, Ordering::SeqCst);
@@ -249,8 +305,8 @@ pub fn cancel_gif_recording(app: AppHandle, session_id: String) -> Result<(), Fl
     if let Some(worker) = session.worker.take() {
         let _ = worker.join();
     }
-    let _ = fs::remove_file(&session.writing_path);
-    cleanup_recording_windows(&app, &session_id);
+    let _ = fs::remove_file(&session.output_paths.writing_path);
+    cleanup_recording_capture_visibility(&app, &session_id);
     Ok(())
 }
 
@@ -259,10 +315,26 @@ pub fn set_gif_recording_window_shape(
     session_id: String,
     recording: bool,
 ) -> Result<(), FlickError> {
-    recording_window_mode::apply(&app, &session_id, recording)
+    set_recording_window_mode(app, session_id, recording)
+}
+
+pub fn set_recording_window_mode(
+    app: AppHandle,
+    session_id: String,
+    recording: bool,
+) -> Result<(), FlickError> {
+    platform::set_recording_window_mode(&app, &session_id, recording)
 }
 
 pub fn open_gif_recording_toolbar_window(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), FlickError> {
+    open_recording_controls_window(app, state, session_id)
+}
+
+pub fn open_recording_controls_window(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
@@ -273,6 +345,10 @@ pub fn open_gif_recording_toolbar_window(
 }
 
 pub fn close_gif_recording_toolbar_window(app: AppHandle, session_id: String) {
+    close_recording_controls_window(app, session_id);
+}
+
+pub fn close_recording_controls_window(app: AppHandle, session_id: String) {
     windows::close_gif_recording_toolbar_window(&app, &session_id);
 }
 
@@ -285,12 +361,12 @@ fn capture_initial_recording_frame(
         .ok()
 }
 
-fn prepare_recording_windows(app: &AppHandle, session_id: &str) {
-    recording_capture_visibility::prepare(app, session_id);
+fn prepare_recording_capture_visibility(app: &AppHandle, session_id: &str) {
+    platform::prepare_recording_capture_visibility(app, session_id);
 }
 
-fn cleanup_recording_windows(app: &AppHandle, session_id: &str) {
-    recording_capture_visibility::cleanup(app, session_id);
+fn cleanup_recording_capture_visibility(app: &AppHandle, session_id: &str) {
+    platform::cleanup_recording_capture_visibility(app, session_id);
 }
 
 fn pending_selection(
@@ -369,15 +445,33 @@ fn remove_session(session_id: &str) -> Result<RecordingSession, FlickError> {
         .ok_or_else(|| FlickError::Message("recording session is not active".into()))
 }
 
+fn recording_output_paths(screenshot_dir: &Path, format: RecordingFormat) -> RecordingOutputPaths {
+    let id = Uuid::new_v4().to_string();
+    let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+    let extension = format.extension();
+    RecordingOutputPaths {
+        final_path: screenshot_dir.join(format!("recording-{timestamp}-{id}.{extension}")),
+        writing_path: screenshot_dir
+            .join(format!("recording-{timestamp}-{id}.writing.{extension}")),
+    }
+}
+
+fn start_recording_encoder(
+    format: RecordingFormat,
+    writing_path: PathBuf,
+    options: RecordingEncoderOptions,
+    receiver: mpsc::Receiver<RecordingMessage>,
+) -> thread::JoinHandle<anyhow::Result<RecordingEncodeResult>> {
+    thread::spawn(move || match format {
+        RecordingFormat::Gif => encode_gif(writing_path, options, receiver),
+    })
+}
+
 fn encode_gif(
     path: PathBuf,
-    width: u32,
-    height: u32,
-    max_gif_width: u32,
-    max_gif_height: u32,
+    options: RecordingEncoderOptions,
     receiver: mpsc::Receiver<RecordingMessage>,
-) -> anyhow::Result<u32> {
-    let _ = (width, height);
+) -> anyhow::Result<RecordingEncodeResult> {
     let file = fs::File::create(&path)
         .with_context(|| format!("failed to create gif recording file at {}", path.display()))?;
     let mut writer = Some(BufWriter::new(file));
@@ -393,8 +487,8 @@ fn encode_gif(
                     let (scaled_width, scaled_height) = scaled_gif_size(
                         frame.width(),
                         frame.height(),
-                        max_gif_width,
-                        max_gif_height,
+                        options.max_width,
+                        options.max_height,
                     );
                     output_width = scaled_width;
                     output_height = scaled_height;
@@ -430,7 +524,7 @@ fn encode_gif(
                 };
                 let mut gif_frame =
                     gif::Frame::from_rgba_speed(width_u16, height_u16, &mut pixels, 10);
-                gif_frame.delay = RECORDING_GIF_DELAY_CS.max(1);
+                gif_frame.delay = gif_delay_cs(options.fps);
                 encoder
                     .as_mut()
                     .ok_or_else(|| anyhow::anyhow!("GIF encoder is missing"))?
@@ -441,7 +535,7 @@ fn encode_gif(
         }
     }
 
-    Ok(frame_count)
+    Ok(RecordingEncodeResult { frame_count })
 }
 
 fn copy_path_to_clipboard(path: &str) -> anyhow::Result<()> {
@@ -467,190 +561,45 @@ fn scaled_gif_size(width: u32, height: u32, max_width: u32, max_height: u32) -> 
     )
 }
 
-fn recording_size_limits(state: &State<'_, AppState>) -> Result<(u32, u32), FlickError> {
+fn recording_frame_interval(fps: u32) -> Duration {
+    Duration::from_millis(1000 / u64::from(fps.max(1)))
+}
+
+fn gif_delay_cs(fps: u32) -> u16 {
+    (100 / fps.max(1)) as u16
+}
+
+fn recording_encoder_options(
+    state: &State<'_, AppState>,
+    format: RecordingFormat,
+) -> Result<RecordingEncoderOptions, FlickError> {
+    match format {
+        RecordingFormat::Gif => gif_encoder_options(state),
+    }
+}
+
+fn gif_encoder_options(state: &State<'_, AppState>) -> Result<RecordingEncoderOptions, FlickError> {
     let size = state
         .settings
         .lock()
         .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
         .gif_recording_size
         .clone();
-    Ok(match size.trim().to_lowercase().as_str() {
+    let fps = state
+        .settings
+        .lock()
+        .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
+        .gif_recording_fps;
+    let (max_width, max_height) = match size.trim().to_lowercase().as_str() {
         "540p" => (RECORDING_540P_MAX_GIF_WIDTH, RECORDING_540P_MAX_GIF_HEIGHT),
         _ => (RECORDING_720P_MAX_GIF_WIDTH, RECORDING_720P_MAX_GIF_HEIGHT),
+    };
+    Ok(RecordingEncoderOptions {
+        max_width,
+        max_height,
+        fps: match fps {
+            6 | 8 | 10 => fps,
+            _ => DEFAULT_RECORDING_FPS,
+        },
     })
-}
-
-mod recording_window_mode {
-    use super::*;
-
-    pub fn apply(app: &AppHandle, session_id: &str, recording: bool) -> Result<(), FlickError> {
-        #[cfg(target_os = "windows")]
-        {
-            windows::apply(app, session_id, recording)
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            passthrough::apply(app, session_id, recording);
-            Ok(())
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    mod windows {
-        use super::*;
-
-        pub fn apply(app: &AppHandle, session_id: &str, recording: bool) -> Result<(), FlickError> {
-            let Some(window) = screenshot_editor_window(app, session_id) else {
-                return Ok(());
-            };
-            let url = window.url().map_err(|error| {
-                FlickError::Message(format!("failed to read editor url: {error}"))
-            })?;
-            let regions = if recording {
-                gif_recording_regions(&url)
-            } else {
-                regular_editor_regions(&url)
-            };
-            crate::app::platform::configure_screenshot_editor_window_shape(&window, &regions);
-            Ok(())
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    mod passthrough {
-        use super::*;
-
-        pub fn apply(app: &AppHandle, session_id: &str, recording: bool) {
-            if let Some(window) = screenshot_editor_window_cross_platform(app, session_id) {
-                let _ = window.set_ignore_cursor_events(recording);
-            }
-        }
-    }
-}
-
-mod recording_capture_visibility {
-    use super::*;
-
-    pub fn prepare(app: &AppHandle, session_id: &str) {
-        #[cfg(target_os = "windows")]
-        windows::set_capture_visibility(app, session_id, false);
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = (app, session_id);
-    }
-
-    pub fn cleanup(app: &AppHandle, session_id: &str) {
-        #[cfg(target_os = "windows")]
-        windows::set_capture_visibility(app, session_id, true);
-
-        #[cfg(not(target_os = "windows"))]
-        let _ = (app, session_id);
-    }
-
-    #[cfg(target_os = "windows")]
-    mod windows {
-        use super::*;
-
-        pub fn set_capture_visibility(app: &AppHandle, session_id: &str, include_in_capture: bool) {
-            platform::set_overlay_capture_sharing(app, include_in_capture);
-            if let Some(window) = screenshot_editor_window(app, session_id) {
-                platform::set_window_capture_sharing(&window, include_in_capture);
-            }
-            if let Some(window) = gif_recording_toolbar_window(app, session_id) {
-                platform::set_window_capture_sharing(&window, include_in_capture);
-            }
-        }
-    }
-}
-
-fn screenshot_editor_window_cross_platform(
-    app: &AppHandle,
-    session_id: &str,
-) -> Option<tauri::WebviewWindow> {
-    let session_label = format!("screenshot-editor-{session_id}");
-    app.get_webview_window(&session_label)
-        .or_else(|| app.get_webview_window("screenshot-editor-preload"))
-}
-
-#[cfg(target_os = "windows")]
-fn screenshot_editor_window(app: &AppHandle, session_id: &str) -> Option<tauri::WebviewWindow> {
-    screenshot_editor_window_cross_platform(app, session_id)
-}
-
-#[cfg(target_os = "windows")]
-fn gif_recording_toolbar_window(app: &AppHandle, session_id: &str) -> Option<tauri::WebviewWindow> {
-    let label = format!("gif-recording-toolbar-{session_id}");
-    app.get_webview_window(&label)
-}
-
-#[cfg(target_os = "windows")]
-fn gif_recording_regions(url: &tauri::Url) -> Vec<SelectionRect> {
-    let selection_left = query_f64(url, "selection_left").unwrap_or(0.0);
-    let selection_top = query_f64(url, "selection_top").unwrap_or(0.0);
-    let width = query_f64(url, "display_width").unwrap_or(1.0).max(1.0);
-    let height = query_f64(url, "display_height").unwrap_or(1.0).max(1.0);
-    let toolbar_left = query_f64(url, "toolbar_left").unwrap_or(8.0);
-    let toolbar_top = query_f64(url, "toolbar_top").unwrap_or(8.0);
-    let border = 4.0_f64.min(width).min(height).max(1.0);
-
-    vec![
-        rect(selection_left, selection_top, width, border),
-        rect(
-            selection_left,
-            selection_top + height - border,
-            width,
-            border,
-        ),
-        rect(selection_left, selection_top, border, height),
-        rect(
-            selection_left + width - border,
-            selection_top,
-            border,
-            height,
-        ),
-        rect(toolbar_left, toolbar_top, 240.0, 56.0),
-    ]
-}
-
-#[cfg(target_os = "windows")]
-fn regular_editor_regions(url: &tauri::Url) -> Vec<SelectionRect> {
-    let selection_left = query_f64(url, "selection_left").unwrap_or(0.0);
-    let selection_top = query_f64(url, "selection_top").unwrap_or(0.0);
-    let width = query_f64(url, "display_width").unwrap_or(1.0).max(1.0);
-    let height = query_f64(url, "display_height").unwrap_or(1.0).max(1.0);
-    let toolbar_left = query_f64(url, "toolbar_left").unwrap_or(8.0);
-    let toolbar_top = query_f64(url, "toolbar_top").unwrap_or(8.0);
-    let thumbnail_left = query_f64(url, "thumbnail_left").unwrap_or(8.0);
-    let thumbnail_region_top = query_f64(url, "thumbnail_region_top").unwrap_or(8.0);
-    let thumbnail_width = query_f64(url, "thumbnail_width").unwrap_or(300.0);
-    let thumbnail_height = query_f64(url, "thumbnail_height").unwrap_or(560.0);
-
-    vec![
-        rect(selection_left, selection_top, width, height),
-        rect(toolbar_left, toolbar_top - 300.0, 680.0, 340.0),
-        rect(
-            thumbnail_left,
-            thumbnail_region_top,
-            thumbnail_width,
-            thumbnail_height,
-        ),
-    ]
-}
-
-#[cfg(target_os = "windows")]
-fn rect(x: f64, y: f64, width: f64, height: f64) -> SelectionRect {
-    SelectionRect {
-        x: x.floor() as i32,
-        y: y.floor().max(0.0) as i32,
-        width: width.ceil().max(1.0) as u32,
-        height: height.ceil().max(1.0) as u32,
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn query_f64(url: &tauri::Url, key: &str) -> Option<f64> {
-    url.query_pairs()
-        .find(|(name, _)| name == key)
-        .and_then(|(_, value)| value.parse::<f64>().ok())
 }

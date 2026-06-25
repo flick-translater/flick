@@ -48,9 +48,11 @@ export default {
       screenshotEditorToolbar: "スクリーンショット編集ツールバー",
       screenshotEditorToolbarDesc: "通常のスクリーンショット後だけ編集ツールバーを表示します。スクリーンショットと翻訳は従来のフローを維持します。",
       gifRecording: "GIF 録画",
-      gifRecordingDesc: "録画 GIF の出力サイズとファイルサイズを制御します。",
+      gifRecordingDesc: "録画 GIF の出力サイズ、フレームレート、ファイルサイズを制御します。",
       gifSize: "GIF 最大サイズ",
-      gifSizeDesc: "選択したサイズを超える録画は縦横比を保って縮小されます。"
+      gifSizeDesc: "選択したサイズを超える録画は縦横比を保って縮小されます。",
+      gifFps: "GIF フレームレート",
+      gifFpsDesc: "FPS を上げると動きは滑らかになりますが、ファイルサイズも増えます。"
     },
     screenshotEditor: {
       tools: {

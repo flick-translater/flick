@@ -18,18 +18,27 @@ mod linux_long_capture_scroll_platform;
 #[cfg(target_os = "linux")]
 #[path = "platform/linux_platform.rs"]
 mod linux_platform;
+#[cfg(target_os = "linux")]
+#[path = "platform/linux_recording_platform.rs"]
+mod linux_recording_platform;
 #[cfg(target_os = "macos")]
 #[path = "platform/macos_long_capture_scroll_platform.rs"]
 mod macos_long_capture_scroll_platform;
 #[cfg(target_os = "macos")]
 #[path = "platform/macos_platform.rs"]
 mod macos_platform;
+#[cfg(target_os = "macos")]
+#[path = "platform/macos_recording_platform.rs"]
+mod macos_recording_platform;
 #[cfg(target_os = "windows")]
 #[path = "platform/windows_long_capture_scroll_platform.rs"]
 mod windows_long_capture_scroll_platform;
 #[cfg(target_os = "windows")]
 #[path = "platform/windows_platform.rs"]
 mod windows_platform;
+#[cfg(target_os = "windows")]
+#[path = "platform/windows_recording_platform.rs"]
+mod windows_recording_platform;
 
 use image::{ImageBuffer, Rgba};
 
@@ -350,6 +359,65 @@ pub fn set_window_capture_sharing(window: &tauri::WebviewWindow, include_in_capt
     #[cfg(target_os = "linux")]
     {
         let _ = (window, include_in_capture);
+    }
+}
+
+pub fn set_recording_window_mode(
+    app: &AppHandle,
+    session_id: &str,
+    recording: bool,
+) -> Result<(), FlickError> {
+    #[cfg(target_os = "macos")]
+    {
+        return macos_recording_platform::set_recording_window_mode(app, session_id, recording);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return windows_recording_platform::set_recording_window_mode(app, session_id, recording);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_recording_platform::set_recording_window_mode(app, session_id, recording)
+    }
+}
+
+pub fn prepare_recording_capture_visibility(app: &AppHandle, session_id: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        macos_recording_platform::prepare_recording_capture_visibility(app, session_id);
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        windows_recording_platform::prepare_recording_capture_visibility(app, session_id);
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_recording_platform::prepare_recording_capture_visibility(app, session_id);
+    }
+}
+
+pub fn cleanup_recording_capture_visibility(app: &AppHandle, session_id: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        macos_recording_platform::cleanup_recording_capture_visibility(app, session_id);
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        windows_recording_platform::cleanup_recording_capture_visibility(app, session_id);
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_recording_platform::cleanup_recording_capture_visibility(app, session_id);
     }
 }
 

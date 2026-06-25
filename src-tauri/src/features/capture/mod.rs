@@ -21,9 +21,11 @@ pub use long_capture::{
     scroll_long_capture, start_long_capture, stop_long_capture_scroll,
 };
 pub use recording::{
-    cancel_gif_recording, close_gif_recording_toolbar_window, finish_gif_recording,
-    open_gif_recording_toolbar_window, pause_gif_recording, resume_gif_recording,
-    set_gif_recording_window_shape, start_gif_recording,
+    cancel_gif_recording, cancel_recording, close_gif_recording_toolbar_window,
+    close_recording_controls_window, finish_gif_recording, finish_recording,
+    open_gif_recording_toolbar_window, open_recording_controls_window, pause_gif_recording,
+    pause_recording, resume_gif_recording, resume_recording, set_gif_recording_window_shape,
+    set_recording_window_mode, start_gif_recording, start_recording,
 };
 pub(crate) use session::capture_editor_log;
 pub use session::{

@@ -20,7 +20,7 @@ function RecordingToolbar() {
     }
     setError('');
     try {
-      await invoke('set_gif_recording_window_shape', { sessionId, recording: true });
+      await invoke('set_recording_window_mode', { sessionId, recording: true });
       if (status === 'paused') {
         await invoke('resume_gif_recording', { sessionId });
       } else {

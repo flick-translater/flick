@@ -48,9 +48,11 @@ export default {
       screenshotEditorToolbar: "截图编辑工具栏",
       screenshotEditorToolbarDesc: "仅普通截图后显示编辑工具栏；截图并翻译仍使用原流程。",
       gifRecording: "GIF 录制",
-      gifRecordingDesc: "控制录制 GIF 的输出大小和文件体积。",
+      gifRecordingDesc: "控制录制 GIF 的输出大小、帧率和文件体积。",
       gifSize: "GIF 最大尺寸",
-      gifSizeDesc: "超过所选尺寸时会按比例缩放。"
+      gifSizeDesc: "超过所选尺寸时会按比例缩放。",
+      gifFps: "GIF 帧率",
+      gifFpsDesc: "帧率越高，动画越流畅，文件体积也会增加。"
     },
     screenshotEditor: {
       tools: {

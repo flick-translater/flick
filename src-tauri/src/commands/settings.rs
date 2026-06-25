@@ -244,6 +244,31 @@ pub fn update_gif_recording_size(
     Ok(updated)
 }
 
+#[tauri::command]
+pub fn update_gif_recording_fps(
+    state: State<'_, AppState>,
+    fps: u32,
+) -> Result<AppSettings, FlickError> {
+    let normalized = match fps {
+        6 | 8 | 10 => fps,
+        _ => {
+            return Err(FlickError::Message("invalid GIF recording FPS".into()));
+        }
+    };
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.gif_recording_fps = normalized;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
 fn normalize_hex_color(color: &str) -> Result<String, FlickError> {
     let value = color.trim();
     let valid = value.len() == 7
