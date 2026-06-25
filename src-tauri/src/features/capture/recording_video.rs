@@ -14,6 +14,9 @@ use std::{
 use anyhow::Context;
 use image::imageops::FilterType;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 use crate::services::system_audio_capture::{
     LiveSystemAudioStream, SystemAudioCaptureService, SystemAudioSampleFormat, SystemAudioSpec,
 };
@@ -30,6 +33,9 @@ struct AudioCaptureContext {
     bytes: Arc<AtomicU64>,
     chunks: Arc<AtomicU64>,
 }
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub(super) fn encode_video(
     path: PathBuf,
@@ -312,7 +318,9 @@ fn mux_video_with_pcm_audio(
         audio_spec.sample_rate,
         audio_spec.channels
     );
-    let output = Command::new(ffmpeg_path)
+    let mut command = Command::new(ffmpeg_path);
+    hide_command_window(&mut command);
+    let output = command
         .arg("-y")
         .arg("-i")
         .arg(video_path)
@@ -359,6 +367,7 @@ fn spawn_ffmpeg_encoder(
     fps: u32,
 ) -> anyhow::Result<std::process::Child> {
     let mut command = Command::new(ffmpeg_path);
+    hide_command_window(&mut command);
     command
         .arg("-y")
         .arg("-f")
@@ -394,6 +403,13 @@ fn spawn_ffmpeg_encoder(
         .stderr(Stdio::piped())
         .spawn()
         .context("failed to start ffmpeg")
+}
+
+fn hide_command_window(command: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 fn scaled_video_size(width: u32, height: u32, max_width: u32, max_height: u32) -> (u32, u32) {

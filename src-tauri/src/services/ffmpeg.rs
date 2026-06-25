@@ -1,8 +1,14 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output},
 };
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 use crate::{error::FlickError, models::FfmpegStatus};
 
@@ -134,16 +140,24 @@ fn ffmpeg_download_url() -> Result<String, FlickError> {
 }
 
 fn command_works(command: &str) -> bool {
-    Command::new(command)
-        .arg("-version")
-        .output()
-        .is_ok_and(|output| output.status.success())
+    ffmpeg_version_output(&mut Command::new(command)).is_ok_and(|output| output.status.success())
 }
 
 fn ffmpeg_works(path: &Path) -> bool {
     path.is_file()
-        && Command::new(path)
-            .arg("-version")
-            .output()
+        && ffmpeg_version_output(&mut Command::new(path))
             .is_ok_and(|output| output.status.success())
+}
+
+fn ffmpeg_version_output(command: &mut Command) -> std::io::Result<Output> {
+    command.arg("-version");
+    hide_command_window(command);
+    command.output()
+}
+
+fn hide_command_window(command: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
