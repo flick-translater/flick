@@ -121,19 +121,29 @@ pub(super) fn encode_video(
                     elapsed.saturating_sub(first_frame_elapsed.unwrap_or(elapsed));
                 let target_frame_count =
                     target_video_frame_count(relative_elapsed, options.fps).max(1);
-                if let Some(last_pixels) = last_pixels.as_deref() {
-                    while frames_written < target_frame_count.saturating_sub(1) {
-                        write_video_pixels(&mut child, last_pixels)?;
-                        frames_written += 1;
+                if target_frame_count > frames_written {
+                    if let Some(last_pixels) = last_pixels.as_deref() {
+                        while frames_written < target_frame_count.saturating_sub(1) {
+                            write_video_pixels(&mut child, last_pixels)?;
+                            frames_written += 1;
+                        }
                     }
-                }
-                write_video_pixels(&mut child, &pixels)?;
-                frames_written += 1;
-                if frames_written <= 3 || frames_written % 100 == 0 {
+                    write_video_pixels(&mut child, &pixels)?;
+                    frames_written += 1;
+                    if frames_written <= 3 || frames_written % 100 == 0 {
+                        eprintln!(
+                            "[recording][video] wrote frames={} received={} elapsed_ms={} target={}",
+                            frames_written,
+                            frames_received,
+                            elapsed.as_millis(),
+                            target_frame_count
+                        );
+                    }
+                } else if frames_received <= 3 || frames_received % 100 == 0 {
                     eprintln!(
-                        "[recording][video] wrote frames={} received={} elapsed_ms={} target={}",
-                        frames_written,
+                        "[recording][video] skipped early frame received={} written={} elapsed_ms={} target={}",
                         frames_received,
+                        frames_written,
                         elapsed.as_millis(),
                         target_frame_count
                     );

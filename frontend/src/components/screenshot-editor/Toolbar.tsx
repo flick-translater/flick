@@ -552,7 +552,7 @@ export function RecordingControlsToolbar({
           aria-label={t('screenshotEditor.actions.cancel')}
           disabled={isSaving}
           onClick={onCancel}
-          className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <X size={18} />
         </button>

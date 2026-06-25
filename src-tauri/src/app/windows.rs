@@ -14,6 +14,8 @@ const TRANSLATE_WINDOW_LABEL: &str = "translate";
 const SCREENSHOT_EDITOR_WINDOW_PREFIX: &str = "screenshot-editor";
 const PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL: &str = "screenshot-editor-preload";
 const GIF_RECORDING_TOOLBAR_WINDOW_PREFIX: &str = "gif-recording-toolbar";
+const RECORDING_TOOLBAR_WINDOW_WIDTH: f64 = 360.0;
+const RECORDING_TOOLBAR_WINDOW_HEIGHT: f64 = 88.0;
 
 pub fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
     platform::show_main_window_before_focus(app);
@@ -417,7 +419,10 @@ pub fn show_gif_recording_toolbar_window(
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title("Flick GIF Recording")
         .devtools(false)
-        .inner_size(320.0, 88.0)
+        .inner_size(
+            RECORDING_TOOLBAR_WINDOW_WIDTH,
+            RECORDING_TOOLBAR_WINDOW_HEIGHT,
+        )
         .position(window_x, window_y)
         .resizable(false)
         .visible(false)

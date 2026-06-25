@@ -633,7 +633,7 @@ fn copy_path_to_clipboard(path: &str) -> anyhow::Result<()> {
 }
 
 fn recording_frame_interval(fps: u32) -> Duration {
-    Duration::from_millis(1000 / u64::from(fps.max(1)))
+    Duration::from_nanos(1_000_000_000 / u64::from(fps.max(1)))
 }
 
 fn recording_encoder_options(

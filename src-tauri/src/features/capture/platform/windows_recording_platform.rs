@@ -4,6 +4,9 @@ use crate::{error::FlickError, models::SelectionRect};
 
 use super::windows_platform;
 
+const RECORDING_TOOLBAR_REGION_WIDTH: f64 = 360.0;
+const RECORDING_TOOLBAR_REGION_HEIGHT: f64 = 56.0;
+
 pub(super) fn set_recording_window_mode(
     app: &AppHandle,
     session_id: &str,
@@ -77,7 +80,12 @@ fn recording_editor_regions(url: &tauri::Url) -> Vec<SelectionRect> {
             border,
             height,
         ),
-        rect(toolbar_left, toolbar_top, 240.0, 56.0),
+        rect(
+            toolbar_left,
+            toolbar_top,
+            RECORDING_TOOLBAR_REGION_WIDTH,
+            RECORDING_TOOLBAR_REGION_HEIGHT,
+        ),
     ]
 }
 
