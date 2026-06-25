@@ -162,6 +162,8 @@ pub fn run() {
             commands::settings::update_gif_recording_fps,
             commands::settings::update_video_recording_size,
             commands::settings::update_video_recording_fps,
+            commands::settings::update_video_recording_audio_source,
+            commands::settings::get_system_audio_capture_capabilities,
             commands::settings::get_ffmpeg_status,
             commands::settings::download_ffmpeg,
             commands::settings::update_translate_shortcut,

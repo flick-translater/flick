@@ -8,6 +8,8 @@ mod io;
 mod long_capture;
 pub(crate) mod platform;
 mod recording;
+mod recording_gif;
+mod recording_video;
 mod session;
 
 pub use history::{

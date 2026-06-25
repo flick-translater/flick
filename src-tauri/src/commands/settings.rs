@@ -13,8 +13,9 @@ use crate::{
         AISettings, AppSettings, AutostartStatus, FfmpegStatus, OcrEngineInfo, TtsEngineInfo,
     },
     services::{
-        available_ocr_engines, available_tts_engines, create_ocr_service, ffmpeg,
-        normalize_ocr_engine_id, normalize_tts_engine_id,
+        SystemAudioCaptureCapabilities, SystemAudioCaptureService, available_ocr_engines,
+        available_tts_engines, create_ocr_service, ffmpeg, normalize_ocr_engine_id,
+        normalize_tts_engine_id,
     },
 };
 
@@ -356,6 +357,41 @@ pub fn update_video_recording_fps(
 
     state.settings_store.save_settings(&updated)?;
     Ok(updated)
+}
+
+#[tauri::command]
+pub fn update_video_recording_audio_source(
+    state: State<'_, AppState>,
+    source: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = match source.trim().to_lowercase().as_str() {
+        "none" => "none",
+        "system" => "system",
+        _ => {
+            return Err(FlickError::Message(
+                "invalid video recording audio source".into(),
+            ));
+        }
+    }
+    .to_string();
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.video_recording_audio_source = normalized;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn get_system_audio_capture_capabilities() -> Result<SystemAudioCaptureCapabilities, FlickError>
+{
+    Ok(SystemAudioCaptureService.capabilities())
 }
 
 #[tauri::command]

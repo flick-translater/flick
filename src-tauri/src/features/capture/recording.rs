@@ -1,13 +1,11 @@
 use std::{
     collections::HashMap,
     fs,
-    io::{BufWriter, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, SyncSender},
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, SyncSender, TrySendError},
     },
     thread,
     time::{Duration, Instant},
@@ -15,7 +13,7 @@ use std::{
 
 use anyhow::Context;
 use chrono::Utc;
-use image::{ImageBuffer, Rgba, imageops::FilterType};
+use image::{ImageBuffer, Rgba};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
@@ -26,7 +24,7 @@ use crate::{
     services::{ScreenCaptureService, ffmpeg, screen_capture::LiveFrameStream},
 };
 
-use super::{history, platform};
+use super::{history, platform, recording_gif, recording_video};
 
 const DEFAULT_RECORDING_FPS: u32 = 6;
 const RECORDING_QUEUE_CAPACITY: usize = 8;
@@ -37,14 +35,33 @@ const RECORDING_720P_MAX_GIF_HEIGHT: u32 = 720;
 const RECORDING_1080P_MAX_VIDEO_WIDTH: u32 = 1920;
 const RECORDING_1080P_MAX_VIDEO_HEIGHT: u32 = 1080;
 
-enum RecordingMessage {
-    Frame(ImageBuffer<Rgba<u8>, Vec<u8>>),
+pub(super) enum RecordingMessage {
+    Frame {
+        image: ImageBuffer<Rgba<u8>, Vec<u8>>,
+        elapsed: Duration,
+    },
+    End {
+        elapsed: Duration,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RecordingFormat {
     Gif,
     Video,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RecordingAudioMode {
+    Unsupported,
+    Disabled,
+    System,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RecordingProfile {
+    format: RecordingFormat,
+    audio: RecordingAudioMode,
 }
 
 impl RecordingFormat {
@@ -64,20 +81,54 @@ impl RecordingFormat {
     }
 }
 
+impl RecordingProfile {
+    fn from_settings(
+        format: RecordingFormat,
+        state: &State<'_, AppState>,
+    ) -> Result<Self, FlickError> {
+        let audio = match format {
+            RecordingFormat::Gif => RecordingAudioMode::Unsupported,
+            RecordingFormat::Video => {
+                let source = state
+                    .settings
+                    .lock()
+                    .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
+                    .video_recording_audio_source
+                    .clone();
+                match source.trim().to_lowercase().as_str() {
+                    "none" => RecordingAudioMode::Disabled,
+                    _ => RecordingAudioMode::System,
+                }
+            }
+        };
+        Ok(Self { format, audio })
+    }
+}
+
 struct RecordingOutputPaths {
     final_path: PathBuf,
     writing_path: PathBuf,
 }
 
-struct RecordingEncoderOptions {
-    max_width: u32,
-    max_height: u32,
-    fps: u32,
-    ffmpeg_path: Option<String>,
+pub(super) struct RecordingEncoderOptions {
+    pub(super) max_width: u32,
+    pub(super) max_height: u32,
+    pub(super) fps: u32,
+    pub(super) ffmpeg_path: Option<String>,
+    pub(super) audio: RecordingAudioMode,
 }
 
-struct RecordingEncodeResult {
-    frame_count: u32,
+pub(super) struct RecordingEncodeResult {
+    pub(super) frame_count: u32,
+    pub(super) audio_bytes: u64,
+    pub(super) audio_chunks: u64,
+}
+
+struct RecordingCaptureMetrics {
+    accepted_frames: Arc<AtomicU64>,
+    throttled_frames: Arc<AtomicU64>,
+    queue_full_drops: Arc<AtomicU64>,
+    disconnected_drops: Arc<AtomicU64>,
 }
 
 struct RecordingSession {
@@ -88,6 +139,8 @@ struct RecordingSession {
     stopped: Arc<AtomicBool>,
     output_paths: RecordingOutputPaths,
     format: RecordingFormat,
+    started_at: Instant,
+    metrics: RecordingCaptureMetrics,
     width: u32,
     height: u32,
 }
@@ -113,6 +166,7 @@ pub fn start_recording(
     format: String,
 ) -> Result<(), FlickError> {
     let format = RecordingFormat::parse(&format)?;
+    let profile = RecordingProfile::from_settings(format, &state)?;
     let selection = pending_selection(&state, &session_id)?;
     validate_recording_size(&selection)?;
     finalize_pending_overlay_for_recording(&app, &state, &session_id)?;
@@ -126,7 +180,15 @@ pub fn start_recording(
 
     let output_paths = recording_output_paths(&output_dir, format);
     let (sender, receiver) = mpsc::sync_channel(RECORDING_QUEUE_CAPACITY);
-    let encoder_options = recording_encoder_options(&state, format)?;
+    let encoder_options = recording_encoder_options(&state, profile)?;
+    eprintln!(
+        "[recording] start session={} format={:?} audio={:?} fps={} output={}",
+        session_id,
+        profile.format,
+        profile.audio,
+        encoder_options.fps,
+        output_paths.final_path.display()
+    );
     let frame_interval = recording_frame_interval(encoder_options.fps);
     let worker = start_recording_encoder(
         format,
@@ -137,30 +199,83 @@ pub fn start_recording(
 
     let paused = Arc::new(AtomicBool::new(false));
     let stopped = Arc::new(AtomicBool::new(false));
+    let started_at = Instant::now();
     let stream_sender = sender.clone();
     let stream_paused = Arc::clone(&paused);
     let stream_stopped = Arc::clone(&stopped);
-    let last_frame_at = Arc::new(Mutex::new(Instant::now() - frame_interval));
-    let stream_last_frame_at = Arc::clone(&last_frame_at);
+    let stream_started_at = started_at;
+    let next_frame_due = Arc::new(Mutex::new(Instant::now()));
+    let stream_next_frame_due = Arc::clone(&next_frame_due);
+    let accepted_frames = Arc::new(AtomicU64::new(0));
+    let throttled_frames = Arc::new(AtomicU64::new(0));
+    let queue_full_drops = Arc::new(AtomicU64::new(0));
+    let disconnected_drops = Arc::new(AtomicU64::new(0));
+    let stream_accepted_frames = Arc::clone(&accepted_frames);
+    let stream_throttled_frames = Arc::clone(&throttled_frames);
+    let stream_queue_full_drops = Arc::clone(&queue_full_drops);
+    let stream_disconnected_drops = Arc::clone(&disconnected_drops);
     let on_frame = Box::new(move |frame: ImageBuffer<Rgba<u8>, Vec<u8>>| {
         if stream_stopped.load(Ordering::SeqCst) || stream_paused.load(Ordering::SeqCst) {
             return;
         }
-        let Ok(mut last_frame_at) = stream_last_frame_at.lock() else {
+        let now = Instant::now();
+        let Ok(mut next_frame_due) = stream_next_frame_due.lock() else {
             return;
         };
-        if last_frame_at.elapsed() < frame_interval {
+        if now < *next_frame_due {
+            let skipped = stream_throttled_frames.fetch_add(1, Ordering::SeqCst) + 1;
+            if skipped <= 3 || skipped % 100 == 0 {
+                eprintln!("[recording][capture] throttled frames={skipped}");
+            }
             return;
         }
-        *last_frame_at = Instant::now();
-        let _ = stream_sender.try_send(RecordingMessage::Frame(frame));
+        while *next_frame_due <= now {
+            *next_frame_due += frame_interval;
+        }
+        let elapsed = now.duration_since(stream_started_at);
+        match stream_sender.try_send(RecordingMessage::Frame {
+            image: frame,
+            elapsed,
+        }) {
+            Ok(()) => {
+                let accepted = stream_accepted_frames.fetch_add(1, Ordering::SeqCst) + 1;
+                if accepted <= 3 || accepted % 100 == 0 {
+                    eprintln!(
+                        "[recording][capture] accepted frames={} elapsed_ms={}",
+                        accepted,
+                        elapsed.as_millis()
+                    );
+                }
+            }
+            Err(TrySendError::Full(_)) => {
+                let dropped = stream_queue_full_drops.fetch_add(1, Ordering::SeqCst) + 1;
+                eprintln!(
+                    "[recording][capture] dropped queue_full={} elapsed_ms={}",
+                    dropped,
+                    elapsed.as_millis()
+                );
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                let dropped = stream_disconnected_drops.fetch_add(1, Ordering::SeqCst) + 1;
+                if dropped <= 3 || dropped % 100 == 0 {
+                    eprintln!(
+                        "[recording][capture] dropped disconnected={} elapsed_ms={}",
+                        dropped,
+                        elapsed.as_millis()
+                    );
+                }
+            }
+        }
     });
 
     prepare_recording_capture_visibility(&app, &session_id);
     #[cfg(target_os = "windows")]
     {
         if let Some(frame) = capture_initial_recording_frame(&selection) {
-            let _ = sender.try_send(RecordingMessage::Frame(frame));
+            let _ = sender.try_send(RecordingMessage::Frame {
+                image: frame,
+                elapsed: Duration::ZERO,
+            });
         }
     }
 
@@ -204,6 +319,13 @@ pub fn start_recording(
             stopped,
             output_paths,
             format,
+            started_at,
+            metrics: RecordingCaptureMetrics {
+                accepted_frames,
+                throttled_frames,
+                queue_full_drops,
+                disconnected_drops,
+            },
             width: selection.width,
             height: selection.height,
         },
@@ -251,6 +373,9 @@ pub fn finish_recording(
     let mut session = remove_session(&session_id)?;
     session.stopped.store(true, Ordering::SeqCst);
     drop(session.stream.take());
+    let _ = session.sender.send(RecordingMessage::End {
+        elapsed: session.started_at.elapsed(),
+    });
     drop(session.sender);
     cleanup_recording_capture_visibility(&app, &session_id);
 
@@ -266,6 +391,18 @@ pub fn finish_recording(
         let _ = fs::remove_file(&session.output_paths.writing_path);
         return Err(FlickError::Message("no frames were recorded".into()));
     }
+    eprintln!(
+        "[recording] encoder finished format={:?} frames={} capture_accepted={} capture_throttled={} capture_queue_full_drops={} capture_disconnected_drops={} audio_chunks={} audio_bytes={} writing={}",
+        session.format,
+        result.frame_count,
+        session.metrics.accepted_frames.load(Ordering::SeqCst),
+        session.metrics.throttled_frames.load(Ordering::SeqCst),
+        session.metrics.queue_full_drops.load(Ordering::SeqCst),
+        session.metrics.disconnected_drops.load(Ordering::SeqCst),
+        result.audio_chunks,
+        result.audio_bytes,
+        session.output_paths.writing_path.display()
+    );
 
     fs::rename(
         &session.output_paths.writing_path,
@@ -480,190 +617,9 @@ fn start_recording_encoder(
     receiver: mpsc::Receiver<RecordingMessage>,
 ) -> thread::JoinHandle<anyhow::Result<RecordingEncodeResult>> {
     thread::spawn(move || match format {
-        RecordingFormat::Gif => encode_gif(writing_path, options, receiver),
-        RecordingFormat::Video => encode_video(writing_path, options, receiver),
+        RecordingFormat::Gif => recording_gif::encode_gif(writing_path, options, receiver),
+        RecordingFormat::Video => recording_video::encode_video(writing_path, options, receiver),
     })
-}
-
-fn encode_gif(
-    path: PathBuf,
-    options: RecordingEncoderOptions,
-    receiver: mpsc::Receiver<RecordingMessage>,
-) -> anyhow::Result<RecordingEncodeResult> {
-    let file = fs::File::create(&path)
-        .with_context(|| format!("failed to create gif recording file at {}", path.display()))?;
-    let mut writer = Some(BufWriter::new(file));
-    let mut encoder: Option<gif::Encoder<BufWriter<fs::File>>> = None;
-    let mut output_width = 0;
-    let mut output_height = 0;
-
-    let mut frame_count = 0;
-    while let Ok(message) = receiver.recv() {
-        match message {
-            RecordingMessage::Frame(frame) => {
-                if encoder.is_none() {
-                    let (scaled_width, scaled_height) = scaled_gif_size(
-                        frame.width(),
-                        frame.height(),
-                        options.max_width,
-                        options.max_height,
-                    );
-                    output_width = scaled_width;
-                    output_height = scaled_height;
-                    let width_u16 = u16::try_from(output_width).context("invalid GIF width")?;
-                    let height_u16 = u16::try_from(output_height).context("invalid GIF height")?;
-                    let mut next_encoder = gif::Encoder::new(
-                        writer
-                            .take()
-                            .ok_or_else(|| anyhow::anyhow!("GIF writer is missing"))?,
-                        width_u16,
-                        height_u16,
-                        &[],
-                    )
-                    .context("failed to create GIF encoder")?;
-                    next_encoder
-                        .set_repeat(gif::Repeat::Infinite)
-                        .context("failed to configure GIF loop")?;
-                    encoder = Some(next_encoder);
-                }
-                let width_u16 = u16::try_from(output_width).context("invalid GIF width")?;
-                let height_u16 = u16::try_from(output_height).context("invalid GIF height")?;
-                let mut pixels = if frame.width() == output_width && frame.height() == output_height
-                {
-                    frame.into_raw()
-                } else {
-                    image::imageops::resize(
-                        &frame,
-                        output_width,
-                        output_height,
-                        FilterType::Triangle,
-                    )
-                    .into_raw()
-                };
-                let mut gif_frame =
-                    gif::Frame::from_rgba_speed(width_u16, height_u16, &mut pixels, 10);
-                gif_frame.delay = gif_delay_cs(options.fps);
-                encoder
-                    .as_mut()
-                    .ok_or_else(|| anyhow::anyhow!("GIF encoder is missing"))?
-                    .write_frame(&gif_frame)
-                    .context("failed to write GIF frame")?;
-                frame_count += 1;
-            }
-        }
-    }
-
-    Ok(RecordingEncodeResult { frame_count })
-}
-
-fn encode_video(
-    path: PathBuf,
-    options: RecordingEncoderOptions,
-    receiver: mpsc::Receiver<RecordingMessage>,
-) -> anyhow::Result<RecordingEncodeResult> {
-    let mut child = None;
-    let mut output_width = 0;
-    let mut output_height = 0;
-    let mut frame_count = 0;
-
-    while let Ok(message) = receiver.recv() {
-        match message {
-            RecordingMessage::Frame(frame) => {
-                if child.is_none() {
-                    let (scaled_width, scaled_height) = scaled_video_size(
-                        frame.width(),
-                        frame.height(),
-                        options.max_width,
-                        options.max_height,
-                    );
-                    output_width = scaled_width;
-                    output_height = scaled_height;
-                    let ffmpeg_path = options
-                        .ffmpeg_path
-                        .as_deref()
-                        .ok_or_else(|| anyhow::anyhow!("ffmpeg path is missing"))?;
-                    child = Some(spawn_ffmpeg_encoder(
-                        &path,
-                        ffmpeg_path,
-                        output_width,
-                        output_height,
-                        options.fps,
-                    )?);
-                }
-
-                let pixels = if frame.width() == output_width && frame.height() == output_height {
-                    frame.into_raw()
-                } else {
-                    image::imageops::resize(
-                        &frame,
-                        output_width,
-                        output_height,
-                        FilterType::Triangle,
-                    )
-                    .into_raw()
-                };
-
-                child
-                    .as_mut()
-                    .and_then(|process| process.stdin.as_mut())
-                    .ok_or_else(|| anyhow::anyhow!("ffmpeg stdin is missing"))?
-                    .write_all(&pixels)
-                    .context("failed to write frame to ffmpeg")?;
-                frame_count += 1;
-            }
-        }
-    }
-
-    if let Some(mut process) = child {
-        drop(process.stdin.take());
-        let output = process
-            .wait_with_output()
-            .context("failed to wait for ffmpeg")?;
-        if !output.status.success() {
-            return Err(anyhow::anyhow!(
-                "ffmpeg failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-    }
-
-    Ok(RecordingEncodeResult { frame_count })
-}
-
-fn spawn_ffmpeg_encoder(
-    path: &Path,
-    ffmpeg_path: &str,
-    width: u32,
-    height: u32,
-    fps: u32,
-) -> anyhow::Result<std::process::Child> {
-    Command::new(ffmpeg_path)
-        .arg("-y")
-        .arg("-f")
-        .arg("rawvideo")
-        .arg("-pix_fmt")
-        .arg("rgba")
-        .arg("-s")
-        .arg(format!("{width}x{height}"))
-        .arg("-r")
-        .arg(fps.to_string())
-        .arg("-i")
-        .arg("pipe:0")
-        .arg("-an")
-        .arg("-c:v")
-        .arg("libx264")
-        .arg("-preset")
-        .arg("veryfast")
-        .arg("-pix_fmt")
-        .arg("yuv420p")
-        .arg("-movflags")
-        .arg("+faststart")
-        .arg(path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("failed to start ffmpeg")
 }
 
 fn copy_path_to_clipboard(path: &str) -> anyhow::Result<()> {
@@ -676,43 +632,17 @@ fn copy_path_to_clipboard(path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn scaled_gif_size(width: u32, height: u32, max_width: u32, max_height: u32) -> (u32, u32) {
-    if max_width == 0 || max_height == 0 || (width <= max_width && height <= max_height) {
-        return (width.max(1), height.max(1));
-    }
-    let scale = (max_width as f64 / width.max(1) as f64)
-        .min(max_height as f64 / height.max(1) as f64)
-        .min(1.0);
-    (
-        ((width as f64 * scale).round() as u32).max(1),
-        ((height as f64 * scale).round() as u32).max(1),
-    )
-}
-
-fn scaled_video_size(width: u32, height: u32, max_width: u32, max_height: u32) -> (u32, u32) {
-    let (scaled_width, scaled_height) = scaled_gif_size(width, height, max_width, max_height);
-    (even_dimension(scaled_width), even_dimension(scaled_height))
-}
-
-fn even_dimension(value: u32) -> u32 {
-    value.max(2) & !1
-}
-
 fn recording_frame_interval(fps: u32) -> Duration {
     Duration::from_millis(1000 / u64::from(fps.max(1)))
 }
 
-fn gif_delay_cs(fps: u32) -> u16 {
-    (100 / fps.max(1)) as u16
-}
-
 fn recording_encoder_options(
     state: &State<'_, AppState>,
-    format: RecordingFormat,
+    profile: RecordingProfile,
 ) -> Result<RecordingEncoderOptions, FlickError> {
-    match format {
+    match profile.format {
         RecordingFormat::Gif => gif_encoder_options(state),
-        RecordingFormat::Video => video_encoder_options(state),
+        RecordingFormat::Video => video_encoder_options(state, profile.audio),
     }
 }
 
@@ -740,11 +670,13 @@ fn gif_encoder_options(state: &State<'_, AppState>) -> Result<RecordingEncoderOp
             _ => DEFAULT_RECORDING_FPS,
         },
         ffmpeg_path: None,
+        audio: RecordingAudioMode::Unsupported,
     })
 }
 
 fn video_encoder_options(
     state: &State<'_, AppState>,
+    audio: RecordingAudioMode,
 ) -> Result<RecordingEncoderOptions, FlickError> {
     let settings = state
         .settings
@@ -773,5 +705,6 @@ fn video_encoder_options(
             _ => 24,
         },
         ffmpeg_path: Some(status.path),
+        audio,
     })
 }

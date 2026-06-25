@@ -38,6 +38,7 @@ export type AppSettings = {
   video_recording_size: '540p' | '720p' | '1080p' | string;
   video_recording_fps: 24 | 30 | number;
   video_recording_format: string;
+  video_recording_audio_source: 'system' | 'none' | string;
   ffmpeg_path: string;
   ocr_auto_translate: boolean;
   ocr_target_language: string;
@@ -146,4 +147,10 @@ export type FfmpegStatus = {
   available: boolean;
   path: string;
   source: string;
+};
+
+export type SystemAudioCaptureCapabilities = {
+  system_output_supported: boolean;
+  system_output_available: boolean;
+  message: string;
 };

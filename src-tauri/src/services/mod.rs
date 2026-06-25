@@ -6,6 +6,7 @@ pub(crate) mod ocr;
 pub(crate) mod screen_capture;
 mod selected_text;
 mod settings;
+pub(crate) mod system_audio_capture;
 mod translation_history;
 mod tts;
 
@@ -17,5 +18,6 @@ pub use ocr::{
 pub use screen_capture::{CachedScreenCapture, ScreenCaptureService};
 pub use selected_text::{read_selected_text, replace_selected_text};
 pub use settings::SettingsStore;
+pub use system_audio_capture::{SystemAudioCaptureCapabilities, SystemAudioCaptureService};
 pub use translation_history::{NewTranslationRecord, TranslationHistoryStore};
 pub use tts::{TtsService, TtsSnapshot, TtsTarget, available_tts_engines, normalize_tts_engine_id};

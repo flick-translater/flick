@@ -287,6 +287,10 @@ fn default_video_recording_format() -> String {
     "mp4".into()
 }
 
+fn default_video_recording_audio_source() -> String {
+    "system".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -315,6 +319,8 @@ pub struct AppSettings {
     pub video_recording_fps: u32,
     #[serde(default = "default_video_recording_format")]
     pub video_recording_format: String,
+    #[serde(default = "default_video_recording_audio_source")]
+    pub video_recording_audio_source: String,
     pub ffmpeg_path: String,
     pub ocr_auto_translate: bool,
     pub ocr_target_language: String,
@@ -345,6 +351,7 @@ impl Default for AppSettings {
             video_recording_size: default_video_recording_size(),
             video_recording_fps: default_video_recording_fps(),
             video_recording_format: default_video_recording_format(),
+            video_recording_audio_source: default_video_recording_audio_source(),
             ffmpeg_path: String::new(),
             ocr_auto_translate: true,
             ocr_target_language: default_ocr_target_language(),
@@ -405,6 +412,15 @@ impl AppSettings {
                 "mp4" => "mp4".into(),
                 _ => default_video_recording_format(),
             };
+        self.video_recording_audio_source = match self
+            .video_recording_audio_source
+            .trim()
+            .to_lowercase()
+            .as_str()
+        {
+            "none" => "none".into(),
+            _ => default_video_recording_audio_source(),
+        };
     }
 }
 
