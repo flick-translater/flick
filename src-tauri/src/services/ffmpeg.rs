@@ -1,8 +1,12 @@
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
+
+use futures_util::StreamExt;
+use serde::Serialize;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -13,7 +17,14 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 use crate::{error::FlickError, models::FfmpegStatus};
 
 const FFMPEG_RELEASE_BASE: &str =
-    "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1";
+    "https://github.com/eugeneware/ffmpeg-static/releases/latest/download";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FfmpegDownloadProgress {
+    pub downloaded: u64,
+    pub total: Option<u64>,
+    pub percent: Option<u8>,
+}
 
 pub fn detect_ffmpeg(configured_path: &str) -> FfmpegStatus {
     if !configured_path.trim().is_empty() && ffmpeg_works(Path::new(configured_path)) {
@@ -21,14 +32,6 @@ pub fn detect_ffmpeg(configured_path: &str) -> FfmpegStatus {
             available: true,
             path: configured_path.to_string(),
             source: "configured".into(),
-        };
-    }
-
-    if command_works("ffmpeg") {
-        return FfmpegStatus {
-            available: true,
-            path: "ffmpeg".into(),
-            source: "system".into(),
         };
     }
 
@@ -41,6 +44,14 @@ pub fn detect_ffmpeg(configured_path: &str) -> FfmpegStatus {
         };
     }
 
+    if command_works("ffmpeg") {
+        return FfmpegStatus {
+            available: true,
+            path: "ffmpeg".into(),
+            source: "system".into(),
+        };
+    }
+
     FfmpegStatus {
         available: false,
         path: String::new(),
@@ -48,7 +59,9 @@ pub fn detect_ffmpeg(configured_path: &str) -> FfmpegStatus {
     }
 }
 
-pub async fn download_ffmpeg() -> Result<FfmpegStatus, FlickError> {
+pub async fn download_ffmpeg(
+    mut on_progress: impl FnMut(FfmpegDownloadProgress),
+) -> Result<FfmpegStatus, FlickError> {
     let url = ffmpeg_download_url()?;
     let destination = local_ffmpeg_path();
     let temp_path = destination.with_extension("download");
@@ -67,12 +80,30 @@ pub async fn download_ffmpeg() -> Result<FfmpegStatus, FlickError> {
         )));
     }
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| FlickError::Message(format!("failed to read ffmpeg download: {error}")))?;
-    fs::write(&temp_path, bytes)
-        .map_err(|error| FlickError::Message(format!("failed to write ffmpeg file: {error}")))?;
+    let total = response.content_length();
+    let mut downloaded = 0u64;
+    on_progress(download_progress(downloaded, total));
+
+    let mut file = fs::File::create(&temp_path)
+        .map_err(|error| FlickError::Message(format!("failed to create ffmpeg file: {error}")))?;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            let _ = fs::remove_file(&temp_path);
+            FlickError::Message(format!("failed to read ffmpeg download: {error}"))
+        })?;
+        file.write_all(&chunk).map_err(|error| {
+            let _ = fs::remove_file(&temp_path);
+            FlickError::Message(format!("failed to write ffmpeg file: {error}"))
+        })?;
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        on_progress(download_progress(downloaded, total));
+    }
+    file.flush().map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        FlickError::Message(format!("failed to flush ffmpeg file: {error}"))
+    })?;
+    drop(file);
 
     fs::rename(&temp_path, &destination)
         .map_err(|error| FlickError::Message(format!("failed to install ffmpeg: {error}")))?;
@@ -104,6 +135,17 @@ pub async fn download_ffmpeg() -> Result<FfmpegStatus, FlickError> {
     })
 }
 
+fn download_progress(downloaded: u64, total: Option<u64>) -> FfmpegDownloadProgress {
+    let percent = total
+        .filter(|total| *total > 0)
+        .map(|total| ((downloaded.saturating_mul(100) / total).min(100)) as u8);
+    FfmpegDownloadProgress {
+        downloaded,
+        total,
+        percent,
+    }
+}
+
 fn local_ffmpeg_path() -> PathBuf {
     let name = if cfg!(target_os = "windows") {
         "ffmpeg.exe"
@@ -125,7 +167,8 @@ fn ffmpeg_download_url() -> Result<String, FlickError> {
     let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => "darwin-arm64",
         ("macos", _) => "darwin-x64",
-        ("windows", _) => "win32-x64",
+        ("windows", "x86_64") => "win32-x64",
+        ("windows", "x86") => "win32-ia32",
         ("linux", "aarch64") => "linux-arm64",
         ("linux", "arm") => "linux-arm",
         ("linux", "x86") => "linux-ia32",

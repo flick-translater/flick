@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { Download, Image, LoaderCircle, Paintbrush, Video } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import Toggle from '../components/Toggle';
@@ -9,6 +10,12 @@ type GifSize = '540p' | '720p';
 type GifFps = 6 | 8 | 10;
 type VideoSize = '540p' | '720p' | '1080p';
 type VideoFps = 24 | 30;
+
+type FfmpegDownloadProgress = {
+  downloaded: number;
+  total?: number | null;
+  percent?: number | null;
+};
 
 const missingFfmpeg: FfmpegStatus = {
   available: false,
@@ -21,12 +28,35 @@ export default function ScreenshotSettings() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [ffmpegStatus, setFfmpegStatus] = useState<FfmpegStatus>(missingFfmpeg);
   const [isDownloadingFfmpeg, setIsDownloadingFfmpeg] = useState(false);
+  const [ffmpegDownloadPercent, setFfmpegDownloadPercent] = useState<number | null>(null);
   const [error, setError] = useState('');
   const isLinux = useMemo(() => /Linux/i.test(navigator.platform), []);
   const gifSize = normalizeGifSize(settings?.gif_recording_size);
   const gifFps = normalizeGifFps(settings?.gif_recording_fps);
   const videoSize = normalizeVideoSize(settings?.video_recording_size);
   const videoFps = normalizeVideoFps(settings?.video_recording_fps);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<FfmpegDownloadProgress>('ffmpeg-download-progress', (event) => {
+      if (disposed) {
+        return;
+      }
+      const percent = event.payload.percent;
+      setFfmpegDownloadPercent(typeof percent === 'number' ? clampPercent(percent) : null);
+    }).then((cleanup) => {
+      if (disposed) {
+        cleanup();
+      } else {
+        unlisten = cleanup;
+      }
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     void Promise.all([
@@ -97,16 +127,19 @@ export default function ScreenshotSettings() {
 
   function downloadFfmpeg() {
     setIsDownloadingFfmpeg(true);
+    setFfmpegDownloadPercent(0);
     setError('');
     void invoke<FfmpegStatus>('download_ffmpeg')
       .then((status) => {
         setFfmpegStatus(status);
+        setFfmpegDownloadPercent(100);
       })
       .catch((downloadError: unknown) => {
         setError(String(downloadError));
       })
       .finally(() => {
         setIsDownloadingFfmpeg(false);
+        window.setTimeout(() => setFfmpegDownloadPercent(null), 600);
       });
   }
 
@@ -233,15 +266,20 @@ export default function ScreenshotSettings() {
                     : t('screenshotSettings.ffmpegMissing')}
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={ffmpegStatus.available || isDownloadingFfmpeg}
-                onClick={downloadFfmpeg}
-                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg bg-primary px-3 text-xs font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:bg-surface-container-highest disabled:text-on-surface-variant"
-              >
-                {isDownloadingFfmpeg ? <LoaderCircle size={14} className="animate-spin" /> : <Download size={14} />}
-                {isDownloadingFfmpeg ? t('screenshotSettings.downloadingFfmpeg') : t('screenshotSettings.downloadFfmpeg')}
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  disabled={ffmpegStatus.available || isDownloadingFfmpeg}
+                  onClick={downloadFfmpeg}
+                  className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg bg-primary px-3 text-xs font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:bg-surface-container-highest disabled:text-on-surface-variant"
+                >
+                  {isDownloadingFfmpeg ? <LoaderCircle size={14} className="animate-spin" /> : <Download size={14} />}
+                  {isDownloadingFfmpeg ? t('screenshotSettings.downloadingFfmpeg') : t('screenshotSettings.downloadFfmpeg')}
+                </button>
+                {isDownloadingFfmpeg && (
+                  <DownloadProgressCircle percent={ffmpegDownloadPercent} />
+                )}
+              </div>
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -314,4 +352,48 @@ function normalizeVideoSize(value?: string): VideoSize {
 
 function normalizeVideoFps(value?: number): VideoFps {
   return value === 30 ? 30 : 24;
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function DownloadProgressCircle({ percent }: { percent: number | null }) {
+  const radius = 14;
+  const circumference = 2 * Math.PI * radius;
+  const normalized = percent ?? 0;
+  const dashOffset = circumference * (1 - normalized / 100);
+
+  return (
+    <div className="relative h-9 w-9 shrink-0" aria-label={percent === null ? undefined : `${normalized}%`}>
+      <svg className="h-9 w-9 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
+        <circle
+          cx="18"
+          cy="18"
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          className="text-outline-variant/35"
+        />
+        <circle
+          cx="18"
+          cy="18"
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={dashOffset}
+          className={percent === null ? 'animate-pulse text-primary' : 'text-primary transition-[stroke-dashoffset] duration-150'}
+        />
+      </svg>
+      {percent !== null && (
+        <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-primary">
+          {normalized}
+        </span>
+      )}
+    </div>
+  );
 }

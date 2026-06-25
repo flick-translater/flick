@@ -2,7 +2,7 @@
 
 use std::{fs, path::PathBuf};
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt as _;
 
 use crate::{
@@ -418,8 +418,15 @@ pub fn get_ffmpeg_status(state: State<'_, AppState>) -> Result<FfmpegStatus, Fli
 }
 
 #[tauri::command]
-pub async fn download_ffmpeg(state: State<'_, AppState>) -> Result<FfmpegStatus, FlickError> {
-    let status = ffmpeg::download_ffmpeg().await?;
+pub async fn download_ffmpeg(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<FfmpegStatus, FlickError> {
+    let progress_app = app.clone();
+    let status = ffmpeg::download_ffmpeg(move |progress| {
+        let _ = progress_app.emit("ffmpeg-download-progress", progress);
+    })
+    .await?;
     let updated = {
         let mut settings = state
             .settings
