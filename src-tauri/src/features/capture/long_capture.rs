@@ -1111,9 +1111,9 @@ fn finalize_long_capture(
     long_log("finalize: save png complete");
     if copy_to_clipboard {
         long_log("finalize: copy clipboard start");
-        capture_service.copy_to_clipboard(&image).map_err(|error| {
-            FlickError::Message(format!("failed to copy long screenshot: {error}"))
-        })?;
+        if let Err(error) = capture_service.copy_to_clipboard(&image) {
+            eprintln!("failed to copy long screenshot to clipboard: {error}");
+        }
         long_log("finalize: copy clipboard complete");
     }
     long_log("finalize: prune history start");
@@ -1128,23 +1128,43 @@ fn finalize_long_capture(
     drop(history_guard);
     crate::app::windows::emit_capture_status(&app, "capture-finished", &record);
     if pin_to_desktop {
-        if let Err(error) = crate::app::windows::show_pinned_image_window(
-            &app,
-            &record.path,
-            image.width(),
-            image.height(),
-        ) {
-            eprintln!("failed to show pinned image window: {error}");
-        }
+        let app_for_pin = app.clone();
+        let pin_path = record.path.clone();
+        let pin_width = image.width();
+        let pin_height = image.height();
+        thread::spawn(move || {
+            if let Err(error) = crate::app::windows::show_pinned_image_window(
+                &app_for_pin,
+                &pin_path,
+                pin_width,
+                pin_height,
+            ) {
+                eprintln!("failed to show pinned image window: {error}");
+            }
+        });
     }
     long_log("finalize: complete");
     Ok(record)
 }
 
 fn cleanup_long_capture_ui(app: &AppHandle, state: &State<'_, AppState>, session_id: &str) {
-    long_log("cleanup_ui: restore overlay/editor state start");
-    cleanup_long_capture_capture_window(app, state, session_id);
-    long_log("cleanup_ui: complete");
+    #[cfg(target_os = "windows")]
+    {
+        long_log("cleanup_ui/windows: restore overlay and close editor windows start");
+        platform::set_overlay_mouse_passthrough(app, false);
+        platform::set_overlay_capture_sharing(app, true);
+        platform::finalize_capture_session(app, state, true);
+        crate::app::windows::close_screenshot_editor_window(app, session_id);
+        long_log("cleanup_ui/windows: complete");
+        return;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        long_log("cleanup_ui: restore overlay/editor state start");
+        cleanup_long_capture_capture_window(app, state, session_id);
+        long_log("cleanup_ui: complete");
+    }
 }
 
 fn cleanup_long_capture_capture_window(

@@ -33,12 +33,18 @@ const DRAG_THRESHOLD: f64 = 4.0;
 const BORDER_THICKNESS: u32 = 2;
 const DIM_ALPHA: f32 = 0.22;
 const BORDER_COLOR: [u8; 4] = [0, 102, 204, 255];
+const CROSSHAIR_COLOR: [u8; 4] = [0, 102, 204, 255];
+const CROSSHAIR_DASH_LENGTH: u32 = 8;
+const CROSSHAIR_GAP_LENGTH: u32 = 6;
 
 fn overlay_visuals() -> OverlayVisuals {
     OverlayVisuals {
         dim_alpha: DIM_ALPHA,
         border_thickness: BORDER_THICKNESS,
         border_color: BORDER_COLOR,
+        crosshair_color: CROSSHAIR_COLOR,
+        crosshair_dash_length: CROSSHAIR_DASH_LENGTH,
+        crosshair_gap_length: CROSSHAIR_GAP_LENGTH,
     }
 }
 
@@ -309,6 +315,12 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
             }
         } else if !left_was_down && active_selection.take().is_some() {
             let _ = frozen_overlay::update_highlight(&app, None);
+        }
+
+        if left_down {
+            let _ = frozen_overlay::update_crosshair(&app, None);
+        } else if !left_was_down {
+            let _ = frozen_overlay::update_crosshair(&app, Some((cursor.x, cursor.y)));
         }
 
         if !left_down && left_was_down {
