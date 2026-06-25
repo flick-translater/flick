@@ -1,6 +1,21 @@
 //! File-system and shell helpers related to captured images.
 
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
+
+#[cfg(not(target_os = "windows"))]
+use std::process::Command;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
+
+#[cfg(target_os = "windows")]
+use windows_sys::{
+    Win32::{
+        Foundation::HWND,
+        UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
+    },
+    core::PCWSTR,
+};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
@@ -26,24 +41,51 @@ pub fn open_file_in_default_app(path: &str) -> Result<(), FlickError> {
     };
 
     #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", path]);
-        command
-    };
+    return open_file_with_shell_execute(path);
 
-    #[cfg(target_os = "linux")]
-    let mut command = {
-        let mut command = Command::new("xdg-open");
-        command.arg(path);
-        command
-    };
+    #[cfg(not(target_os = "windows"))]
+    {
+        #[cfg(target_os = "linux")]
+        let mut command = {
+            let mut command = Command::new("xdg-open");
+            command.arg(path);
+            command
+        };
 
-    command
-        .spawn()
-        .map_err(|error| FlickError::Message(format!("failed to open file: {error}")))?;
+        command
+            .spawn()
+            .map_err(|error| FlickError::Message(format!("failed to open file: {error}")))?;
+
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn open_file_with_shell_execute(path: &str) -> Result<(), FlickError> {
+    let wide_path = wide_null(Path::new(path).as_os_str());
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut::<std::ffi::c_void>() as HWND,
+            std::ptr::null::<u16>() as PCWSTR,
+            wide_path.as_ptr(),
+            std::ptr::null::<u16>() as PCWSTR,
+            std::ptr::null::<u16>() as PCWSTR,
+            SW_SHOWNORMAL,
+        )
+    } as isize;
+
+    if result <= 32 {
+        return Err(FlickError::Message(format!(
+            "failed to open file with default app: ShellExecuteW returned {result}"
+        )));
+    }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn wide_null(value: &std::ffi::OsStr) -> Vec<u16> {
+    value.encode_wide().chain(std::iter::once(0)).collect()
 }
 
 pub fn read_image_as_data_url(path: &str) -> Result<String, FlickError> {
