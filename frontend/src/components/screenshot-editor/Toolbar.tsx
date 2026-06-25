@@ -456,6 +456,7 @@ type RecordingControlsToolbarProps = {
   editorVisible: boolean;
   status: 'idle' | 'recording' | 'paused' | 'saving';
   format: 'gif' | 'video';
+  canRecordVideo: boolean;
   onFormatChange: (format: 'gif' | 'video') => void;
   onStart: () => void;
   onPause: () => void;
@@ -470,6 +471,7 @@ export function RecordingControlsToolbar({
   editorVisible,
   status,
   format,
+  canRecordVideo,
   onFormatChange,
   onStart,
   onPause,
@@ -521,7 +523,7 @@ export function RecordingControlsToolbar({
           <button
             key={item}
             type="button"
-            disabled={status !== 'idle'}
+            disabled={status !== 'idle' || (item === 'video' && !canRecordVideo)}
             onClick={() => onFormatChange(item)}
             className={`h-7 rounded px-2 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
               format === item

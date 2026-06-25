@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -6,7 +6,7 @@ import { Pause, Play, Square, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import './index.css';
 import { normalizeLanguage, setupI18n } from './i18n/config';
-import type { AppSettings } from './types';
+import type { AppSettings, FfmpegStatus } from './types';
 
 type RecordingStatus = 'idle' | 'recording' | 'paused' | 'saving';
 type RecordingFormat = 'gif' | 'video';
@@ -18,8 +18,34 @@ function RecordingToolbar() {
   const sessionId = query.get('session_id') ?? '';
   const [status, setStatus] = useState<RecordingStatus>('idle');
   const [format, setFormat] = useState<RecordingFormat>('gif');
+  const [canRecordVideo, setCanRecordVideo] = useState(false);
   const [error, setError] = useState('');
   const appWindow = useMemo(() => getCurrentWindow(), []);
+
+  useEffect(() => {
+    void refreshVideoRecordingAvailability();
+  }, []);
+
+  useEffect(() => {
+    if (!canRecordVideo && format === 'video') {
+      setFormat('gif');
+    }
+  }, [canRecordVideo, format]);
+
+  async function refreshVideoRecordingAvailability() {
+    try {
+      const status = await invoke<FfmpegStatus>('get_ffmpeg_status');
+      setCanRecordVideo(status.available);
+      if (!status.available) {
+        setFormat('gif');
+      }
+      return status.available;
+    } catch {
+      setCanRecordVideo(false);
+      setFormat('gif');
+      return false;
+    }
+  }
 
   async function startOrResume() {
     if (!sessionId || status === 'recording' || status === 'saving') {
@@ -27,6 +53,12 @@ function RecordingToolbar() {
     }
     setError('');
     try {
+      const videoAvailable = await refreshVideoRecordingAvailability();
+      if (format === 'video' && !videoAvailable) {
+        setFormat('gif');
+        setError('ffmpeg is not available');
+        return;
+      }
       await invoke('set_recording_window_mode', { sessionId, recording: true });
       if (status === 'paused') {
         await invoke('resume_recording', { sessionId });
@@ -110,7 +142,7 @@ function RecordingToolbar() {
             <button
               key={item}
               type="button"
-              disabled={status !== 'idle'}
+              disabled={status !== 'idle' || (item === 'video' && !canRecordVideo)}
               onClick={() => setFormat(item)}
               className={`h-7 rounded px-2 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                 format === item

@@ -25,7 +25,7 @@ import type {
   TextDraft,
   Tool,
 } from './components/screenshot-editor/types';
-import type { AppSettings } from './types';
+import type { AppSettings, FfmpegStatus } from './types';
 
 const defaultEditorColor = '#ef4444';
 const imageSizeFallback = { width: 1, height: 1 };
@@ -147,6 +147,7 @@ function ScreenshotEditor() {
   const [editorMode, setEditorMode] = useState<EditorMode>('edit');
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>('idle');
   const [recordingFormat, setRecordingFormat] = useState<RecordingFormat>('gif');
+  const [canRecordVideo, setCanRecordVideo] = useState(false);
   const [isLongEditWindow, setIsLongEditWindow] = useState(false);
   const [longEditDisplaySize, setLongEditDisplaySize] = useState(imageSizeFallback);
   const [longScreenshot, setLongScreenshot] = useState<LongScreenshotState>({
@@ -183,6 +184,31 @@ function ScreenshotEditor() {
   const [toolbarPosition, setToolbarPosition] = useState(toolbarOffset);
   const emojiPageCount = Math.max(1, Math.ceil(emojiChoices.length / emojiPageSize));
   const visibleEmojiChoices = emojiChoices.slice(emojiPage * emojiPageSize, (emojiPage + 1) * emojiPageSize);
+
+  useEffect(() => {
+    void refreshVideoRecordingAvailability();
+  }, []);
+
+  useEffect(() => {
+    if (!canRecordVideo && recordingFormat === 'video') {
+      setRecordingFormat('gif');
+    }
+  }, [canRecordVideo, recordingFormat]);
+
+  async function refreshVideoRecordingAvailability() {
+    try {
+      const status = await invoke<FfmpegStatus>('get_ffmpeg_status');
+      setCanRecordVideo(status.available);
+      if (!status.available) {
+        setRecordingFormat('gif');
+      }
+      return status.available;
+    } catch {
+      setCanRecordVideo(false);
+      setRecordingFormat('gif');
+      return false;
+    }
+  }
 
   useEffect(() => {
     annotationsRef.current = annotations;
@@ -962,6 +988,7 @@ function ScreenshotEditor() {
     setRecordingFormat('gif');
     setEditorMode('recording');
     try {
+      await refreshVideoRecordingAvailability();
       await waitForNextPaint();
       if (recordingControlsMode === 'detached') {
         await invoke('open_recording_controls_window', { sessionId });
@@ -983,6 +1010,11 @@ function ScreenshotEditor() {
     }
     setError('');
     try {
+      if (recordingFormat === 'video' && !canRecordVideo) {
+        setRecordingFormat('gif');
+        setError('ffmpeg is not available');
+        return;
+      }
       await invoke('set_recording_window_mode', { sessionId, recording: true });
       if (recordingStatus === 'paused') {
         await invoke('resume_recording', { sessionId });
@@ -1471,6 +1503,7 @@ function ScreenshotEditor() {
                   editorVisible={editorVisible}
                   status={recordingStatus}
                   format={recordingFormat}
+                  canRecordVideo={canRecordVideo}
                   onFormatChange={setRecordingFormat}
                   onStart={() => void handleGifRecordingStart()}
                   onPause={() => void handleGifRecordingPause()}
