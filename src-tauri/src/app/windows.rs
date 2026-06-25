@@ -463,7 +463,7 @@ pub fn show_pinned_image_window(
         ));
     }
 
-    let (monitor_x, monitor_y, monitor_width, monitor_height) = app
+    let (monitor_x, monitor_y, monitor_width, monitor_height, monitor_scale) = app
         .primary_monitor()
         .ok()
         .flatten()
@@ -474,11 +474,12 @@ pub fn show_pinned_image_window(
                 monitor.position().y as f64 / scale,
                 monitor.size().width as f64 / scale,
                 monitor.size().height as f64 / scale,
+                scale.max(1.0),
             )
         })
-        .unwrap_or((0.0, 0.0, 1280.0, 800.0));
-    let image_width = f64::from(image_width.max(1));
-    let image_height = f64::from(image_height.max(1));
+        .unwrap_or((0.0, 0.0, 1280.0, 800.0, 1.0));
+    let image_width = f64::from(image_width.max(1)) / monitor_scale;
+    let image_height = f64::from(image_height.max(1)) / monitor_scale;
     let max_width = (monitor_width * 0.72).max(160.0);
     let max_height = (monitor_height * 0.72).max(120.0);
     let scale = (max_width / image_width)

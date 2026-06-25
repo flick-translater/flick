@@ -27,6 +27,10 @@ import type {
 } from './components/screenshot-editor/types';
 import type { AppSettings, FfmpegStatus } from './types';
 
+window.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+});
+
 const defaultEditorColor = '#ef4444';
 const imageSizeFallback = { width: 1, height: 1 };
 const emojiPageSize = 48;
