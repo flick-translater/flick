@@ -75,7 +75,8 @@ export default {
         rectangle: "矩形",
         mosaic: "马赛克",
         text: "文字",
-        emoji: "表情"
+        emoji: "表情",
+        number: "序号"
       },
       actions: {
         color: "颜色",

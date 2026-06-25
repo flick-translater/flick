@@ -38,6 +38,8 @@ const emojiDefaultSize = 64;
 const emojiMinSize = 18;
 const emojiHandleSize = 8;
 const selectionMinSize = 18;
+const numberTagDefaultCssSize = 28;
+const numberTagMinSize = 20;
 const defaultLongScreenshotThumbnailWidth = 300;
 const longEditToolbarMinWidth = 560;
 const longEditToolbarHeight = 48;
@@ -352,6 +354,12 @@ function ScreenshotEditor() {
         return;
       }
 
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedAnnotationIndex !== null && !textDraft) {
+        event.preventDefault();
+        removeAnnotationAt(selectedAnnotationIndex);
+        return;
+      }
+
       const modifier = event.ctrlKey || event.metaKey;
       if (!modifier) {
         return;
@@ -490,6 +498,12 @@ function ScreenshotEditor() {
     const nextIndex = annotationsRef.current.length;
     commitAnnotations([...annotationsRef.current, annotation]);
     setSelectedAnnotationIndex(isSelectableAnnotation(annotation) ? nextIndex : null);
+  }, [commitAnnotations]);
+
+  const removeAnnotationAt = useCallback((index: number) => {
+    const nextAnnotations = annotationsRef.current.filter((_, itemIndex) => itemIndex !== index);
+    commitAnnotations(nextAnnotations);
+    setSelectedAnnotationIndex(null);
   }, [commitAnnotations]);
 
   const selectedAnnotation = selectedAnnotationIndex === null ? null : annotations[selectedAnnotationIndex];
@@ -713,6 +727,10 @@ function ScreenshotEditor() {
       return;
     }
     if (tool === 'emoji') {
+      return;
+    }
+    if (tool === 'number') {
+      addAnnotation(createNumberTagAnnotation(point, color, annotationsRef.current, imageSize, getCanvasScale()));
       return;
     }
 
@@ -1612,9 +1630,29 @@ function drawAnnotation(context: CanvasRenderingContext2D, annotation: Annotatio
     }
   } else if (annotation.kind === 'emoji') {
     drawEmojiAnnotation(context, annotation);
+  } else if (annotation.kind === 'number-tag') {
+    drawNumberTagAnnotation(context, annotation);
   }
 
   context.restore();
+}
+
+function drawNumberTagAnnotation(context: CanvasRenderingContext2D, annotation: Extract<Annotation, { kind: 'number-tag' }>) {
+  const rect = normalizeRect(annotation.rect);
+  const size = Math.min(rect.width, rect.height);
+  const x = rect.x + rect.width / 2 - size / 2;
+  const y = rect.y + rect.height / 2 - size / 2;
+  context.fillStyle = annotation.color;
+  context.beginPath();
+  context.arc(x + size / 2, y + size / 2, size / 2, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = '#ffffff';
+  const digits = String(annotation.number).length;
+  context.font = `800 ${Math.max(9, size * (digits <= 2 ? 0.58 : 0.48))}px Inter, sans-serif`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(String(annotation.number), x + size / 2, y + size / 2 + size * 0.02);
 }
 
 function drawEmojiAnnotation(context: CanvasRenderingContext2D, annotation: Extract<Annotation, { kind: 'emoji' }>) {
@@ -1718,6 +1756,9 @@ function getAnnotationBounds(annotation: Exclude<Annotation, { kind: 'mosaic' }>
   if (annotation.kind === 'text') {
     return getTextBounds(annotation);
   }
+  if (annotation.kind === 'number-tag') {
+    return normalizeRect(annotation.rect);
+  }
   return normalizeRect(annotation.rect);
 }
 
@@ -1750,6 +1791,42 @@ function getTextBounds(annotation: Extract<Annotation, { kind: 'text' }>): Rect 
   };
 }
 
+function createNumberTagAnnotation(
+  point: Point,
+  color: string,
+  annotations: Annotation[],
+  imageSize: { width: number; height: number },
+  canvasScale: { x: number; y: number },
+): Annotation {
+  const number = nextNumberTagValue(annotations);
+  const scale = Math.max(Math.min(canvasScale.x, canvasScale.y), 0.001);
+  const size = Math.max(numberTagMinSize, numberTagDefaultCssSize / scale);
+  return {
+    kind: 'number-tag',
+    number,
+    color,
+    rect: clampRectToBounds({
+      x: point.x - size / 2,
+      y: point.y - size / 2,
+      width: size,
+      height: size,
+    }, imageSize),
+  };
+}
+
+function nextNumberTagValue(annotations: Annotation[]) {
+  const used = new Set(
+    annotations
+      .filter((annotation): annotation is Extract<Annotation, { kind: 'number-tag' }> => annotation.kind === 'number-tag')
+      .map((annotation) => annotation.number),
+  );
+  let value = 1;
+  while (used.has(value)) {
+    value += 1;
+  }
+  return value;
+}
+
 function moveAnnotation(annotation: Exclude<Annotation, { kind: 'mosaic' }>, delta: Point, bounds: { width: number; height: number }): Annotation {
   const clampedDelta = clampDeltaForRect(getAnnotationBounds(annotation), delta, bounds);
   if (annotation.kind === 'pen') {
@@ -1775,6 +1852,9 @@ function moveAnnotation(annotation: Exclude<Annotation, { kind: 'mosaic' }>, del
   if (annotation.kind === 'text') {
     return { ...annotation, position: addPoints(annotation.position, clampedDelta) };
   }
+  if (annotation.kind === 'number-tag') {
+    return { ...annotation, rect: moveRect(annotation.rect, clampedDelta, bounds) };
+  }
   return { ...annotation, rect: moveRect(annotation.rect, clampedDelta, bounds) };
 }
 
@@ -1788,12 +1868,15 @@ function resizeAnnotation(
   if (annotation.kind === 'emoji') {
     return { ...annotation, rect: resizeRect(initialRect, delta, handle, bounds) };
   }
+  if (annotation.kind === 'number-tag') {
+    return { ...annotation, rect: resizeRect(initialRect, delta, handle, bounds) };
+  }
 
   const targetRect = resizeSelectionRect(initialRect, delta, handle, bounds);
   return transformAnnotation(annotation, initialRect, targetRect);
 }
 
-function transformAnnotation(annotation: Exclude<Annotation, { kind: 'mosaic' | 'emoji' }>, fromRect: Rect, toRect: Rect): Annotation {
+function transformAnnotation(annotation: Exclude<Annotation, { kind: 'mosaic' | 'emoji' | 'number-tag' }>, fromRect: Rect, toRect: Rect): Annotation {
   const transformPoint = (point: Point) => transformPointBetweenRects(point, fromRect, toRect);
 
   if (annotation.kind === 'pen') {
@@ -1953,6 +2036,17 @@ function moveRect(rect: Rect, delta: Point, bounds: { width: number; height: num
     ...rect,
     x: Math.min(Math.max(rect.x + delta.x, 0), Math.max(bounds.width - rect.width, 0)),
     y: Math.min(Math.max(rect.y + delta.y, 0), Math.max(bounds.height - rect.height, 0)),
+  };
+}
+
+function clampRectToBounds(rect: Rect, bounds: { width: number; height: number }): Rect {
+  const width = Math.min(Math.max(rect.width, 1), bounds.width);
+  const height = Math.min(Math.max(rect.height, 1), bounds.height);
+  return {
+    x: Math.min(Math.max(rect.x, 0), Math.max(bounds.width - width, 0)),
+    y: Math.min(Math.max(rect.y, 0), Math.max(bounds.height - height, 0)),
+    width,
+    height,
   };
 }
 

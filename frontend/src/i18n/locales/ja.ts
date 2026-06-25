@@ -75,7 +75,8 @@ export default {
         rectangle: "四角形",
         mosaic: "モザイク",
         text: "テキスト",
-        emoji: "絵文字"
+        emoji: "絵文字",
+        number: "番号"
       },
       actions: {
         color: "色",

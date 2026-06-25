@@ -75,7 +75,8 @@ export default {
         rectangle: "Rectangle",
         mosaic: "Mosaic",
         text: "Text",
-        emoji: "Emoji"
+        emoji: "Emoji",
+        number: "Number"
       },
       actions: {
         color: "Color",

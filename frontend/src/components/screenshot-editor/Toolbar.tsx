@@ -40,6 +40,7 @@ const tools: Array<{ id: Tool; labelKey: string; icon: React.ComponentType<{ siz
   { id: 'mosaic', labelKey: 'screenshotEditor.tools.mosaic', icon: CheckerboardIcon },
   { id: 'text', labelKey: 'screenshotEditor.tools.text', icon: Type },
   { id: 'emoji', labelKey: 'screenshotEditor.tools.emoji', icon: Smile },
+  { id: 'number', labelKey: 'screenshotEditor.tools.number', icon: NumberTagIcon },
 ];
 
 type ScreenshotEditorToolbarProps = {
@@ -186,7 +187,7 @@ export function ScreenshotEditorToolbar({
                 <Icon size={18} active={isActive} />
               </button>
               {!useNativeTooltip && <ToolbarTooltip label={label} positionClass={tooltipPositionClass} />}
-              {isActive && item.id !== 'mosaic' && item.id !== 'text' && item.id !== 'emoji' && (
+              {isActive && item.id !== 'mosaic' && item.id !== 'text' && item.id !== 'emoji' && item.id !== 'number' && (
                 <ToolOptionPanel label={t('screenshotEditor.options.size')} positionClass={popupPositionClass}>
                   <input
                     type="range"
@@ -355,6 +356,27 @@ export function ScreenshotEditorToolbar({
         )}
       </div>
 
+      <div className={toolbarSeparatorClass} />
+
+      <div className="flex items-center gap-1">
+        <TooltipButton label={t('screenshotEditor.actions.pinToDesktop')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
+          <button
+            type="button"
+            aria-label={t('screenshotEditor.actions.pinToDesktop')}
+            aria-pressed={pinToDesktop}
+            disabled={isSaving || !imageLoaded}
+            onClick={() => onPinToDesktopChange(!pinToDesktop)}
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              pinToDesktop
+                ? 'border-primary bg-primary text-white'
+                : 'border-outline-variant/30 bg-surface-container text-on-surface hover:bg-surface-container-high'
+            }`}
+          >
+            <Pin size={18} />
+          </button>
+        </TooltipButton>
+      </div>
+
       {showLongCapture && (
         <>
           <div className={toolbarSeparatorClass} />
@@ -397,22 +419,6 @@ export function ScreenshotEditorToolbar({
       <div className={toolbarSeparatorClass} />
 
       <div className="flex items-center gap-1">
-        <TooltipButton label={t('screenshotEditor.actions.pinToDesktop')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
-          <button
-            type="button"
-            aria-label={t('screenshotEditor.actions.pinToDesktop')}
-            aria-pressed={pinToDesktop}
-            disabled={isSaving || !imageLoaded}
-            onClick={() => onPinToDesktopChange(!pinToDesktop)}
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-              pinToDesktop
-                ? 'border-primary bg-primary text-white'
-                : 'border-outline-variant/30 bg-surface-container text-on-surface hover:bg-surface-container-high'
-            }`}
-          >
-            <Pin size={18} />
-          </button>
-        </TooltipButton>
         <TooltipButton label={t('screenshotEditor.actions.undo')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
           <button type="button" aria-label={t('screenshotEditor.actions.undo')} onClick={undo} disabled={!canUndo} className={toolbarButtonClass}>
             <Undo2 size={18} />
@@ -759,6 +765,21 @@ function CheckerboardIcon({ size = 18, active = false }: { size?: number; active
       <span className={lightClass} />
       <span className={lightClass} />
       <span className={darkClass} />
+    </span>
+  );
+}
+
+function NumberTagIcon({ size = 18 }: { size?: number; active?: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="flex items-center justify-center rounded-full border-2 border-current text-[10px] font-extrabold leading-none"
+      style={{
+        width: size,
+        height: size,
+      }}
+    >
+      1
     </span>
   );
 }
