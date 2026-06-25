@@ -17,6 +17,7 @@ const SCREENSHOT_EDITOR_WINDOW_PREFIX: &str = "screenshot-editor";
 const PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL: &str = "screenshot-editor-preload";
 const GIF_RECORDING_TOOLBAR_WINDOW_PREFIX: &str = "gif-recording-toolbar";
 const PINNED_IMAGE_WINDOW_PREFIX: &str = "pinned-image";
+const SCREENSHOT_EDITOR_TOOLBAR_WIDTH: f64 = 744.0;
 const RECORDING_TOOLBAR_WINDOW_WIDTH: f64 = 360.0;
 const RECORDING_TOOLBAR_WINDOW_HEIGHT: f64 = 88.0;
 
@@ -106,7 +107,7 @@ pub fn show_screenshot_editor_window(
         ));
     let selection_left = selection.x as f64 - desktop_x;
     let selection_top = selection.y as f64 - desktop_y;
-    let toolbar_width = desktop_width.min(680.0).max(1.0);
+    let toolbar_width = desktop_width.min(SCREENSHOT_EDITOR_TOOLBAR_WIDTH).max(1.0);
     let toolbar_anchor_height = 44.0;
     let toolbar_interactive_height = 340.0;
     let toolbar_top_below = selection_top + selection.height as f64 + 8.0;
@@ -239,7 +240,7 @@ pub fn show_screenshot_editor_window(
         }
     };
     let url = format!(
-        "screenshot-editor.html?session_id={session_id}&display_width={}&display_height={}&selection_left={selection_window_left}&selection_top={selection_window_top}&toolbar_left={toolbar_window_left}&toolbar_top={toolbar_window_top}&thumbnail_left={long_thumbnail_window_left}&thumbnail_top={long_thumbnail_window_top}&thumbnail_region_top={long_thumbnail_region_window_top}&thumbnail_width={long_thumbnail_width}&thumbnail_height={long_thumbnail_height}&popup_placement={}&color={color_param}",
+        "screenshot-editor.html?session_id={session_id}&display_width={}&display_height={}&selection_left={selection_window_left}&selection_top={selection_window_top}&toolbar_left={toolbar_window_left}&toolbar_top={toolbar_window_top}&toolbar_width={toolbar_width}&thumbnail_left={long_thumbnail_window_left}&thumbnail_top={long_thumbnail_window_top}&thumbnail_region_top={long_thumbnail_region_window_top}&thumbnail_width={long_thumbnail_width}&thumbnail_height={long_thumbnail_height}&popup_placement={}&color={color_param}",
         selection.width,
         selection.height,
         if toolbar_placement_below {

@@ -41,7 +41,7 @@ const selectionMinSize = 18;
 const numberTagDefaultCssSize = 28;
 const numberTagMinSize = 20;
 const defaultLongScreenshotThumbnailWidth = 300;
-const longEditToolbarMinWidth = 560;
+const longEditToolbarMinWidth = 640;
 const longEditToolbarHeight = 48;
 const longEditPanelClearance = 288;
 const longEditMinImageHeight = 120;
@@ -150,7 +150,6 @@ function ScreenshotEditor() {
   const [canvasCursor, setCanvasCursor] = useState('default');
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [pinToDesktop, setPinToDesktop] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>('edit');
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>('idle');
   const [recordingFormat, setRecordingFormat] = useState<RecordingFormat>('gif');
@@ -1225,7 +1224,7 @@ function ScreenshotEditor() {
     await getCurrentWindow().close();
   }
 
-  async function handleConfirm() {
+  async function handleConfirm(pinToDesktop = false) {
     stopLongScroll();
     if (!imageRef.current || !sessionId) {
       return;
@@ -1234,7 +1233,7 @@ function ScreenshotEditor() {
       return;
     }
 
-    editorLog(`confirm click: start label=${windowLabel} mode=${editorMode} long_edit=${isLongEditLaunch}`);
+    editorLog(`confirm click: start label=${windowLabel} mode=${editorMode} long_edit=${isLongEditLaunch} pin=${pinToDesktop}`);
     setIsSaving(true);
     setError('');
     isFinishedRef.current = true;
@@ -1350,8 +1349,7 @@ function ScreenshotEditor() {
                   }}
                   onLongCapture={handleLongCaptureStart}
                   onGifRecording={handleGifRecordingModeStart}
-                  pinToDesktop={pinToDesktop}
-                  onPinToDesktopChange={setPinToDesktop}
+                  onPinToDesktop={() => void handleConfirm(true)}
                   onCancel={() => void handleCancel()}
                   onConfirm={() => void handleConfirm()}
                   isSaving={isSaving}
@@ -1500,8 +1498,7 @@ function ScreenshotEditor() {
                   }}
                   onLongCapture={handleLongCaptureStart}
                   onGifRecording={handleGifRecordingModeStart}
-                  pinToDesktop={pinToDesktop}
-                  onPinToDesktopChange={setPinToDesktop}
+                  onPinToDesktop={() => void handleConfirm(true)}
                   onCancel={() => void handleCancel()}
                   onConfirm={() => void handleConfirm()}
                   isSaving={isSaving}
@@ -1517,8 +1514,7 @@ function ScreenshotEditor() {
                   onEdit={handleLongEdit}
                   onScrollStart={startLongScroll}
                   onScrollStop={stopLongScroll}
-                  pinToDesktop={pinToDesktop}
-                  onPinToDesktopChange={setPinToDesktop}
+                  onPinToDesktop={() => void handleConfirm(true)}
                   onCancel={() => void handleCancel()}
                   onConfirm={() => void handleConfirm()}
                   isSaving={isSaving}

@@ -83,8 +83,7 @@ type ScreenshotEditorToolbarProps = {
   clearAnnotations: () => void;
   onLongCapture: () => void;
   onGifRecording: () => void;
-  pinToDesktop: boolean;
-  onPinToDesktopChange: (pinned: boolean) => void;
+  onPinToDesktop: () => void;
   onCancel: () => void;
   onConfirm: () => void;
   isSaving: boolean;
@@ -134,8 +133,7 @@ export function ScreenshotEditorToolbar({
   clearAnnotations,
   onLongCapture,
   onGifRecording,
-  pinToDesktop,
-  onPinToDesktopChange,
+  onPinToDesktop,
   onCancel,
   onConfirm,
   isSaving,
@@ -363,14 +361,9 @@ export function ScreenshotEditorToolbar({
           <button
             type="button"
             aria-label={t('screenshotEditor.actions.pinToDesktop')}
-            aria-pressed={pinToDesktop}
             disabled={isSaving || !imageLoaded}
-            onClick={() => onPinToDesktopChange(!pinToDesktop)}
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-              pinToDesktop
-                ? 'border-primary bg-primary text-white'
-                : 'border-outline-variant/30 bg-surface-container text-on-surface hover:bg-surface-container-high'
-            }`}
+            onClick={onPinToDesktop}
+            className={toolbarButtonClass}
           >
             <Pin size={18} />
           </button>
@@ -585,8 +578,7 @@ type LongScreenshotToolbarProps = {
   onEdit: () => void;
   onScrollStart: (direction: 'up' | 'down') => void;
   onScrollStop: () => void;
-  pinToDesktop: boolean;
-  onPinToDesktopChange: (pinned: boolean) => void;
+  onPinToDesktop: () => void;
   onCancel: () => void;
   onConfirm: () => void;
   isSaving: boolean;
@@ -601,8 +593,7 @@ export function LongScreenshotToolbar({
   onEdit,
   onScrollStart,
   onScrollStop,
-  pinToDesktop,
-  onPinToDesktopChange,
+  onPinToDesktop,
   onCancel,
   onConfirm,
   isSaving,
@@ -671,14 +662,9 @@ export function LongScreenshotToolbar({
         <button
           type="button"
           aria-label={t('screenshotEditor.actions.pinToDesktop')}
-          aria-pressed={pinToDesktop}
           disabled={isSaving || !imageLoaded}
-          onClick={() => onPinToDesktopChange(!pinToDesktop)}
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-            pinToDesktop
-              ? 'border-primary bg-primary text-white'
-              : 'border-outline-variant/30 bg-surface-container text-on-surface hover:bg-surface-container-high'
-          }`}
+          onClick={onPinToDesktop}
+          className={toolbarButtonClass}
         >
           <Pin size={18} />
         </button>

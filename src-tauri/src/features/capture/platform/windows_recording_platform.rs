@@ -6,6 +6,7 @@ use super::windows_platform;
 
 const RECORDING_TOOLBAR_REGION_WIDTH: f64 = 360.0;
 const RECORDING_TOOLBAR_REGION_HEIGHT: f64 = 56.0;
+const SCREENSHOT_EDITOR_TOOLBAR_REGION_WIDTH: f64 = 744.0;
 
 pub(super) fn set_recording_window_mode(
     app: &AppHandle,
@@ -96,6 +97,9 @@ fn regular_editor_regions(url: &tauri::Url) -> Vec<SelectionRect> {
     let height = query_f64(url, "display_height").unwrap_or(1.0).max(1.0);
     let toolbar_left = query_f64(url, "toolbar_left").unwrap_or(8.0);
     let toolbar_top = query_f64(url, "toolbar_top").unwrap_or(8.0);
+    let toolbar_width = query_f64(url, "toolbar_width")
+        .unwrap_or(SCREENSHOT_EDITOR_TOOLBAR_REGION_WIDTH)
+        .max(1.0);
     let thumbnail_left = query_f64(url, "thumbnail_left").unwrap_or(8.0);
     let thumbnail_region_top = query_f64(url, "thumbnail_region_top").unwrap_or(8.0);
     let thumbnail_width = query_f64(url, "thumbnail_width").unwrap_or(300.0);
@@ -103,7 +107,7 @@ fn regular_editor_regions(url: &tauri::Url) -> Vec<SelectionRect> {
 
     vec![
         rect(selection_left, selection_top, width, height),
-        rect(toolbar_left, toolbar_top - 300.0, 680.0, 340.0),
+        rect(toolbar_left, toolbar_top - 300.0, toolbar_width, 340.0),
         rect(
             thumbnail_left,
             thumbnail_region_top,

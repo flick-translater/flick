@@ -441,7 +441,9 @@ fn ensure_video_thumbnail(
 ) -> Result<VideoThumbnail, FlickError> {
     let thumbnail_path = video_thumbnail_path(video_dir, video_path)?;
     if thumbnail_path.exists() {
-        return Ok(VideoThumbnail { path: thumbnail_path });
+        return Ok(VideoThumbnail {
+            path: thumbnail_path,
+        });
     }
 
     if let Some(parent) = thumbnail_path.parent() {
@@ -494,13 +496,17 @@ fn ensure_video_thumbnail(
     if let Err(error) = fs::rename(&temp_path, &thumbnail_path) {
         let _ = fs::remove_file(&temp_path);
         if thumbnail_path.exists() {
-            return Ok(VideoThumbnail { path: thumbnail_path });
+            return Ok(VideoThumbnail {
+                path: thumbnail_path,
+            });
         }
         return Err(FlickError::Message(format!(
             "failed to save video thumbnail: {error}"
         )));
     }
-    Ok(VideoThumbnail { path: thumbnail_path })
+    Ok(VideoThumbnail {
+        path: thumbnail_path,
+    })
 }
 
 fn video_thumbnail_path(video_dir: &Path, video_path: &Path) -> Result<PathBuf, FlickError> {
@@ -542,7 +548,9 @@ fn remove_video_thumbnail_cache(video_dir: &Path, video_path: &Path) -> Result<(
     })?;
     for entry in entries {
         let entry = entry.map_err(|error| {
-            FlickError::Message(format!("failed to read video thumbnail cache entry: {error}"))
+            FlickError::Message(format!(
+                "failed to read video thumbnail cache entry: {error}"
+            ))
         })?;
         let path = entry.path();
         if path
@@ -586,7 +594,9 @@ fn remove_orphan_video_thumbnail_cache(
     })?;
     for entry in entries {
         let entry = entry.map_err(|error| {
-            FlickError::Message(format!("failed to read video thumbnail cache entry: {error}"))
+            FlickError::Message(format!(
+                "failed to read video thumbnail cache entry: {error}"
+            ))
         })?;
         let path = entry.path();
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {

@@ -43,6 +43,8 @@ const INITIAL_LIVE_STREAM_FRAME_TIMEOUT: Duration = Duration::from_millis(1200);
 const FINALIZE_CAPTURE_WAIT_TIMEOUT: Duration = Duration::from_millis(1500);
 const FINALIZE_CAPTURE_WAIT_POLL: Duration = Duration::from_millis(25);
 const LONG_PREVIEW_WIDTH: u32 = 240;
+#[cfg(target_os = "windows")]
+const SCREENSHOT_EDITOR_TOOLBAR_REGION_WIDTH: f64 = 744.0;
 /// If the stream delivers no frame for this long, the page was likely still (and may have jumped),
 /// so the next frame drops its stale predecessor and starts a fresh stitch base instead of measuring
 /// a bogus delta across the gap. Stream-driven, not wheel-driven, so it works during inertia too.
@@ -1301,7 +1303,9 @@ fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
         let thumbnail_width = query_f64(&url, "thumbnail_width").unwrap_or(300.0);
         let thumbnail_height = query_f64(&url, "thumbnail_height").unwrap_or(560.0);
 
-        let toolbar_width: f64 = 680.0;
+        let toolbar_width = query_f64(&url, "toolbar_width")
+            .unwrap_or(SCREENSHOT_EDITOR_TOOLBAR_REGION_WIDTH)
+            .max(1.0);
         let toolbar_height: f64 = 56.0;
         let regions = vec![
             SelectionRect {
