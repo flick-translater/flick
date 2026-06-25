@@ -15,6 +15,15 @@ pub fn list_capture_history(state: State<'_, AppState>) -> Result<CaptureHistory
 }
 
 #[tauri::command]
+pub fn list_capture_history_page(
+    state: State<'_, AppState>,
+    page: u32,
+    page_size: u32,
+) -> Result<CaptureHistory, FlickError> {
+    capture::list_capture_history_page(&state, page, page_size)
+}
+
+#[tauri::command]
 pub fn list_video_history(state: State<'_, AppState>) -> Result<CaptureHistory, FlickError> {
     capture::list_video_history(&state)
 }
@@ -37,6 +46,14 @@ pub fn open_file_in_default_app(path: String) -> Result<(), FlickError> {
 #[tauri::command]
 pub fn read_image_as_data_url(path: String) -> Result<String, FlickError> {
     capture::read_image_as_data_url(&path)
+}
+
+#[tauri::command]
+pub fn read_video_thumbnail_as_data_url(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, FlickError> {
+    capture::read_video_thumbnail_as_data_url(&state, &path)
 }
 
 #[tauri::command]

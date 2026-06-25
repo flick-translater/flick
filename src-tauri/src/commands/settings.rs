@@ -396,25 +396,11 @@ pub fn get_system_audio_capture_capabilities() -> Result<SystemAudioCaptureCapab
 
 #[tauri::command]
 pub fn get_ffmpeg_status(state: State<'_, AppState>) -> Result<FfmpegStatus, FlickError> {
-    let configured_path = state
-        .settings
+    state
+        .ffmpeg_status
         .lock()
-        .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
-        .ffmpeg_path
-        .clone();
-    let status = ffmpeg::detect_ffmpeg(&configured_path);
-    if status.available && status.path != configured_path {
-        let updated = {
-            let mut settings = state
-                .settings
-                .lock()
-                .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
-            settings.ffmpeg_path = status.path.clone();
-            settings.clone()
-        };
-        state.settings_store.save_settings(&updated)?;
-    }
-    Ok(status)
+        .map_err(|_| FlickError::Message("ffmpeg status mutex poisoned".into()))
+        .map(|status| status.clone())
 }
 
 #[tauri::command]
@@ -435,6 +421,13 @@ pub async fn download_ffmpeg(
         settings.ffmpeg_path = status.path.clone();
         settings.clone()
     };
+    {
+        let mut ffmpeg_status = state
+            .ffmpeg_status
+            .lock()
+            .map_err(|_| FlickError::Message("ffmpeg status mutex poisoned".into()))?;
+        *ffmpeg_status = status.clone();
+    }
     state.settings_store.save_settings(&updated)?;
     Ok(status)
 }

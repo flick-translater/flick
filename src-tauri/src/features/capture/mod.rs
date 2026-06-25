@@ -14,8 +14,9 @@ mod session;
 
 pub use history::{
     clear_all_captures, clear_all_videos, copy_capture_image, current_screenshot_dir,
-    delete_capture, delete_video, get_storage_info, list_capture_history, list_video_history,
-    prune_capture_history,
+    delete_capture, delete_video, get_storage_info, list_capture_history,
+    list_capture_history_page, list_video_history, prune_capture_history,
+    read_video_thumbnail_as_data_url,
 };
 pub use io::{open_file_in_default_app, pick_screenshot_directory, read_image_as_data_url};
 pub use long_capture::{

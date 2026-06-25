@@ -21,7 +21,7 @@ use crate::{
     app::{AppState, windows},
     error::FlickError,
     models::{CaptureRecord, SelectionRect},
-    services::{ScreenCaptureService, ffmpeg, screen_capture::LiveFrameStream},
+    services::{ScreenCaptureService, screen_capture::LiveFrameStream},
 };
 
 use super::{history, platform, recording_gif, recording_video};
@@ -606,7 +606,11 @@ fn video_encoder_options(
         .lock()
         .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
         .clone();
-    let status = ffmpeg::detect_ffmpeg(&settings.ffmpeg_path);
+    let status = state
+        .ffmpeg_status
+        .lock()
+        .map_err(|_| FlickError::Message("ffmpeg status mutex poisoned".into()))?
+        .clone();
     if !status.available {
         return Err(FlickError::Message("ffmpeg is not available".into()));
     }

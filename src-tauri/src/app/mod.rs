@@ -21,7 +21,7 @@ use tauri_plugin_autostart::{Builder as AutostartBuilder, ManagerExt as _};
 
 use crate::{
     commands,
-    models::{AppSettings, CaptureRecord, PendingCaptureEdit, TranslateWindowState},
+    models::{AppSettings, CaptureRecord, FfmpegStatus, PendingCaptureEdit, TranslateWindowState},
     services::{
         CachedScreenCapture, OcrService, SettingsStore, TranslationHistoryStore, TtsService,
         available_ocr_engines, available_tts_engines, create_ocr_service, default_ocr_provider,
@@ -48,6 +48,7 @@ pub struct AppState {
     pub translation_history_store: TranslationHistoryStore,
     pub settings_store: SettingsStore,
     pub settings: Mutex<AppSettings>,
+    pub ffmpeg_status: Mutex<FfmpegStatus>,
     pub capture_intent: Mutex<CaptureIntent>,
     pub ocr_service: Mutex<Arc<dyn OcrService>>,
     pub tts_service: TtsService,
@@ -104,11 +105,13 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::capture::list_capture_history,
+            commands::capture::list_capture_history_page,
             commands::capture::list_video_history,
             commands::capture::get_storage_info,
             commands::capture::pick_screenshot_directory,
             commands::capture::open_file_in_default_app,
             commands::capture::read_image_as_data_url,
+            commands::capture::read_video_thumbnail_as_data_url,
             commands::capture::delete_capture,
             commands::capture::delete_video,
             commands::capture::clear_all_captures,
@@ -257,7 +260,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
     }
     let ffmpeg_status = crate::services::ffmpeg::detect_ffmpeg(&settings.ffmpeg_path);
     if ffmpeg_status.available {
-        settings.ffmpeg_path = ffmpeg_status.path;
+        settings.ffmpeg_path = ffmpeg_status.path.clone();
     }
     settings_store.save_settings(&settings)?;
     // When the user has not picked a UI language yet, initialize it from the system locale.
@@ -293,6 +296,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         translation_history_store,
         settings_store,
         settings: Mutex::new(settings.clone()),
+        ffmpeg_status: Mutex::new(ffmpeg_status),
         capture_intent: Mutex::new(CaptureIntent::Capture),
         ocr_service: Mutex::new(create_ocr_service(&settings.ocr_provider, &ocr_models_dir)),
         tts_service: {

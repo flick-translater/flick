@@ -1,7 +1,7 @@
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Clock3, Copy, FolderOpen, ImageIcon, Play, RefreshCw, Trash2, Video, X } from 'lucide-react';
+import { Clock3, Copy, FolderOpen, ImageIcon, Play, RefreshCw, Tag, Trash2, Video, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CaptureHistory, CaptureRecord, TranslationHistory, TranslationRecord } from '../types';
 
@@ -22,6 +22,7 @@ type TranslationDeleteTarget = {
 
 const emptyHistory: CaptureHistory = {
   directory: '',
+  total_count: 0,
   items: [],
 };
 
@@ -54,10 +55,13 @@ export default function HistoryView() {
   const [videoPage, setVideoPage] = useState(1);
   const [translationPage, setTranslationPage] = useState(1);
 
-  const loadHistory = async () => {
+  const loadHistory = async (page = currentPage) => {
     try {
       setLoadError(null);
-      const nextHistory = await invoke<CaptureHistory>('list_capture_history');
+      const nextHistory = await invoke<CaptureHistory>('list_capture_history_page', {
+        page,
+        pageSize: ITEMS_PER_PAGE,
+      });
       setHistory(nextHistory);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : String(error));
@@ -92,7 +96,6 @@ export default function HistoryView() {
 
   useEffect(() => {
     let cancelled = false;
-    void loadHistory().catch(() => {});
     void loadVideoHistory().catch(() => {});
     void loadTranslationHistory().catch(() => {});
 
@@ -102,7 +105,9 @@ export default function HistoryView() {
     let unlistenTranslationHistory: (() => void) | undefined;
     void listen<CaptureRecord>('capture-finished', async () => {
       if (!cancelled) {
-        await loadHistory();
+        setCurrentPage(1);
+        setIsLoading(true);
+        await loadHistory(1);
       }
     }).then((dispose) => {
       unlistenCapture = dispose;
@@ -142,6 +147,11 @@ export default function HistoryView() {
   }, []);
 
   useEffect(() => {
+    setIsLoading(true);
+    void loadHistory(currentPage).catch(() => {});
+  }, [currentPage]);
+
+  useEffect(() => {
     if (!previewingShot) {
       return;
     }
@@ -159,11 +169,11 @@ export default function HistoryView() {
   }, [previewingShot]);
 
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(history.items.length / ITEMS_PER_PAGE));
+    const totalPages = Math.max(1, Math.ceil(history.total_count / ITEMS_PER_PAGE));
     if (currentPage > totalPages) {
       setCurrentPage(totalPages);
     }
-  }, [currentPage, history.items.length]);
+  }, [currentPage, history.total_count]);
 
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(videoHistory.items.length / ITEMS_PER_PAGE));
@@ -188,11 +198,11 @@ export default function HistoryView() {
     [i18n.language],
   );
 
-  const screenshotCountLabel = t('history.itemCount', { count: history.items.length });
-  const totalPages = Math.max(1, Math.ceil(history.items.length / ITEMS_PER_PAGE));
-  const pagedItems = history.items.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
-  const pageStart = history.items.length === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
-  const pageEnd = Math.min(currentPage * ITEMS_PER_PAGE, history.items.length);
+  const screenshotCountLabel = t('history.itemCount', { count: history.total_count });
+  const totalPages = Math.max(1, Math.ceil(history.total_count / ITEMS_PER_PAGE));
+  const pagedItems = history.items;
+  const pageStart = history.total_count === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
+  const pageEnd = Math.min(currentPage * ITEMS_PER_PAGE, history.total_count);
   const paginationItems = getPaginationItems(currentPage, totalPages);
   const translationTotalPages = Math.max(1, Math.ceil(translationHistory.items.length / ITEMS_PER_PAGE));
   const videoCountLabel = t('history.videoItemCount', { count: videoHistory.items.length });
@@ -258,7 +268,7 @@ export default function HistoryView() {
                   <button
                     type="button"
                     onClick={() => setPendingDelete({ kind: 'all' })}
-                    disabled={history.items.length === 0}
+                    disabled={history.total_count === 0}
                     className="inline-flex items-center gap-2 rounded-full bg-error/10 px-3 py-1.5 text-xs font-bold text-error transition-colors hover:bg-error hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Trash2 size={14} />
@@ -268,7 +278,7 @@ export default function HistoryView() {
                     type="button"
                     onClick={() => {
                       setIsLoading(true);
-                      void loadHistory();
+                      void loadHistory(currentPage);
                     }}
                     className="inline-flex items-center gap-2 rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-white transition-opacity hover:opacity-90"
                   >
@@ -288,7 +298,7 @@ export default function HistoryView() {
                 <p className="text-sm font-semibold text-error">{t('history.loadFailed')}</p>
                 <p className="mt-2 break-all text-xs text-on-surface-variant">{loadError}</p>
               </div>
-            ) : history.items.length === 0 ? (
+            ) : history.total_count === 0 ? (
               <div className="rounded-3xl border border-dashed border-outline-variant/30 bg-surface-container-lowest p-12 text-center">
                 <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/8 text-primary">
                   <ImageIcon size={24} />
@@ -318,7 +328,7 @@ export default function HistoryView() {
                 {totalPages > 1 && (
                   <div className="mt-8 flex flex-col gap-4 border-t border-surface-container-high pt-6 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-                      {t('history.showingRange', { start: pageStart, end: pageEnd, total: history.items.length })}
+                      {t('history.showingRange', { start: pageStart, end: pageEnd, total: history.total_count })}
                     </p>
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -552,8 +562,9 @@ export default function HistoryView() {
                 }
                 setPendingDelete(null);
                 setIsLoading(true);
-                setCurrentPage(1);
-                await loadHistory();
+                const nextPage = pendingDelete.kind === 'all' ? 1 : currentPage;
+                setCurrentPage(nextPage);
+                await loadHistory(nextPage);
               })
               .catch((error) => {
                 setLoadError(error instanceof Error ? error.message : String(error));
@@ -797,6 +808,7 @@ function VideoCard({
 }) {
   const [pathCopied, setPathCopied] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
+  const thumbnailUrl = useVideoThumbnailDataUrl(video.path);
   const fileName = video.path.split(/[\\/]/).pop() ?? video.path;
   const openVideo = () => {
     setOpenError(null);
@@ -813,12 +825,21 @@ function VideoCard({
         className="relative flex aspect-[4/3] w-full items-center justify-center bg-surface-container text-primary transition-colors hover:bg-surface-container-high"
         title={viewLabel}
       >
-        <Video size={36} className="opacity-45" />
+        {thumbnailUrl ? (
+          <img
+            src={thumbnailUrl}
+            alt={fileName}
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+          />
+        ) : (
+          <Video size={36} className="opacity-45" />
+        )}
         <span className="absolute inset-0 flex items-center justify-center">
           <span className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-lg transition-transform group-hover:scale-105">
             <Play size={24} fill="currentColor" />
           </span>
         </span>
+        <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/35 via-black/10 to-transparent" />
       </button>
       <div className="space-y-3 p-4">
         <div>
@@ -953,6 +974,7 @@ function ScreenshotCard({
   const [openError, setOpenError] = useState<string | null>(null);
   const imageUrl = useImageDataUrl(shot.path);
   const fileName = shot.path.split(/[\\/]/).pop() ?? shot.path;
+  const formatLabel = imageFormatLabel(shot.path);
   const isViewButtonHoverEnabled = useHoverEnabledAfterFocus();
 
   return (
@@ -974,6 +996,10 @@ function ScreenshotCard({
             <ImageIcon size={28} />
           </div>
         )}
+        <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-md bg-black/55 px-2 py-1 text-[10px] font-bold text-white shadow-sm backdrop-blur-sm">
+          <Tag size={11} />
+          {formatLabel}
+        </span>
         <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/35 via-black/10 to-transparent" />
         <div className="absolute inset-0 bg-primary/0 transition-colors group-hover:bg-primary/5" />
       </button>
@@ -1076,6 +1102,7 @@ function PreviewModal({
 }) {
   const imageUrl = useImageDataUrl(shot.path);
   const fileName = shot.path.split(/[\\/]/).pop() ?? shot.path;
+  const formatLabel = imageFormatLabel(shot.path);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/72 p-4 backdrop-blur-sm" onClick={onClose}>
@@ -1117,7 +1144,7 @@ function PreviewModal({
           </div>
         </div>
         <div className="bg-[radial-gradient(circle_at_top,_rgba(0,41,117,0.12),_transparent_45%)] p-4 sm:p-6">
-          <div className="overflow-hidden rounded-2xl bg-surface-container shadow-inner ring-1 ring-outline-variant/20">
+          <div className="relative overflow-hidden rounded-2xl bg-surface-container shadow-inner ring-1 ring-outline-variant/20">
             {imageUrl ? (
               <img src={imageUrl} alt={fileName} className="max-h-[72vh] w-full object-contain" />
             ) : (
@@ -1125,6 +1152,10 @@ function PreviewModal({
                 <ImageIcon size={36} />
               </div>
             )}
+            <span className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-md bg-black/55 px-2 py-1 text-[10px] font-bold text-white shadow-sm backdrop-blur-sm">
+              <Tag size={11} />
+              {formatLabel}
+            </span>
           </div>
         </div>
       </div>
@@ -1156,6 +1187,36 @@ function useImageDataUrl(path: string) {
   }, [path]);
 
   return imageUrl;
+}
+
+function useVideoThumbnailDataUrl(path: string) {
+  const [imageUrl, setImageUrl] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void invoke<string>('read_video_thumbnail_as_data_url', { path })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setImageUrl(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setImageUrl('');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  return imageUrl;
+}
+
+function imageFormatLabel(path: string) {
+  return path.split('.').pop()?.toLowerCase() === 'gif' ? 'GIF' : 'IMG';
 }
 
 function getPaginationItems(currentPage: number, totalPages: number): Array<number | 'ellipsis'> {

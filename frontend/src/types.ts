@@ -118,6 +118,7 @@ export type CaptureRecord = {
 
 export type CaptureHistory = {
   directory: string;
+  total_count: number;
   items: CaptureRecord[];
 };
 

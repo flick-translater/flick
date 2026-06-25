@@ -93,6 +93,9 @@ pub fn read_image_as_data_url(path: &str) -> Result<String, FlickError> {
         .map_err(|error| FlickError::Message(format!("failed to read image: {error}")))?;
     let mime = match Path::new(path).extension().and_then(|ext| ext.to_str()) {
         Some(ext) if ext.eq_ignore_ascii_case("gif") => "image/gif",
+        Some(ext) if ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg") => {
+            "image/jpeg"
+        }
         _ => "image/png",
     };
 

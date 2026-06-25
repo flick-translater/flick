@@ -57,6 +57,7 @@ pub struct PendingCaptureEdit {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureHistory {
     pub directory: String,
+    pub total_count: usize,
     pub items: Vec<CaptureRecord>,
 }
 
