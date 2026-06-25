@@ -45,6 +45,7 @@ const longEditMinWindowHeight = longEditToolbarHeight
 
 type EditorMode = 'edit' | 'long-capture' | 'recording';
 type RecordingStatus = 'idle' | 'recording' | 'paused' | 'saving';
+type RecordingFormat = 'gif' | 'video';
 
 function waitForNextPaint() {
   return new Promise<void>((resolve) => {
@@ -145,6 +146,7 @@ function ScreenshotEditor() {
   const [isSaving, setIsSaving] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>('edit');
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>('idle');
+  const [recordingFormat, setRecordingFormat] = useState<RecordingFormat>('gif');
   const [isLongEditWindow, setIsLongEditWindow] = useState(false);
   const [longEditDisplaySize, setLongEditDisplaySize] = useState(imageSizeFallback);
   const [longScreenshot, setLongScreenshot] = useState<LongScreenshotState>({
@@ -397,7 +399,7 @@ function ScreenshotEditor() {
         await invoke('cancel_long_capture', { sessionId }).catch(() => undefined);
       }
       if (editorMode === 'recording') {
-        await invoke('cancel_gif_recording', { sessionId }).catch(() => undefined);
+        await invoke('cancel_recording', { sessionId }).catch(() => undefined);
         await invoke('close_recording_controls_window', { sessionId }).catch(() => undefined);
       }
       editorLog(`window close prevented: invoke cancel_capture_edit label=${windowLabel}`);
@@ -957,6 +959,7 @@ function ScreenshotEditor() {
     setTextDraft(null);
     setError('');
     setRecordingStatus('idle');
+    setRecordingFormat('gif');
     setEditorMode('recording');
     try {
       await waitForNextPaint();
@@ -982,9 +985,9 @@ function ScreenshotEditor() {
     try {
       await invoke('set_recording_window_mode', { sessionId, recording: true });
       if (recordingStatus === 'paused') {
-        await invoke('resume_gif_recording', { sessionId });
+        await invoke('resume_recording', { sessionId });
       } else {
-        await invoke('start_gif_recording', { sessionId });
+        await invoke('start_recording', { sessionId, format: recordingFormat });
       }
       setRecordingStatus('recording');
     } catch (recordingError) {
@@ -999,7 +1002,7 @@ function ScreenshotEditor() {
     }
     setError('');
     try {
-      await invoke('pause_gif_recording', { sessionId });
+      await invoke('pause_recording', { sessionId });
       setRecordingStatus('paused');
     } catch (recordingError) {
       setError(String(recordingError));
@@ -1014,7 +1017,7 @@ function ScreenshotEditor() {
     setRecordingStatus('saving');
     isFinishedRef.current = true;
     try {
-      await invoke('finish_gif_recording', { sessionId });
+      await invoke('finish_recording', { sessionId });
       await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
       await getCurrentWindow().close();
     } catch (recordingError) {
@@ -1030,7 +1033,7 @@ function ScreenshotEditor() {
     }
     isClosingRef.current = true;
     isFinishedRef.current = true;
-    await invoke('cancel_gif_recording', { sessionId }).catch(() => undefined);
+    await invoke('cancel_recording', { sessionId }).catch(() => undefined);
     await invoke('close_recording_controls_window', { sessionId }).catch(() => undefined);
     await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
     await getCurrentWindow().close();
@@ -1154,7 +1157,7 @@ function ScreenshotEditor() {
       editorLog('cancel click: invoke cancel_long_capture complete');
     }
     if (editorMode === 'recording') {
-      await invoke('cancel_gif_recording', { sessionId }).catch(() => undefined);
+      await invoke('cancel_recording', { sessionId }).catch(() => undefined);
       await invoke('close_recording_controls_window', { sessionId }).catch(() => undefined);
     }
     editorLog(`cancel click: invoke cancel_capture_edit start label=${windowLabel}`);
@@ -1467,6 +1470,8 @@ function ScreenshotEditor() {
                   toolbarPosition={toolbarPosition}
                   editorVisible={editorVisible}
                   status={recordingStatus}
+                  format={recordingFormat}
+                  onFormatChange={setRecordingFormat}
                   onStart={() => void handleGifRecordingStart()}
                   onPause={() => void handleGifRecordingPause()}
                   onFinish={() => void handleGifRecordingFinish()}

@@ -44,6 +44,7 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub ocr_models_dir: PathBuf,
     pub screenshot_dir: Mutex<PathBuf>,
+    pub video_dir: Mutex<PathBuf>,
     pub translation_history_store: TranslationHistoryStore,
     pub settings_store: SettingsStore,
     pub settings: Mutex<AppSettings>,
@@ -103,12 +104,15 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::capture::list_capture_history,
+            commands::capture::list_video_history,
             commands::capture::get_storage_info,
             commands::capture::pick_screenshot_directory,
             commands::capture::open_file_in_default_app,
             commands::capture::read_image_as_data_url,
             commands::capture::delete_capture,
+            commands::capture::delete_video,
             commands::capture::clear_all_captures,
+            commands::capture::clear_all_videos,
             commands::capture::copy_capture_image,
             commands::capture::start_capture_session,
             commands::capture::start_translate_capture_session,
@@ -151,10 +155,15 @@ pub fn run() {
             commands::settings::update_interface_language,
             commands::settings::update_max_screenshots,
             commands::settings::update_screenshot_directory,
+            commands::settings::update_video_directory,
             commands::settings::update_screenshot_editor_toolbar_enabled,
             commands::settings::update_screenshot_editor_color,
             commands::settings::update_gif_recording_size,
             commands::settings::update_gif_recording_fps,
+            commands::settings::update_video_recording_size,
+            commands::settings::update_video_recording_fps,
+            commands::settings::get_ffmpeg_status,
+            commands::settings::download_ffmpeg,
             commands::settings::update_translate_shortcut,
             commands::settings::update_selected_translate_shortcut,
             commands::settings::update_selected_translate_replace_shortcut,
@@ -244,6 +253,10 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
     {
         settings.tts_provider = normalize_tts_engine_id("edge");
     }
+    let ffmpeg_status = crate::services::ffmpeg::detect_ffmpeg(&settings.ffmpeg_path);
+    if ffmpeg_status.available {
+        settings.ffmpeg_path = ffmpeg_status.path;
+    }
     settings_store.save_settings(&settings)?;
     // When the user has not picked a UI language yet, initialize it from the system locale.
     if !settings.interface_language_set {
@@ -259,6 +272,13 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         PathBuf::from(&settings.screenshot_directory)
     };
     std::fs::create_dir_all(&screenshot_dir)?;
+    let default_video_dir = data_dir.join("video");
+    let video_dir = if settings.video_directory.trim().is_empty() {
+        default_video_dir
+    } else {
+        PathBuf::from(&settings.video_directory)
+    };
+    std::fs::create_dir_all(&video_dir)?;
 
     Ok(AppState {
         capture_snapshots: Mutex::new(Vec::new()),
@@ -267,6 +287,7 @@ fn build_state(app: &AppHandle) -> anyhow::Result<AppState> {
         data_dir: data_dir.clone(),
         ocr_models_dir: ocr_models_dir.clone(),
         screenshot_dir: Mutex::new(screenshot_dir),
+        video_dir: Mutex::new(video_dir),
         translation_history_store,
         settings_store,
         settings: Mutex::new(settings.clone()),

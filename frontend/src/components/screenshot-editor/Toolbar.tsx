@@ -455,6 +455,8 @@ type RecordingControlsToolbarProps = {
   toolbarPosition: { left: number; top: number };
   editorVisible: boolean;
   status: 'idle' | 'recording' | 'paused' | 'saving';
+  format: 'gif' | 'video';
+  onFormatChange: (format: 'gif' | 'video') => void;
   onStart: () => void;
   onPause: () => void;
   onFinish: () => void;
@@ -467,6 +469,8 @@ export function RecordingControlsToolbar({
   toolbarPosition,
   editorVisible,
   status,
+  format,
+  onFormatChange,
   onStart,
   onPause,
   onFinish,
@@ -511,6 +515,26 @@ export function RecordingControlsToolbar({
           <Pause size={18} />
         </button>
       </TooltipButton>
+      <div className="mx-1 h-6 w-px shrink-0 bg-outline-variant/40" />
+      <div className="inline-flex shrink-0 rounded-md border border-outline-variant/30 bg-surface-container p-0.5">
+        {(['gif', 'video'] as const).map((item) => (
+          <button
+            key={item}
+            type="button"
+            disabled={status !== 'idle'}
+            onClick={() => onFormatChange(item)}
+            className={`h-7 rounded px-2 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+              format === item
+                ? 'bg-primary text-white'
+                : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+            }`}
+          >
+            {item === 'gif'
+              ? t('screenshotEditor.actions.recordingFormatGif')
+              : t('screenshotEditor.actions.recordingFormatVideo')}
+          </button>
+        ))}
+      </div>
       <TooltipButton label={t('screenshotEditor.actions.finishRecording')} positionClass="bottom-full mb-2" useNativeTooltip={useNativeTooltip}>
         <button
           type="button"

@@ -30,10 +30,15 @@ export type AppSettings = {
   interface_language: string;
   interface_language_set: boolean;
   screenshot_directory: string;
+  video_directory: string;
   screenshot_editor_toolbar_enabled: boolean;
   screenshot_editor_color: string;
   gif_recording_size: '540p' | '720p' | string;
   gif_recording_fps: 6 | 8 | 10 | number;
+  video_recording_size: '540p' | '720p' | '1080p' | string;
+  video_recording_fps: 24 | 30 | number;
+  video_recording_format: string;
+  ffmpeg_path: string;
   ocr_auto_translate: boolean;
   ocr_target_language: string;
   selected_replace_target_language: string;
@@ -134,4 +139,11 @@ export type TranslationHistory = {
 export type StorageInfo = {
   data_dir: string;
   screenshot_dir: string;
+  video_dir: string;
+};
+
+export type FfmpegStatus = {
+  available: boolean;
+  path: string;
+  source: string;
 };

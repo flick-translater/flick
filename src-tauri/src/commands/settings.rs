@@ -9,10 +9,12 @@ use crate::{
     app::{AppState, apply_shortcut_bindings, platform},
     error::FlickError,
     features::capture,
-    models::{AISettings, AppSettings, AutostartStatus, OcrEngineInfo, TtsEngineInfo},
+    models::{
+        AISettings, AppSettings, AutostartStatus, FfmpegStatus, OcrEngineInfo, TtsEngineInfo,
+    },
     services::{
-        available_ocr_engines, available_tts_engines, create_ocr_service, normalize_ocr_engine_id,
-        normalize_tts_engine_id,
+        available_ocr_engines, available_tts_engines, create_ocr_service, ffmpeg,
+        normalize_ocr_engine_id, normalize_tts_engine_id,
     },
 };
 
@@ -181,6 +183,44 @@ pub fn update_screenshot_directory(
 }
 
 #[tauri::command]
+pub fn update_video_directory(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = path.trim();
+    if normalized.is_empty() {
+        return Err(FlickError::Message(
+            "video directory cannot be empty".into(),
+        ));
+    }
+
+    let next_dir = PathBuf::from(normalized);
+    fs::create_dir_all(&next_dir).map_err(|error| {
+        FlickError::Message(format!("failed to create video directory: {error}"))
+    })?;
+
+    {
+        let mut video_dir = state
+            .video_dir
+            .lock()
+            .map_err(|_| FlickError::Message("video dir mutex poisoned".into()))?;
+        *video_dir = next_dir.clone();
+    }
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.video_directory = next_dir.display().to_string();
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
 pub fn update_screenshot_editor_toolbar_enabled(
     state: State<'_, AppState>,
     enabled: bool,
@@ -267,6 +307,93 @@ pub fn update_gif_recording_fps(
 
     state.settings_store.save_settings(&updated)?;
     Ok(updated)
+}
+
+#[tauri::command]
+pub fn update_video_recording_size(
+    state: State<'_, AppState>,
+    size: String,
+) -> Result<AppSettings, FlickError> {
+    let normalized = match size.trim().to_lowercase().as_str() {
+        "540p" => "540p",
+        "720p" => "720p",
+        "1080p" => "1080p",
+        _ => return Err(FlickError::Message("invalid video recording size".into())),
+    }
+    .to_string();
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.video_recording_size = normalized;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn update_video_recording_fps(
+    state: State<'_, AppState>,
+    fps: u32,
+) -> Result<AppSettings, FlickError> {
+    let normalized = match fps {
+        24 | 30 => fps,
+        _ => return Err(FlickError::Message("invalid video recording FPS".into())),
+    };
+
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.video_recording_fps = normalized;
+        settings.clone()
+    };
+
+    state.settings_store.save_settings(&updated)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn get_ffmpeg_status(state: State<'_, AppState>) -> Result<FfmpegStatus, FlickError> {
+    let configured_path = state
+        .settings
+        .lock()
+        .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
+        .ffmpeg_path
+        .clone();
+    let status = ffmpeg::detect_ffmpeg(&configured_path);
+    if status.available && status.path != configured_path {
+        let updated = {
+            let mut settings = state
+                .settings
+                .lock()
+                .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+            settings.ffmpeg_path = status.path.clone();
+            settings.clone()
+        };
+        state.settings_store.save_settings(&updated)?;
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn download_ffmpeg(state: State<'_, AppState>) -> Result<FfmpegStatus, FlickError> {
+    let status = ffmpeg::download_ffmpeg().await?;
+    let updated = {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?;
+        settings.ffmpeg_path = status.path.clone();
+        settings.clone()
+    };
+    state.settings_store.save_settings(&updated)?;
+    Ok(status)
 }
 
 fn normalize_hex_color(color: &str) -> Result<String, FlickError> {

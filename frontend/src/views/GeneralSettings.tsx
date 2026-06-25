@@ -23,6 +23,7 @@ const shortcutCommandMap: Record<
 const defaultStorageInfo: StorageInfo = {
   data_dir: '',
   screenshot_dir: '',
+  video_dir: '',
 };
 
 export default function GeneralSettings() {
@@ -36,6 +37,7 @@ export default function GeneralSettings() {
   const [generalError, setGeneralError] = useState('');
   const [isUpdatingAutostart, setIsUpdatingAutostart] = useState(false);
   const [isPickingDirectory, setIsPickingDirectory] = useState(false);
+  const [isPickingVideoDirectory, setIsPickingVideoDirectory] = useState(false);
   const isMac = useMemo(
     () => /Mac|iPhone|iPad/i.test(navigator.platform),
     [],
@@ -287,6 +289,42 @@ export default function GeneralSettings() {
                     })
                     .finally(() => {
                       setIsPickingDirectory(false);
+                    });
+                }}
+                className="h-[42px] rounded-lg bg-surface-container-highest px-4 text-sm font-bold text-primary transition-all duration-200 hover:bg-primary hover:text-white disabled:opacity-50"
+              >
+                {t('general.changePath')}
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+            <div className="flex-1">
+              <StoragePathCard label={t('general.videoDirectory')} path={storageInfo.video_dir} />
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                disabled={isPickingVideoDirectory}
+                onClick={() => {
+                  setIsPickingVideoDirectory(true);
+                  void invoke<string | null>('pick_screenshot_directory')
+                    .then((path) => {
+                      if (!path) {
+                        return null;
+                      }
+
+                      return invoke<AppSettings>('update_video_directory', { path })
+                        .then((updated) => {
+                          setSettings(updated);
+                          setStorageInfo((current) => ({ ...current, video_dir: path }));
+                          setGeneralError('');
+                        });
+                    })
+                    .catch((error: unknown) => {
+                      setGeneralError(String(error));
+                    })
+                    .finally(() => {
+                      setIsPickingVideoDirectory(false);
                     });
                 }}
                 className="h-[42px] rounded-lg bg-surface-container-highest px-4 text-sm font-bold text-primary transition-all duration-200 hover:bg-primary hover:text-white disabled:opacity-50"

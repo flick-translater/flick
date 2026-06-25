@@ -15,6 +15,11 @@ pub fn list_capture_history(state: State<'_, AppState>) -> Result<CaptureHistory
 }
 
 #[tauri::command]
+pub fn list_video_history(state: State<'_, AppState>) -> Result<CaptureHistory, FlickError> {
+    capture::list_video_history(&state)
+}
+
+#[tauri::command]
 pub fn get_storage_info(state: State<'_, AppState>) -> Result<StorageInfo, FlickError> {
     capture::get_storage_info(&state)
 }
@@ -40,8 +45,18 @@ pub fn delete_capture(state: State<'_, AppState>, path: String) -> Result<(), Fl
 }
 
 #[tauri::command]
+pub fn delete_video(state: State<'_, AppState>, path: String) -> Result<(), FlickError> {
+    capture::delete_video(&state, &path)
+}
+
+#[tauri::command]
 pub fn clear_all_captures(state: State<'_, AppState>) -> Result<(), FlickError> {
     capture::clear_all_captures(&state)
+}
+
+#[tauri::command]
+pub fn clear_all_videos(state: State<'_, AppState>) -> Result<(), FlickError> {
+    capture::clear_all_videos(&state)
 }
 
 #[tauri::command]

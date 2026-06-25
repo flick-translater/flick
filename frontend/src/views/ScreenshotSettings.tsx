@@ -1,25 +1,41 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Image, Paintbrush, Video } from 'lucide-react';
+import { Download, Image, LoaderCircle, Paintbrush, Video } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import Toggle from '../components/Toggle';
-import { AppSettings } from '../types';
+import { AppSettings, FfmpegStatus } from '../types';
 
 type GifSize = '540p' | '720p';
 type GifFps = 6 | 8 | 10;
+type VideoSize = '540p' | '720p' | '1080p';
+type VideoFps = 24 | 30;
+
+const missingFfmpeg: FfmpegStatus = {
+  available: false,
+  path: '',
+  source: 'missing',
+};
 
 export default function ScreenshotSettings() {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [ffmpegStatus, setFfmpegStatus] = useState<FfmpegStatus>(missingFfmpeg);
+  const [isDownloadingFfmpeg, setIsDownloadingFfmpeg] = useState(false);
   const [error, setError] = useState('');
   const isLinux = useMemo(() => /Linux/i.test(navigator.platform), []);
   const gifSize = normalizeGifSize(settings?.gif_recording_size);
   const gifFps = normalizeGifFps(settings?.gif_recording_fps);
+  const videoSize = normalizeVideoSize(settings?.video_recording_size);
+  const videoFps = normalizeVideoFps(settings?.video_recording_fps);
 
   useEffect(() => {
-    void invoke<AppSettings>('get_app_settings')
-      .then((appSettings) => {
+    void Promise.all([
+      invoke<AppSettings>('get_app_settings'),
+      invoke<FfmpegStatus>('get_ffmpeg_status'),
+    ])
+      .then(([appSettings, status]) => {
         setSettings(appSettings);
+        setFfmpegStatus(status);
         setError('');
       })
       .catch((loadError: unknown) => {
@@ -50,6 +66,47 @@ export default function ScreenshotSettings() {
       .catch((updateError: unknown) => {
         setSettings((current) => current ? { ...current, gif_recording_fps: gifFps } : current);
         setError(String(updateError));
+      });
+  }
+
+  function updateVideoSize(size: VideoSize) {
+    setSettings((current) => current ? { ...current, video_recording_size: size } : current);
+    void invoke<AppSettings>('update_video_recording_size', { size })
+      .then((updated) => {
+        setSettings(updated);
+        setError('');
+      })
+      .catch((updateError: unknown) => {
+        setSettings((current) => current ? { ...current, video_recording_size: videoSize } : current);
+        setError(String(updateError));
+      });
+  }
+
+  function updateVideoFps(fps: VideoFps) {
+    setSettings((current) => current ? { ...current, video_recording_fps: fps } : current);
+    void invoke<AppSettings>('update_video_recording_fps', { fps })
+      .then((updated) => {
+        setSettings(updated);
+        setError('');
+      })
+      .catch((updateError: unknown) => {
+        setSettings((current) => current ? { ...current, video_recording_fps: videoFps } : current);
+        setError(String(updateError));
+      });
+  }
+
+  function downloadFfmpeg() {
+    setIsDownloadingFfmpeg(true);
+    setError('');
+    void invoke<FfmpegStatus>('download_ffmpeg')
+      .then((status) => {
+        setFfmpegStatus(status);
+      })
+      .catch((downloadError: unknown) => {
+        setError(String(downloadError));
+      })
+      .finally(() => {
+        setIsDownloadingFfmpeg(false);
       });
   }
 
@@ -154,6 +211,88 @@ export default function ScreenshotSettings() {
             </div>
           </div>
         </section>
+
+        <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm transition-shadow duration-300 hover:shadow-md lg:col-span-2">
+          <div className="mb-3 flex items-start justify-between gap-4">
+            <div>
+              <h2 className="mb-0.5 font-headline text-base font-bold text-primary">{t('screenshotSettings.videoRecording')}</h2>
+              <p className="text-xs leading-relaxed text-on-surface-variant">{t('screenshotSettings.videoRecordingDesc')}</p>
+            </div>
+            <div className="rounded-lg bg-primary/5 p-2 text-primary">
+              <Video size={20} />
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-lg bg-surface-container-low p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-on-surface">{t('screenshotSettings.ffmpegStatus')}</h3>
+                <p className="mt-0.5 break-all text-xs leading-relaxed text-on-surface-variant">
+                  {ffmpegStatus.available
+                    ? t('screenshotSettings.ffmpegAvailable', { path: ffmpegStatus.path })
+                    : t('screenshotSettings.ffmpegMissing')}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={ffmpegStatus.available || isDownloadingFfmpeg}
+                onClick={downloadFfmpeg}
+                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg bg-primary px-3 text-xs font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:bg-surface-container-highest disabled:text-on-surface-variant"
+              >
+                {isDownloadingFfmpeg ? <LoaderCircle size={14} className="animate-spin" /> : <Download size={14} />}
+                {isDownloadingFfmpeg ? t('screenshotSettings.downloadingFfmpeg') : t('screenshotSettings.downloadFfmpeg')}
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-on-surface">{t('screenshotSettings.videoSize')}</h3>
+                <p className="mt-0.5 text-xs leading-relaxed text-on-surface-variant">{t('screenshotSettings.videoSizeDesc')}</p>
+              </div>
+              <div className="inline-flex shrink-0 rounded-lg border border-outline-variant/30 bg-surface-container p-1">
+                {(['540p', '720p', '1080p'] as VideoSize[]).map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    disabled={!ffmpegStatus.available}
+                    onClick={() => updateVideoSize(size)}
+                    className={`min-w-20 rounded-md px-3 py-1.5 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                      videoSize === size
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-on-surface">{t('screenshotSettings.videoFps')}</h3>
+                <p className="mt-0.5 text-xs leading-relaxed text-on-surface-variant">{t('screenshotSettings.videoFpsDesc')}</p>
+              </div>
+              <div className="inline-flex shrink-0 rounded-lg border border-outline-variant/30 bg-surface-container p-1">
+                {([24, 30] as VideoFps[]).map((fps) => (
+                  <button
+                    key={fps}
+                    type="button"
+                    disabled={!ffmpegStatus.available}
+                    onClick={() => updateVideoFps(fps)}
+                    className={`min-w-20 rounded-md px-3 py-1.5 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                      videoFps === fps
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                    }`}
+                  >
+                    {fps} FPS
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
 
       {error && <p className="mt-4 text-xs text-error">{error}</p>}
@@ -167,4 +306,12 @@ function normalizeGifSize(value?: string): GifSize {
 
 function normalizeGifFps(value?: number): GifFps {
   return value === 8 || value === 10 ? value : 6;
+}
+
+function normalizeVideoSize(value?: string): VideoSize {
+  return value === '540p' || value === '1080p' ? value : '720p';
+}
+
+function normalizeVideoFps(value?: number): VideoFps {
+  return value === 30 ? 30 : 24;
 }

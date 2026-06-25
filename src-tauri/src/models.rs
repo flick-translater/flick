@@ -82,6 +82,14 @@ pub struct TranslationHistory {
 pub struct StorageInfo {
     pub data_dir: String,
     pub screenshot_dir: String,
+    pub video_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FfmpegStatus {
+    pub available: bool,
+    pub path: String,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +275,18 @@ fn default_gif_recording_fps() -> u32 {
     6
 }
 
+fn default_video_recording_size() -> String {
+    "720p".into()
+}
+
+fn default_video_recording_fps() -> u32 {
+    24
+}
+
+fn default_video_recording_format() -> String {
+    "mp4".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -280,6 +300,7 @@ pub struct AppSettings {
     pub interface_language: String,
     pub interface_language_set: bool,
     pub screenshot_directory: String,
+    pub video_directory: String,
     #[serde(default = "default_screenshot_editor_toolbar_enabled")]
     pub screenshot_editor_toolbar_enabled: bool,
     #[serde(default = "default_screenshot_editor_color")]
@@ -288,6 +309,13 @@ pub struct AppSettings {
     pub gif_recording_size: String,
     #[serde(default = "default_gif_recording_fps")]
     pub gif_recording_fps: u32,
+    #[serde(default = "default_video_recording_size")]
+    pub video_recording_size: String,
+    #[serde(default = "default_video_recording_fps")]
+    pub video_recording_fps: u32,
+    #[serde(default = "default_video_recording_format")]
+    pub video_recording_format: String,
+    pub ffmpeg_path: String,
     pub ocr_auto_translate: bool,
     pub ocr_target_language: String,
     pub selected_replace_target_language: String,
@@ -309,10 +337,15 @@ impl Default for AppSettings {
             interface_language: default_interface_language(),
             interface_language_set: false,
             screenshot_directory: String::new(),
+            video_directory: String::new(),
             screenshot_editor_toolbar_enabled: true,
             screenshot_editor_color: default_screenshot_editor_color(),
             gif_recording_size: default_gif_recording_size(),
             gif_recording_fps: default_gif_recording_fps(),
+            video_recording_size: default_video_recording_size(),
+            video_recording_fps: default_video_recording_fps(),
+            video_recording_format: default_video_recording_format(),
+            ffmpeg_path: String::new(),
             ocr_auto_translate: true,
             ocr_target_language: default_ocr_target_language(),
             selected_replace_target_language: default_selected_replace_target_language(),
@@ -355,6 +388,23 @@ impl AppSettings {
             6 | 8 | 10 => self.gif_recording_fps,
             _ => default_gif_recording_fps(),
         };
+        self.video_recording_size = match self.video_recording_size.trim().to_lowercase().as_str() {
+            "540p" => "540p".into(),
+            "1080p" => "1080p".into(),
+            _ => default_video_recording_size(),
+        };
+        self.video_recording_fps = match self.video_recording_fps {
+            24 | 30 => self.video_recording_fps,
+            _ => default_video_recording_fps(),
+        };
+        if self.video_recording_format.trim().is_empty() {
+            self.video_recording_format = default_video_recording_format();
+        }
+        self.video_recording_format =
+            match self.video_recording_format.trim().to_lowercase().as_str() {
+                "mp4" => "mp4".into(),
+                _ => default_video_recording_format(),
+            };
     }
 }
 

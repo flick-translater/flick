@@ -1,6 +1,7 @@
 //! Replaceable infrastructure services used by the feature layer.
 
 pub(crate) mod ai;
+pub(crate) mod ffmpeg;
 pub(crate) mod ocr;
 pub(crate) mod screen_capture;
 mod selected_text;

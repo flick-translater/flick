@@ -31,11 +31,22 @@ pub fn list_capture_history(state: &State<'_, AppState>) -> Result<CaptureHistor
     })
 }
 
+pub fn list_video_history(state: &State<'_, AppState>) -> Result<CaptureHistory, FlickError> {
+    let video_dir = current_video_dir(state)?;
+
+    Ok(CaptureHistory {
+        directory: video_dir.display().to_string(),
+        items: load_video_history(&video_dir)?,
+    })
+}
+
 pub fn get_storage_info(state: &State<'_, AppState>) -> Result<StorageInfo, FlickError> {
     let screenshot_dir = current_screenshot_dir(state)?;
+    let video_dir = current_video_dir(state)?;
     Ok(StorageInfo {
         data_dir: state.data_dir.display().to_string(),
         screenshot_dir: screenshot_dir.display().to_string(),
+        video_dir: video_dir.display().to_string(),
     })
 }
 
@@ -83,6 +94,39 @@ pub fn clear_all_captures(state: &State<'_, AppState>) -> Result<(), FlickError>
     Ok(())
 }
 
+pub fn delete_video(state: &State<'_, AppState>, path: &str) -> Result<(), FlickError> {
+    let video_path = Path::new(path);
+    let video_dir = current_video_dir(state)?;
+
+    if !video_path.starts_with(&video_dir) {
+        return Err(FlickError::Message(
+            "video path is outside video directory".into(),
+        ));
+    }
+
+    if video_path.exists() {
+        fs::remove_file(video_path)
+            .map_err(|error| FlickError::Message(format!("failed to delete video: {error}")))?;
+    }
+
+    Ok(())
+}
+
+pub fn clear_all_videos(state: &State<'_, AppState>) -> Result<(), FlickError> {
+    let video_dir = current_video_dir(state)?;
+    let records = load_video_history(&video_dir)?;
+
+    for record in records {
+        let video_path = Path::new(&record.path);
+        if video_path.starts_with(&video_dir) && video_path.exists() {
+            fs::remove_file(video_path)
+                .map_err(|error| FlickError::Message(format!("failed to delete video: {error}")))?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn copy_capture_image(path: &str) -> Result<(), FlickError> {
     if path
         .rsplit_once('.')
@@ -117,6 +161,14 @@ pub fn current_screenshot_dir(state: &State<'_, AppState>) -> Result<PathBuf, Fl
         .screenshot_dir
         .lock()
         .map_err(|_| FlickError::Message("screenshot dir mutex poisoned".into()))
+        .map(|path| path.clone())
+}
+
+pub fn current_video_dir(state: &State<'_, AppState>) -> Result<PathBuf, FlickError> {
+    state
+        .video_dir
+        .lock()
+        .map_err(|_| FlickError::Message("video dir mutex poisoned".into()))
         .map(|path| path.clone())
 }
 
@@ -178,6 +230,56 @@ fn load_capture_history(screenshot_dir: &Path) -> Result<Vec<CaptureRecord>, Fli
             created_at,
             width,
             height,
+            path: path.display().to_string(),
+        });
+    }
+
+    records.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    Ok(records)
+}
+
+fn load_video_history(video_dir: &Path) -> Result<Vec<CaptureRecord>, FlickError> {
+    if !video_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut records = Vec::new();
+    let entries = fs::read_dir(video_dir)
+        .map_err(|error| FlickError::Message(format!("failed to read video dir: {error}")))?;
+
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| FlickError::Message(format!("failed to read video entry: {error}")))?;
+        let path = entry.path();
+        let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+            continue;
+        };
+        if !ext.eq_ignore_ascii_case("mp4") {
+            continue;
+        }
+
+        let metadata = entry.metadata().map_err(|error| {
+            FlickError::Message(format!("failed to read video metadata: {error}"))
+        })?;
+        if !metadata.is_file() {
+            continue;
+        }
+
+        let created_at = metadata
+            .modified()
+            .map(DateTime::<Utc>::from)
+            .unwrap_or_else(|_| DateTime::<Utc>::from(SystemTime::UNIX_EPOCH));
+        let id = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+        records.push(CaptureRecord {
+            id,
+            created_at,
+            width: 0,
+            height: 0,
             path: path.display().to_string(),
         });
     }

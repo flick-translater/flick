@@ -9,6 +9,7 @@ import { normalizeLanguage, setupI18n } from './i18n/config';
 import type { AppSettings } from './types';
 
 type RecordingStatus = 'idle' | 'recording' | 'paused' | 'saving';
+type RecordingFormat = 'gif' | 'video';
 const toolbarTooltipClass = 'pointer-events-none absolute left-1/2 z-[80] -translate-x-1/2 whitespace-nowrap rounded-md bg-surface-container-highest px-2 py-1 text-xs font-semibold text-on-surface opacity-0 shadow-lg ring-1 ring-outline-variant/30 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100';
 
 function RecordingToolbar() {
@@ -16,6 +17,7 @@ function RecordingToolbar() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
   const sessionId = query.get('session_id') ?? '';
   const [status, setStatus] = useState<RecordingStatus>('idle');
+  const [format, setFormat] = useState<RecordingFormat>('gif');
   const [error, setError] = useState('');
   const appWindow = useMemo(() => getCurrentWindow(), []);
 
@@ -27,9 +29,9 @@ function RecordingToolbar() {
     try {
       await invoke('set_recording_window_mode', { sessionId, recording: true });
       if (status === 'paused') {
-        await invoke('resume_gif_recording', { sessionId });
+        await invoke('resume_recording', { sessionId });
       } else {
-        await invoke('start_gif_recording', { sessionId });
+        await invoke('start_recording', { sessionId, format });
       }
       setStatus('recording');
     } catch (err) {
@@ -44,7 +46,7 @@ function RecordingToolbar() {
     }
     setError('');
     try {
-      await invoke('pause_gif_recording', { sessionId });
+      await invoke('pause_recording', { sessionId });
       setStatus('paused');
     } catch (err) {
       setError(String(err));
@@ -58,7 +60,7 @@ function RecordingToolbar() {
     setError('');
     setStatus('saving');
     try {
-      await invoke('finish_gif_recording', { sessionId });
+      await invoke('finish_recording', { sessionId });
       await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
       await appWindow.close();
     } catch (err) {
@@ -72,7 +74,7 @@ function RecordingToolbar() {
       await appWindow.close();
       return;
     }
-    await invoke('cancel_gif_recording', { sessionId }).catch(() => undefined);
+    await invoke('cancel_recording', { sessionId }).catch(() => undefined);
     await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
     await appWindow.close();
   }
@@ -102,6 +104,26 @@ function RecordingToolbar() {
             <Play size={18} />
           </button>
         </TooltipButton>
+        <div className="mx-1 h-6 w-px bg-outline-variant/40" />
+        <div className="inline-flex rounded-md border border-outline-variant/30 bg-surface-container p-0.5">
+          {(['gif', 'video'] as RecordingFormat[]).map((item) => (
+            <button
+              key={item}
+              type="button"
+              disabled={status !== 'idle'}
+              onClick={() => setFormat(item)}
+              className={`h-7 rounded px-2 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                format === item
+                  ? 'bg-primary text-white'
+                  : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+              }`}
+            >
+              {item === 'gif'
+                ? t('screenshotEditor.actions.recordingFormatGif')
+                : t('screenshotEditor.actions.recordingFormatVideo')}
+            </button>
+          ))}
+        </div>
         <TooltipButton label={pauseLabel}>
           <button
             type="button"

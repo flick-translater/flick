@@ -1,8 +1,9 @@
 use std::{
     collections::HashMap,
     fs,
-    io::BufWriter,
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -22,7 +23,7 @@ use crate::{
     app::{AppState, windows},
     error::FlickError,
     models::{CaptureRecord, SelectionRect},
-    services::{ScreenCaptureService, screen_capture::LiveFrameStream},
+    services::{ScreenCaptureService, ffmpeg, screen_capture::LiveFrameStream},
 };
 
 use super::{history, platform};
@@ -33,6 +34,8 @@ const RECORDING_540P_MAX_GIF_WIDTH: u32 = 960;
 const RECORDING_540P_MAX_GIF_HEIGHT: u32 = 540;
 const RECORDING_720P_MAX_GIF_WIDTH: u32 = 1280;
 const RECORDING_720P_MAX_GIF_HEIGHT: u32 = 720;
+const RECORDING_1080P_MAX_VIDEO_WIDTH: u32 = 1920;
+const RECORDING_1080P_MAX_VIDEO_HEIGHT: u32 = 1080;
 
 enum RecordingMessage {
     Frame(ImageBuffer<Rgba<u8>, Vec<u8>>),
@@ -41,12 +44,14 @@ enum RecordingMessage {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RecordingFormat {
     Gif,
+    Video,
 }
 
 impl RecordingFormat {
     fn parse(value: &str) -> Result<Self, FlickError> {
         match value.trim().to_lowercase().as_str() {
             "gif" => Ok(Self::Gif),
+            "video" | "mp4" => Ok(Self::Video),
             _ => Err(FlickError::Message("unsupported recording format".into())),
         }
     }
@@ -54,6 +59,7 @@ impl RecordingFormat {
     fn extension(self) -> &'static str {
         match self {
             Self::Gif => "gif",
+            Self::Video => "mp4",
         }
     }
 }
@@ -67,6 +73,7 @@ struct RecordingEncoderOptions {
     max_width: u32,
     max_height: u32,
     fps: u32,
+    ffmpeg_path: Option<String>,
 }
 
 struct RecordingEncodeResult {
@@ -80,6 +87,7 @@ struct RecordingSession {
     paused: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
     output_paths: RecordingOutputPaths,
+    format: RecordingFormat,
     width: u32,
     height: u32,
 }
@@ -109,12 +117,14 @@ pub fn start_recording(
     validate_recording_size(&selection)?;
     finalize_pending_overlay_for_recording(&app, &state, &session_id)?;
 
-    let screenshot_dir = history::current_screenshot_dir(&state)?;
-    fs::create_dir_all(&screenshot_dir).map_err(|error| {
-        FlickError::Message(format!("failed to create screenshot dir: {error}"))
-    })?;
+    let output_dir = match format {
+        RecordingFormat::Gif => history::current_screenshot_dir(&state)?,
+        RecordingFormat::Video => history::current_video_dir(&state)?,
+    };
+    fs::create_dir_all(&output_dir)
+        .map_err(|error| FlickError::Message(format!("failed to create recording dir: {error}")))?;
 
-    let output_paths = recording_output_paths(&screenshot_dir, format);
+    let output_paths = recording_output_paths(&output_dir, format);
     let (sender, receiver) = mpsc::sync_channel(RECORDING_QUEUE_CAPACITY);
     let encoder_options = recording_encoder_options(&state, format)?;
     let frame_interval = recording_frame_interval(encoder_options.fps);
@@ -193,12 +203,13 @@ pub fn start_recording(
             paused,
             stopped,
             output_paths,
+            format,
             width: selection.width,
             height: selection.height,
         },
     );
 
-    let _ = app.emit("gif-recording-status", "recording");
+    let _ = app.emit("recording-status", "recording");
     Ok(())
 }
 
@@ -277,15 +288,21 @@ pub fn finish_recording(
     };
 
     let _ = copy_path_to_clipboard(&record.path);
-    let _ = app.emit("capture-finished", record.clone());
+    let event = match session.format {
+        RecordingFormat::Gif => "capture-finished",
+        RecordingFormat::Video => "video-finished",
+    };
+    let _ = app.emit(event, record.clone());
 
-    let max_screenshots = state
-        .settings
-        .lock()
-        .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
-        .max_screenshots;
-    let screenshot_dir = history::current_screenshot_dir(&state)?;
-    let _ = history::prune_capture_history(&screenshot_dir, max_screenshots);
+    if matches!(session.format, RecordingFormat::Gif) {
+        let max_screenshots = state
+            .settings
+            .lock()
+            .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
+            .max_screenshots;
+        let screenshot_dir = history::current_screenshot_dir(&state)?;
+        let _ = history::prune_capture_history(&screenshot_dir, max_screenshots);
+    }
 
     Ok(record)
 }
@@ -464,6 +481,7 @@ fn start_recording_encoder(
 ) -> thread::JoinHandle<anyhow::Result<RecordingEncodeResult>> {
     thread::spawn(move || match format {
         RecordingFormat::Gif => encode_gif(writing_path, options, receiver),
+        RecordingFormat::Video => encode_video(writing_path, options, receiver),
     })
 }
 
@@ -538,6 +556,116 @@ fn encode_gif(
     Ok(RecordingEncodeResult { frame_count })
 }
 
+fn encode_video(
+    path: PathBuf,
+    options: RecordingEncoderOptions,
+    receiver: mpsc::Receiver<RecordingMessage>,
+) -> anyhow::Result<RecordingEncodeResult> {
+    let mut child = None;
+    let mut output_width = 0;
+    let mut output_height = 0;
+    let mut frame_count = 0;
+
+    while let Ok(message) = receiver.recv() {
+        match message {
+            RecordingMessage::Frame(frame) => {
+                if child.is_none() {
+                    let (scaled_width, scaled_height) = scaled_video_size(
+                        frame.width(),
+                        frame.height(),
+                        options.max_width,
+                        options.max_height,
+                    );
+                    output_width = scaled_width;
+                    output_height = scaled_height;
+                    let ffmpeg_path = options
+                        .ffmpeg_path
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("ffmpeg path is missing"))?;
+                    child = Some(spawn_ffmpeg_encoder(
+                        &path,
+                        ffmpeg_path,
+                        output_width,
+                        output_height,
+                        options.fps,
+                    )?);
+                }
+
+                let pixels = if frame.width() == output_width && frame.height() == output_height {
+                    frame.into_raw()
+                } else {
+                    image::imageops::resize(
+                        &frame,
+                        output_width,
+                        output_height,
+                        FilterType::Triangle,
+                    )
+                    .into_raw()
+                };
+
+                child
+                    .as_mut()
+                    .and_then(|process| process.stdin.as_mut())
+                    .ok_or_else(|| anyhow::anyhow!("ffmpeg stdin is missing"))?
+                    .write_all(&pixels)
+                    .context("failed to write frame to ffmpeg")?;
+                frame_count += 1;
+            }
+        }
+    }
+
+    if let Some(mut process) = child {
+        drop(process.stdin.take());
+        let output = process
+            .wait_with_output()
+            .context("failed to wait for ffmpeg")?;
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "ffmpeg failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+
+    Ok(RecordingEncodeResult { frame_count })
+}
+
+fn spawn_ffmpeg_encoder(
+    path: &Path,
+    ffmpeg_path: &str,
+    width: u32,
+    height: u32,
+    fps: u32,
+) -> anyhow::Result<std::process::Child> {
+    Command::new(ffmpeg_path)
+        .arg("-y")
+        .arg("-f")
+        .arg("rawvideo")
+        .arg("-pix_fmt")
+        .arg("rgba")
+        .arg("-s")
+        .arg(format!("{width}x{height}"))
+        .arg("-r")
+        .arg(fps.to_string())
+        .arg("-i")
+        .arg("pipe:0")
+        .arg("-an")
+        .arg("-c:v")
+        .arg("libx264")
+        .arg("-preset")
+        .arg("veryfast")
+        .arg("-pix_fmt")
+        .arg("yuv420p")
+        .arg("-movflags")
+        .arg("+faststart")
+        .arg(path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("failed to start ffmpeg")
+}
+
 fn copy_path_to_clipboard(path: &str) -> anyhow::Result<()> {
     let mut clipboard = arboard::Clipboard::new().context("failed to access clipboard")?;
     if let Err(file_error) = clipboard.set().file_list(&[Path::new(path)]) {
@@ -561,6 +689,15 @@ fn scaled_gif_size(width: u32, height: u32, max_width: u32, max_height: u32) -> 
     )
 }
 
+fn scaled_video_size(width: u32, height: u32, max_width: u32, max_height: u32) -> (u32, u32) {
+    let (scaled_width, scaled_height) = scaled_gif_size(width, height, max_width, max_height);
+    (even_dimension(scaled_width), even_dimension(scaled_height))
+}
+
+fn even_dimension(value: u32) -> u32 {
+    value.max(2) & !1
+}
+
 fn recording_frame_interval(fps: u32) -> Duration {
     Duration::from_millis(1000 / u64::from(fps.max(1)))
 }
@@ -575,6 +712,7 @@ fn recording_encoder_options(
 ) -> Result<RecordingEncoderOptions, FlickError> {
     match format {
         RecordingFormat::Gif => gif_encoder_options(state),
+        RecordingFormat::Video => video_encoder_options(state),
     }
 }
 
@@ -601,5 +739,39 @@ fn gif_encoder_options(state: &State<'_, AppState>) -> Result<RecordingEncoderOp
             6 | 8 | 10 => fps,
             _ => DEFAULT_RECORDING_FPS,
         },
+        ffmpeg_path: None,
+    })
+}
+
+fn video_encoder_options(
+    state: &State<'_, AppState>,
+) -> Result<RecordingEncoderOptions, FlickError> {
+    let settings = state
+        .settings
+        .lock()
+        .map_err(|_| FlickError::Message("settings mutex poisoned".into()))?
+        .clone();
+    let status = ffmpeg::detect_ffmpeg(&settings.ffmpeg_path);
+    if !status.available {
+        return Err(FlickError::Message("ffmpeg is not available".into()));
+    }
+
+    let (max_width, max_height) = match settings.video_recording_size.trim().to_lowercase().as_str()
+    {
+        "540p" => (RECORDING_540P_MAX_GIF_WIDTH, RECORDING_540P_MAX_GIF_HEIGHT),
+        "1080p" => (
+            RECORDING_1080P_MAX_VIDEO_WIDTH,
+            RECORDING_1080P_MAX_VIDEO_HEIGHT,
+        ),
+        _ => (RECORDING_720P_MAX_GIF_WIDTH, RECORDING_720P_MAX_GIF_HEIGHT),
+    };
+    Ok(RecordingEncoderOptions {
+        max_width,
+        max_height,
+        fps: match settings.video_recording_fps {
+            24 | 30 => settings.video_recording_fps,
+            _ => 24,
+        },
+        ffmpeg_path: Some(status.path),
     })
 }

@@ -1,14 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Clock3, Copy, FolderOpen, ImageIcon, RefreshCw, Trash2, X } from 'lucide-react';
+import { Clock3, Copy, FolderOpen, ImageIcon, Play, RefreshCw, Trash2, Video, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CaptureHistory, CaptureRecord, TranslationHistory, TranslationRecord } from '../types';
 
-type HistoryTab = 'screenshots' | 'translations';
+type HistoryTab = 'screenshots' | 'videos' | 'translations';
 
 type DeleteTarget =
   | { kind: 'single'; shot: CaptureRecord }
+  | { kind: 'all' };
+
+type VideoDeleteTarget =
+  | { kind: 'single'; video: CaptureRecord }
   | { kind: 'all' };
 
 type TranslationDeleteTarget = {
@@ -32,17 +36,22 @@ export default function HistoryView() {
   const { t, i18n } = useTranslation();
   const [activeTab, setActiveTab] = useState<HistoryTab>('screenshots');
   const [history, setHistory] = useState<CaptureHistory>(emptyHistory);
+  const [videoHistory, setVideoHistory] = useState<CaptureHistory>(emptyHistory);
   const [translationHistory, setTranslationHistory] = useState<TranslationHistory>(emptyTranslationHistory);
   const [isLoading, setIsLoading] = useState(true);
+  const [isVideoLoading, setIsVideoLoading] = useState(true);
   const [isTranslationLoading, setIsTranslationLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [videoLoadError, setVideoLoadError] = useState<string | null>(null);
   const [translationLoadError, setTranslationLoadError] = useState<string | null>(null);
   const [previewingShot, setPreviewingShot] = useState<CaptureRecord | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
+  const [pendingVideoDelete, setPendingVideoDelete] = useState<VideoDeleteTarget | null>(null);
   const [pendingTranslationDelete, setPendingTranslationDelete] = useState<TranslationDeleteTarget | null>(null);
   const [pendingClearTranslations, setPendingClearTranslations] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [videoPage, setVideoPage] = useState(1);
   const [translationPage, setTranslationPage] = useState(1);
 
   const loadHistory = async () => {
@@ -69,13 +78,27 @@ export default function HistoryView() {
     }
   };
 
+  const loadVideoHistory = async () => {
+    try {
+      setVideoLoadError(null);
+      const nextHistory = await invoke<CaptureHistory>('list_video_history');
+      setVideoHistory(nextHistory);
+    } catch (error) {
+      setVideoLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsVideoLoading(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     void loadHistory().catch(() => {});
+    void loadVideoHistory().catch(() => {});
     void loadTranslationHistory().catch(() => {});
 
     let unlistenCapture: (() => void) | undefined;
     let unlistenTranslation: (() => void) | undefined;
+    let unlistenVideo: (() => void) | undefined;
     let unlistenTranslationHistory: (() => void) | undefined;
     void listen<CaptureRecord>('capture-finished', async () => {
       if (!cancelled) {
@@ -83,6 +106,14 @@ export default function HistoryView() {
       }
     }).then((dispose) => {
       unlistenCapture = dispose;
+    });
+
+    void listen<CaptureRecord>('video-finished', async () => {
+      if (!cancelled) {
+        await loadVideoHistory();
+      }
+    }).then((dispose) => {
+      unlistenVideo = dispose;
     });
 
     void listen('translation-ready', async () => {
@@ -104,6 +135,7 @@ export default function HistoryView() {
     return () => {
       cancelled = true;
       unlistenCapture?.();
+      unlistenVideo?.();
       unlistenTranslation?.();
       unlistenTranslationHistory?.();
     };
@@ -134,6 +166,13 @@ export default function HistoryView() {
   }, [currentPage, history.items.length]);
 
   useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(videoHistory.items.length / ITEMS_PER_PAGE));
+    if (videoPage > totalPages) {
+      setVideoPage(totalPages);
+    }
+  }, [videoHistory.items.length, videoPage]);
+
+  useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(translationHistory.items.length / ITEMS_PER_PAGE));
     if (translationPage > totalPages) {
       setTranslationPage(totalPages);
@@ -156,6 +195,12 @@ export default function HistoryView() {
   const pageEnd = Math.min(currentPage * ITEMS_PER_PAGE, history.items.length);
   const paginationItems = getPaginationItems(currentPage, totalPages);
   const translationTotalPages = Math.max(1, Math.ceil(translationHistory.items.length / ITEMS_PER_PAGE));
+  const videoCountLabel = t('history.videoItemCount', { count: videoHistory.items.length });
+  const videoTotalPages = Math.max(1, Math.ceil(videoHistory.items.length / ITEMS_PER_PAGE));
+  const pagedVideos = videoHistory.items.slice((videoPage - 1) * ITEMS_PER_PAGE, videoPage * ITEMS_PER_PAGE);
+  const videoPageStart = videoHistory.items.length === 0 ? 0 : (videoPage - 1) * ITEMS_PER_PAGE + 1;
+  const videoPageEnd = Math.min(videoPage * ITEMS_PER_PAGE, videoHistory.items.length);
+  const videoPaginationItems = getPaginationItems(videoPage, videoTotalPages);
   const pagedTranslations = translationHistory.items.slice((translationPage - 1) * ITEMS_PER_PAGE, translationPage * ITEMS_PER_PAGE);
   const translationPageStart = translationHistory.items.length === 0 ? 0 : (translationPage - 1) * ITEMS_PER_PAGE + 1;
   const translationPageEnd = Math.min(translationPage * ITEMS_PER_PAGE, translationHistory.items.length);
@@ -174,6 +219,16 @@ export default function HistoryView() {
             }`}
           >
             {t('history.screenshotHistory')}
+          </button>
+          <button
+            onClick={() => setActiveTab('videos')}
+            className={`rounded-xl px-6 py-2.5 text-sm font-bold transition-all ${
+              activeTab === 'videos'
+                ? 'bg-surface-container-lowest text-primary shadow-sm ring-1 ring-black/5'
+                : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+            }`}
+          >
+            {t('history.videoHistory')}
           </button>
           <button
             onClick={() => setActiveTab('translations')}
@@ -307,6 +362,66 @@ export default function HistoryView() {
                       </button>
                     </div>
                   </div>
+                )}
+              </>
+            )}
+          </>
+        ) : activeTab === 'videos' ? (
+          <>
+            <HistorySummary
+              countLabel={videoCountLabel}
+              deleteAllLabel={t('history.deleteAll')}
+              directory={videoHistory.directory}
+              onDeleteAll={() => setPendingVideoDelete({ kind: 'all' })}
+              onRefresh={() => {
+                setIsVideoLoading(true);
+                void loadVideoHistory();
+              }}
+              refreshLabel={t('history.refresh')}
+              storageLabel={t('history.storageDirectory')}
+              disabled={videoHistory.items.length === 0}
+            />
+            {isVideoLoading ? (
+              <div className="rounded-3xl border border-outline-variant/20 bg-surface-container-lowest p-10 text-center text-sm text-on-surface-variant">
+                {t('history.videoLoading')}
+              </div>
+            ) : videoLoadError ? (
+              <div className="rounded-3xl border border-error/20 bg-error/5 p-10 text-center">
+                <p className="text-sm font-semibold text-error">{t('history.videoLoadFailed')}</p>
+                <p className="mt-2 break-all text-xs text-on-surface-variant">{videoLoadError}</p>
+              </div>
+            ) : videoHistory.items.length === 0 ? (
+              <div className="rounded-3xl border border-dashed border-outline-variant/30 bg-surface-container-lowest p-12 text-center">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/8 text-primary">
+                  <Video size={24} />
+                </div>
+                <p className="mt-4 text-base font-bold text-on-surface">{t('history.videoEmptyTitle')}</p>
+                <p className="mt-2 text-sm text-on-surface-variant">{t('history.videoEmptyDesc')}</p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                  {pagedVideos.map((video) => (
+                    <VideoCard
+                      key={video.id}
+                      formatter={formatter}
+                      video={video}
+                      viewLabel={t('history.view')}
+                      deleteLabel={t('history.delete')}
+                      copyPathLabel={t('history.copyPath')}
+                      copiedLabel={t('history.copied')}
+                      onDelete={() => setPendingVideoDelete({ kind: 'single', video })}
+                    />
+                  ))}
+                </div>
+                {videoTotalPages > 1 && (
+                  <Pagination
+                    currentPage={videoPage}
+                    items={videoPaginationItems}
+                    label={t('history.showingRange', { start: videoPageStart, end: videoPageEnd, total: videoHistory.items.length })}
+                    setPage={setVideoPage}
+                    totalPages={videoTotalPages}
+                  />
                 )}
               </>
             )}
@@ -450,6 +565,41 @@ export default function HistoryView() {
         />
       )}
 
+      {pendingVideoDelete && (
+        <ConfirmDeleteModal
+          fileName={pendingVideoDelete.kind === 'single' ? pendingVideoDelete.video.path.split(/[\\/]/).pop() ?? pendingVideoDelete.video.path : t('history.allVideos')}
+          isDeleting={isDeleting}
+          message={pendingVideoDelete.kind === 'single' ? t('history.deleteVideoConfirm') : t('history.deleteAllVideosConfirm')}
+          cancelLabel={t('history.cancel')}
+          confirmLabel={pendingVideoDelete.kind === 'single' ? t('history.delete') : t('history.deleteAll')}
+          title={pendingVideoDelete.kind === 'single' ? t('history.deleteVideoTitle') : t('history.deleteAllVideosTitle')}
+          onCancel={() => {
+            if (!isDeleting) {
+              setPendingVideoDelete(null);
+            }
+          }}
+          onConfirm={() => {
+            setIsDeleting(true);
+            setVideoLoadError(null);
+            void (pendingVideoDelete.kind === 'single'
+              ? invoke('delete_video', { path: pendingVideoDelete.video.path })
+              : invoke('clear_all_videos'))
+              .then(async () => {
+                setPendingVideoDelete(null);
+                setIsVideoLoading(true);
+                setVideoPage(1);
+                await loadVideoHistory();
+              })
+              .catch((error) => {
+                setVideoLoadError(error instanceof Error ? error.message : String(error));
+              })
+              .finally(() => {
+                setIsDeleting(false);
+              });
+          }}
+        />
+      )}
+
       {pendingClearTranslations && (
         <ConfirmDeleteModal
           fileName={t('history.translationItemCount', { count: translationHistory.items.length })}
@@ -513,6 +663,212 @@ export default function HistoryView() {
         />
       )}
     </>
+  );
+}
+
+function HistorySummary({
+  countLabel,
+  deleteAllLabel,
+  directory,
+  disabled,
+  onDeleteAll,
+  onRefresh,
+  refreshLabel,
+  storageLabel,
+}: {
+  countLabel: string;
+  deleteAllLabel: string;
+  directory: string;
+  disabled: boolean;
+  onDeleteAll: () => void;
+  onRefresh: () => void;
+  refreshLabel: string;
+  storageLabel: string;
+}) {
+  return (
+    <section className="mb-6 rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-5 shadow-sm sm:mb-8 sm:p-6 lg:p-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="space-y-2">
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-primary/70">{storageLabel}</p>
+          <p className="break-all font-mono text-sm text-on-surface">{directory || '...'}</p>
+        </div>
+        <div className="flex items-center gap-3 text-sm text-on-surface-variant">
+          <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1.5 ring-1 ring-outline-variant/20">
+            <FolderOpen size={15} />
+            {countLabel}
+          </span>
+          <button
+            type="button"
+            onClick={onDeleteAll}
+            disabled={disabled}
+            className="inline-flex items-center gap-2 rounded-full bg-error/10 px-3 py-1.5 text-xs font-bold text-error transition-colors hover:bg-error hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Trash2 size={14} />
+            {deleteAllLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="inline-flex items-center gap-2 rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-white transition-opacity hover:opacity-90"
+          >
+            <RefreshCw size={14} />
+            {refreshLabel}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Pagination({
+  currentPage,
+  items,
+  label,
+  setPage,
+  totalPages,
+}: {
+  currentPage: number;
+  items: Array<number | 'ellipsis'>;
+  label: string;
+  setPage: Dispatch<SetStateAction<number>>;
+  totalPages: number;
+}) {
+  return (
+    <div className="mt-8 flex flex-col gap-4 border-t border-surface-container-high pt-6 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">{label}</p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={currentPage === 1}
+          onClick={() => setPage((page) => Math.max(1, page - 1))}
+          className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-container-lowest text-on-surface-variant ring-1 ring-outline-variant/30 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          &lt;
+        </button>
+        {items.map((item, index) =>
+          item === 'ellipsis' ? (
+            <span key={`ellipsis-${index}`} className="flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold text-on-surface-variant">
+              ...
+            </span>
+          ) : (
+            <button
+              key={item}
+              type="button"
+              onClick={() => setPage(item)}
+              className={`flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold transition-colors ${
+                item === currentPage
+                  ? 'bg-primary text-white'
+                  : 'bg-surface-container-lowest text-on-surface ring-1 ring-outline-variant/30 hover:bg-surface-container'
+              }`}
+            >
+              {item}
+            </button>
+          ),
+        )}
+        <button
+          type="button"
+          disabled={currentPage === totalPages}
+          onClick={() => setPage((page) => Math.min(totalPages, page + 1))}
+          className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-container-lowest text-on-surface-variant ring-1 ring-outline-variant/30 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          &gt;
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function VideoCard({
+  video,
+  formatter,
+  viewLabel,
+  deleteLabel,
+  copyPathLabel,
+  copiedLabel,
+  onDelete,
+}: {
+  video: CaptureRecord;
+  formatter: Intl.DateTimeFormat;
+  viewLabel: string;
+  deleteLabel: string;
+  copyPathLabel: string;
+  copiedLabel: string;
+  onDelete: () => void;
+}) {
+  const [pathCopied, setPathCopied] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const fileName = video.path.split(/[\\/]/).pop() ?? video.path;
+  const openVideo = () => {
+    setOpenError(null);
+    void invoke('open_file_in_default_app', { path: video.path }).catch((error) => {
+      setOpenError(error instanceof Error ? error.message : String(error));
+    });
+  };
+
+  return (
+    <article className="group overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg">
+      <button
+        type="button"
+        onClick={openVideo}
+        className="relative flex aspect-[4/3] w-full items-center justify-center bg-surface-container text-primary transition-colors hover:bg-surface-container-high"
+        title={viewLabel}
+      >
+        <Video size={36} className="opacity-45" />
+        <span className="absolute inset-0 flex items-center justify-center">
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-lg transition-transform group-hover:scale-105">
+            <Play size={24} fill="currentColor" />
+          </span>
+        </span>
+      </button>
+      <div className="space-y-3 p-4">
+        <div>
+          <p className="truncate text-[13px] font-bold text-on-surface">{fileName}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-on-surface-variant">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1">
+              <Clock3 size={13} />
+              {formatter.format(new Date(video.created_at))}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-[11px] font-semibold text-on-surface-variant">
+          <span className="min-w-0 flex-1 truncate rounded-full bg-surface-container px-2.5 py-1" title={video.path}>
+            {video.path}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard.writeText(video.path);
+              setPathCopied(true);
+              window.setTimeout(() => setPathCopied(false), 1500);
+            }}
+            className={`inline-flex h-8 shrink-0 items-center justify-center rounded-lg px-2 text-on-surface-variant transition-colors ${
+              pathCopied ? 'bg-primary text-white hover:bg-primary-container hover:text-white' : 'bg-surface-container hover:text-on-surface'
+            }`}
+            title={copyPathLabel}
+          >
+            {pathCopied ? <span className="text-[11px] font-bold">{copiedLabel}</span> : <Copy size={16} />}
+          </button>
+        </div>
+        <div className="flex gap-2 border-t border-outline-variant/20 pt-3">
+          <button
+            type="button"
+            onClick={openVideo}
+            className="flex-1 rounded-xl bg-surface-container px-3 py-2 text-[11px] font-bold text-on-surface transition-colors duration-200 hover:bg-primary hover:text-white"
+          >
+            {viewLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-error/10 hover:text-error"
+            title={deleteLabel}
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
+        {openError && <p className="text-xs text-error">{openError}</p>}
+      </div>
+    </article>
   );
 }
 
