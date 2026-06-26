@@ -1453,6 +1453,25 @@ function ScreenshotEditor() {
                 showAnnotationLayer={editorMode === 'edit'}
                 insetFrame={editorMode === 'recording'}
               />
+              {editorMode === 'long-capture' && longScreenshot.currentFrameDataUrl && (
+                <div
+                  className="pointer-events-none absolute overflow-hidden bg-transparent"
+                  style={{
+                    left: selectionOffset.left,
+                    top: selectionOffset.top,
+                    width: displaySize.width,
+                    height: displaySize.height,
+                    opacity: editorVisible ? 1 : 0,
+                  }}
+                >
+                  <img
+                    src={longScreenshot.currentFrameDataUrl}
+                    alt=""
+                    draggable={false}
+                    className="h-full w-full select-none object-fill"
+                  />
+                </div>
+              )}
 
               {editorMode === 'edit' ? (
                 <ScreenshotEditorToolbar
