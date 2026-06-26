@@ -220,6 +220,11 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
                 last_scroll_delta_for_tap.store(delta_y.signum().round() as i64, Ordering::SeqCst);
 
                 if throttle_for_tap() {
+                    crate::async_log!(
+                        "[STITCH ts={}ms] wheel: THROTTLED-DROP raw_delta_y={:.1}",
+                        now,
+                        delta_y
+                    );
                     return CallbackResult::Drop;
                 }
 
@@ -237,10 +242,26 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
                     0.0
                 };
                 if emit <= 0.0 {
+                    crate::async_log!(
+                        "[STITCH ts={}ms] wheel: RATE-LIMITED-DROP raw_delta_y={:.1} want={:.1}px (window full)",
+                        now,
+                        delta_y,
+                        want
+                    );
                     return CallbackResult::Drop;
                 }
 
                 let signed = (emit * delta_y.signum()).round() as i32;
+                crate::async_log!(
+                    "[STITCH ts={}ms] wheel: raw_delta_y={:.1} want={:.1}px emit={:.1}px signed={} (factor={} cap={})",
+                    now,
+                    delta_y,
+                    want,
+                    emit,
+                    signed,
+                    SCROLL_SPEED_FACTOR,
+                    MAX_SCROLL_PX_PER_EVENT
+                );
                 if signed != 0 {
                     if let Ok(scroll) = CGEvent::new_scroll_event(
                         synth.source.clone(),

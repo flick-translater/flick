@@ -54,7 +54,16 @@ const SHIFT_SAMPLE_COLS: u32 = 64;
 /// Number of equal-width segments a row is divided into for its luminance feature vector. Each
 /// segment stores the mean luminance of its columns, which averages out sub-pixel / Retina
 /// resampling jitter that an exact hash cannot absorb.
-const ROW_FEATURE_SEGMENTS: usize = 32;
+///
+/// Raised 32 -> 64: on text every line's coarse left-to-right brightness profile looks alike, so a
+/// few wide segments cannot tell adjacent lines apart and the row correlation can't distinguish the
+/// true per-frame shift from a row-group multiple. Finer segments keep more of each line's
+/// horizontal structure (where the glyphs actually fall), raising inter-line distinctiveness. 64
+/// stabilised tall frames; 128 added no further benefit (short frames are limited by small overlap,
+/// not horizontal resolution, and 128 risks over-fitting noise on narrow captures), so we stay at 64.
+/// Only helps while each segment still spans several pixels; for very narrow captures the extra
+/// segments fall below 1px and add empty bins (a follow-up may size the segment count to the width).
+const ROW_FEATURE_SEGMENTS: usize = 64;
 /// Full feature length: segment means concatenated with the vertical gradient (this row's segment
 /// means minus the previous row's). The gradient captures vertical texture, which differs between
 /// adjacent text lines and so suppresses neighbor-row cross-matching that plain means cannot.
@@ -70,6 +79,13 @@ const ROW_FEATURE_LEN: usize = ROW_FEATURE_SEGMENTS * 2;
 /// frame carries genuinely new content, so stitching it is not a duplicate. Slow scrolling simply
 /// accumulates across a few dropped frames until it has moved ≥20px, then stitches once.
 const MIN_SCROLL_DELTA: i64 = 20;
+/// `frames_nearly_identical` only treats a frame as a true duplicate when its best vertical
+/// alignment sits within ±this of zero. A genuinely static frame aligns at offset 0; a small
+/// non-zero best offset means the page actually moved (just under MIN_SCROLL_DELTA) and the SAD dip
+/// is real motion — or, on self-similar text, a coincidental match at a non-zero offset that the old
+/// dip test wrongly accepted as a duplicate, dropping real content. Requiring near-zero alignment
+/// lets those frames through to the full delta search instead of silently dropping them.
+const NEAR_DUP_MAX_OFFSET: i64 = 2;
 /// Do not commit very small edge growth as its own stitched strip. These rows usually come from
 /// sub-pixel/compositor settling around a stop point; a later larger frame will include them again.
 const MIN_STITCH_GROW_ROWS: u32 = 16;
@@ -119,6 +135,16 @@ const MIN_RELATIVE_NONTRIVIAL_FRACTION: f64 = 0.25;
 pub(super) fn monotonic_millis() -> i64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as i64
+}
+
+/// Diagnostic log for the stitch pipeline. Prefixes every line with `[STITCH]` and a monotonic
+/// millisecond timestamp so the many (often near-identical) frames can be ordered and correlated
+/// when chasing missed-stitch bugs. Routed through `async_log!` so logging never blocks or perturbs
+/// the capture / compute / merge threads. Grep for `[STITCH]` to isolate this trace.
+macro_rules! slog {
+    ($($arg:tt)*) => {
+        $crate::async_log!("[STITCH ts={}ms] {}", $crate::features::capture::long_capture::monotonic_millis(), format!($($arg)*))
+    };
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -498,12 +524,19 @@ fn ensure_sampling_running(
             // Gap since the previous delivered frame. A large gap means the stream went quiet (page
             // still) and may have jumped since; drop the stale predecessor so we don't measure a bogus
             // delta across the gap.
+            let gap_ms = if last_frame_ms > 0 { now_ms - last_frame_ms } else { 0 };
             if last_frame_ms > 0 && now_ms - last_frame_ms > STREAM_PREV_RESET_GAP_MS {
+                slog!(
+                    "stream: prev reset (gap {}ms > {}ms) -> next frame becomes fresh base",
+                    gap_ms,
+                    STREAM_PREV_RESET_GAP_MS
+                );
                 prev_frame = None;
             }
             last_frame_ms = now_ms;
 
             let frame: SharedFrame = Arc::new(frame);
+            let dir_now = cb_last_dir.load(Ordering::SeqCst);
 
             // Slow-scroll accumulation gate. If this frame is nearly identical to `prev` (the page
             // barely moved since the last *enqueued* frame), skip it AND keep `prev` unchanged, so the
@@ -513,16 +546,40 @@ fn ensure_sampling_running(
             // full delta search) only suppresses true near-duplicates; real motion still advances.
             if let Some(prev) = &prev_frame {
                 if frames_nearly_identical(prev, &frame) {
+                    slog!(
+                        "stream: DROP near-identical frame (gate=frames_nearly_identical) dir={} gap={}ms size={}x{}",
+                        dir_now,
+                        gap_ms,
+                        frame.width(),
+                        frame.height()
+                    );
                     return;
                 }
             }
 
             let direction = cb_last_dir.load(Ordering::SeqCst);
             let index = FRAME_INDEX.fetch_add(1, Ordering::SeqCst);
+            slog!(
+                "stream: ENQUEUE frame idx={} dir={} gap={}ms has_prev={} size={}x{}",
+                index,
+                direction,
+                gap_ms,
+                prev_frame.is_some(),
+                frame.width(),
+                frame.height()
+            );
             let (lock, cvar) = raw_queue();
             if let Ok(mut queue) = lock.lock() {
                 if queue.len() >= FRAME_QUEUE_CAPACITY {
-                    queue.pop_front();
+                    // Compute workers can't keep up: drop the oldest pending job. Its index is gone,
+                    // leaving a hole the merge thread must resync past — a real frame is lost here.
+                    let dropped = queue.pop_front();
+                    slog!(
+                        "raw_queue: FULL (len={}/{}) DROP oldest idx={:?} (compute backlog -> missed frame)",
+                        queue.len() + 1,
+                        FRAME_QUEUE_CAPACITY,
+                        dropped.as_ref().map(|j| j.index)
+                    );
                 }
                 queue.push_back(RawJob {
                     index,
@@ -531,8 +588,19 @@ fn ensure_sampling_running(
                     frame: frame.clone(),
                     direction,
                 });
-                FRAME_QUEUE_LEN.store(queue.len(), Ordering::SeqCst);
+                let qlen = queue.len();
+                FRAME_QUEUE_LEN.store(qlen, Ordering::SeqCst);
                 cvar.notify_one();
+                // Backlog building up even before it's full is an early warning of frame loss.
+                if qlen * 2 >= FRAME_QUEUE_CAPACITY {
+                    slog!(
+                        "raw_queue: backlog len={}/{} (compute falling behind)",
+                        qlen,
+                        FRAME_QUEUE_CAPACITY
+                    );
+                }
+            } else {
+                slog!("raw_queue: lock poisoned -> frame idx={} not enqueued", index);
             }
             prev_frame = Some(frame);
         });
@@ -737,6 +805,19 @@ fn spawn_pipeline_workers(app: AppHandle, stop: Arc<AtomicBool>) {
                     if next_index.map_or(true, |n| !map.contains_key(&n)) {
                         if let Some((&smallest, _)) = map.iter().next() {
                             if next_index.map_or(true, |n| smallest >= n) {
+                                // Skipping ahead past a missing index means those frames were lost
+                                // upstream (raw_queue drop) or are arriving out of order — the merge
+                                // thread will never stitch them.
+                                if let Some(prev) = next_index {
+                                    if smallest > prev {
+                                        slog!(
+                                            "merge: RESYNC skip idx {}..{} (missing -> never stitched, queue_len={})",
+                                            prev,
+                                            smallest - 1,
+                                            map.len()
+                                        );
+                                    }
+                                }
                                 next_index = Some(smallest);
                             }
                         }
@@ -1327,6 +1408,12 @@ fn frames_nearly_identical(
     }
     if best_offset.abs() >= thr {
         // Best alignment is at (or beyond) the edge → the page moved ≥ threshold. Not a duplicate.
+        slog!(
+            "nearly_identical=false (best_offset={} >= thr={}) best_sad={}",
+            best_offset,
+            thr,
+            best_sad
+        );
         return false;
     }
     // Best is at a sub-threshold offset. Confirm it's a *real* match (a clear SAD dip), not just the
@@ -1334,9 +1421,25 @@ fn frames_nearly_identical(
     // Compare against the SAD at the search edges: a genuine sub-threshold alignment is markedly
     // better than the edge offsets; a far/fast scroll shows no such dip.
     let edge_sad = sad_at(thr).min(sad_at(-thr));
-    // Near-duplicate only if the in-range best is clearly better than the edges (real dip) — i.e. the
-    // content really is aligned at a small offset.
-    best_sad.saturating_mul(4) < edge_sad.saturating_mul(3)
+    // Near-duplicate only if BOTH: the alignment is essentially at zero (a truly static frame), AND
+    // the in-range best is a clear SAD dip vs the edges. The zero-offset requirement is what rejects
+    // the self-similar-text false match: on text, a coincidental SAD dip can appear at a non-zero
+    // offset even though the page really moved — those frames must go through to the full delta search
+    // rather than be dropped as duplicates (the text missed-stitch bug).
+    let dip = best_sad.saturating_mul(4) < edge_sad.saturating_mul(3);
+    let at_zero = best_offset.abs() <= NEAR_DUP_MAX_OFFSET;
+    let nearly = at_zero && dip;
+    slog!(
+        "nearly_identical={} thr={} best_offset={} best_sad={} edge_sad={} (at_zero={} dip={})",
+        nearly,
+        thr,
+        best_offset,
+        best_sad,
+        edge_sad,
+        at_zero,
+        dip
+    );
+    nearly
 }
 
 /// Stage-1 (parallel) work: measure the relative scroll between `prev_frame` and `frame`.
@@ -1356,6 +1459,13 @@ fn compute_relative_delta(
     let prev_sig = RowSignatures::from_frame(prev_frame);
     let frame_sig = RowSignatures::from_frame(frame);
     if same_position_frame(&prev_sig, &frame_sig) {
+        // High-similarity content (text!) can read as "same position" even after a real small
+        // scroll -> delta forced to 0 -> frame contributes nothing -> missed stitch.
+        slog!(
+            "compute_delta: same_position -> delta=0 dir_hint={} last_shift={}",
+            direction_hint,
+            last_shift
+        );
         return Some(0);
     }
     let dir = if direction_hint < 0 {
@@ -1366,7 +1476,36 @@ fn compute_relative_delta(
         0
     };
     let overlap_result = locate_next_frame_from_last(&prev_sig, &frame_sig, dir, last_shift);
-    overlap_result.overlap.map(|overlap| overlap.delta_y)
+    // Diagnostics: expose what locate actually chose vs. the prediction and the runner-up candidates,
+    // so a delta that snaps to a multiple of the true per-frame shift (text self-similarity locking
+    // onto a row-group offset) is visible — compare `delta`, `predicted`, and the chosen avg_corr.
+    let (chosen_corr, chosen_overlap, chosen_contig) = overlap_result
+        .overlap
+        .as_ref()
+        .map(|o| (o.avg_corr_permille, o.overlap_rows, o.contiguous))
+        .unwrap_or((0, 0, 0));
+    let delta = overlap_result.overlap.as_ref().map(|overlap| overlap.delta_y);
+    slog!(
+        "compute_delta: dir_hint={} dir={} last_shift={} predicted={} -> delta={:?} corr={}permille overlap={} contig={} | near_pred(delta={} corr={}permille) diag best_delta={} similar_delta={}{}",
+        direction_hint,
+        dir,
+        last_shift,
+        overlap_result.predicted_delta_y,
+        delta,
+        chosen_corr,
+        chosen_overlap,
+        chosen_contig,
+        overlap_result.near_predicted_delta_y,
+        overlap_result.near_predicted_corr,
+        overlap_result.best_delta_y,
+        overlap_result.similar_delta_y,
+        if delta.is_none() {
+            " (LOCATE FAILED -> stall-recovery path)"
+        } else {
+            ""
+        }
+    );
+    delta
 }
 
 fn same_position_frame(last_sig: &RowSignatures, next_sig: &RowSignatures) -> bool {
@@ -1418,13 +1557,28 @@ fn merge_computed_frame(
     direction_hint: i64,
 ) -> PreviewUpdate {
     if frame.width() != session.stitched.width() {
+        slog!(
+            "merge: width mismatch frame_w={} stitched_w={} -> RESET stitch",
+            frame.width(),
+            session.stitched.width()
+        );
         return reset_stitched_to_frame(session, frame);
     }
 
+    let cur_y = session.current_y;
+    let range = session.stitched_range;
     let Some(delta_y) = delta else {
         // Couldn't align to the previous frame. Try a wide re-acquisition against the stitched image
         // (same stall-recovery path as before) before dropping the frame.
         session.failed_locate_count = session.failed_locate_count.saturating_add(1);
+        slog!(
+            "merge: delta=None current_y={} stitched=[{}..{}] failed_locate={}/{}",
+            cur_y,
+            range.top,
+            range.bottom,
+            session.failed_locate_count,
+            STALL_RESET_FAILURES
+        );
         if session.failed_locate_count >= STALL_RESET_FAILURES {
             session.last_shift = 0;
             let frame_sig = RowSignatures::from_frame(&frame);
@@ -1435,10 +1589,16 @@ fn merge_computed_frame(
                 session.current_y,
                 STALL_RECOVERY_RADIUS,
             ) {
+                slog!(
+                    "merge: stall-recovery OK current_y {} -> recovered_y={}",
+                    cur_y,
+                    recovered_y
+                );
                 session.failed_locate_count = 0;
                 session.current_y = recovered_y;
                 return merge_frame_by_range(session, frame, recovered_y);
             }
+            slog!("merge: stall-recovery FAILED -> DROP frame (missed stitch candidate)");
         }
         return PreviewUpdate::None;
     };
@@ -1456,9 +1616,20 @@ fn merge_computed_frame(
         CORRECTION_SEARCH_RADIUS,
     )
     .unwrap_or(estimated_y);
-    if new_y != estimated_y {}
+    let drift_correction = new_y - estimated_y;
     // Track scroll speed for the next frame's search hint, using the corrected position.
     let moved = (new_y - session.current_y).unsigned_abs();
+    slog!(
+        "merge: delta_y={} current_y={} est_y={} new_y={} drift_corr={} moved={} (accumulated stitch top..bottom=[{}..{}])",
+        delta_y,
+        cur_y,
+        estimated_y,
+        new_y,
+        drift_correction,
+        moved,
+        range.top,
+        range.bottom
+    );
     if moved > 0 {
         session.last_shift = moved.min(u64::from(frame.height())) as u32;
         SHARED_LAST_SHIFT.store(session.last_shift as usize, Ordering::SeqCst);
@@ -1488,6 +1659,12 @@ fn correct_y_against_stitched(
     let frame_h = frame_sig.len() as i64;
     let stitched_h = stitched.height() as i64;
     if frame_h == 0 || frame_h > stitched_h {
+        slog!(
+            "drift: SKIP (frame_h={} stitched_h={} radius={}) frame too tall / empty",
+            frame_h,
+            stitched_h,
+            radius
+        );
         return None;
     }
 
@@ -1496,6 +1673,15 @@ fn correct_y_against_stitched(
     let est_offset = estimated_y - stitched_range.top;
     let max_offset = stitched_h - frame_h;
     if est_offset < 0 || est_offset > max_offset {
+        // This is the usual reason drift correction never fires during a normal downward scroll: the
+        // frame sits at the growing bottom edge of the stitch (est_offset > max_offset), so there is
+        // no full already-stitched reference below it to anchor against.
+        slog!(
+            "drift: SKIP at-edge (est_offset={} max_offset={} radius={}) frame not fully inside stitch",
+            est_offset,
+            max_offset,
+            radius
+        );
         return None;
     }
 
@@ -1509,6 +1695,12 @@ fn correct_y_against_stitched(
     );
     let win_rows = stitched_sig.len() as i64;
     if win_rows < frame_h {
+        slog!(
+            "drift: SKIP (win_rows={} < frame_h={} radius={}) search window too small",
+            win_rows,
+            frame_h,
+            radius
+        );
         return None;
     }
 
@@ -1543,10 +1735,34 @@ fn correct_y_against_stitched(
         }
     }
 
-    let offset = best_offset?;
-    if (best_corr * 1000.0).round() as u32 >= CORRECTION_MIN_CORR_PERMILLE {
-        Some(stitched_range.top + offset)
+    let Some(offset) = best_offset else {
+        slog!("drift: SKIP (no candidate had any non-trivial rows) radius={}", radius);
+        return None;
+    };
+    let best_corr_permille = (best_corr * 1000.0).round() as u32;
+    let corrected_y = stitched_range.top + offset;
+    let est_y_in = est_offset + stitched_range.top;
+    if best_corr_permille >= CORRECTION_MIN_CORR_PERMILLE {
+        slog!(
+            "drift: APPLY est_y={} -> corrected_y={} (shift {}) best_corr={}permille thr={} radius={}",
+            est_y_in,
+            corrected_y,
+            corrected_y - est_y_in,
+            best_corr_permille,
+            CORRECTION_MIN_CORR_PERMILLE,
+            radius
+        );
+        Some(corrected_y)
     } else {
+        // Found a best placement but it isn't confident enough to trust — common on self-similar text
+        // where no placement stands out. The accumulated estimate stands (no correction).
+        slog!(
+            "drift: REJECT best_corr={}permille < thr={} (would-be shift {}) radius={}",
+            best_corr_permille,
+            CORRECTION_MIN_CORR_PERMILLE,
+            corrected_y - est_y_in,
+            radius
+        );
         None
     }
 }
@@ -1785,6 +2001,12 @@ struct RelativeOverlapResult {
     predicted_delta_y: i64,
     min_contiguous: u32,
     min_nontrivial_matched: u32,
+    /// Diagnostic: among accept-gated candidates, the delta closest to `predicted_delta_y`, and its
+    /// mean correlation. If the chosen `overlap.delta_y` differs from this while this candidate's
+    /// correlation is nearly as high, the search snapped to a self-similar row-group multiple instead
+    /// of the true per-frame shift — the text duplicate-stitch signature.
+    near_predicted_delta_y: i64,
+    near_predicted_corr: u32,
 }
 
 fn locate_next_frame_from_last(
@@ -1815,6 +2037,8 @@ fn locate_next_frame_from_last(
             predicted_delta_y: 0,
             min_contiguous: 0,
             min_nontrivial_matched: 0,
+            near_predicted_delta_y: 0,
+            near_predicted_corr: 0,
         };
     }
 
@@ -1860,6 +2084,8 @@ fn locate_next_frame_from_last(
             predicted_delta_y: 0,
             min_contiguous,
             min_nontrivial_matched,
+            near_predicted_delta_y: 0,
+            near_predicted_corr: 0,
         };
     }
 
@@ -1873,6 +2099,12 @@ fn locate_next_frame_from_last(
     let predicted = preferred_sign * i64::from(last_shift.max(1)).min(max_delta);
     let mut best: Option<RelativeFrameOverlap> = None;
     let mut best_distance = i64::MAX;
+    // Diagnostic: track the accept-gated candidate closest to `predicted` (and its correlation),
+    // independent of which candidate ultimately wins the avg_corr ranking. Lets us see when the
+    // winner is a far row-group multiple while a near-predicted candidate scored almost as well.
+    let mut near_predicted_delta_y = 0_i64;
+    let mut near_predicted_corr = 0_u32;
+    let mut near_predicted_distance = i64::MAX;
     let mut diagnostic_best_delta_y = 0_i64;
     let mut diagnostic_best_overlap_rows = 0_u32;
     let mut diagnostic_best_matched = 0_u32;
@@ -2042,6 +2274,12 @@ fn locate_next_frame_from_last(
         }
 
         let distance = (delta_y - predicted).abs();
+        // Diagnostic-only: remember the accept-gated candidate nearest the prediction.
+        if distance < near_predicted_distance {
+            near_predicted_distance = distance;
+            near_predicted_delta_y = delta_y;
+            near_predicted_corr = avg_corr_permille;
+        }
         // Rank primarily by mean correlation: it is continuous, so the true alignment scores
         // measurably higher than a coincidental self-similar offset, even when both saturate the
         // binary match permilles at ~1000‰. Closeness to the predicted scroll (`-distance`) is the
@@ -2104,6 +2342,8 @@ fn locate_next_frame_from_last(
         predicted_delta_y: predicted,
         min_contiguous,
         min_nontrivial_matched,
+        near_predicted_delta_y,
+        near_predicted_corr,
     }
 }
 
@@ -2141,6 +2381,14 @@ fn merge_frame_by_range(
         // timing and sub-pixel sampling can vary frame-to-frame, and repeatedly overwriting the same
         // stitched rows creates horizontal tearing bands in the final image.
         let moved = frame_y != session.current_y;
+        slog!(
+            "stitch: frame fully inside stitched (frame=[{}..{}] stitched=[{}..{}]) -> {} (no new content)",
+            frame_range.top,
+            frame_range.bottom,
+            old_range.top,
+            old_range.bottom,
+            if moved { "OffsetOnly" } else { "None" }
+        );
         session.current_y = frame_y;
         session.last_frame = frame;
         return if moved {
@@ -2161,10 +2409,27 @@ fn merge_frame_by_range(
     if grows_bottom && !grows_top {
         let new_rows = (new_range.bottom - old_range.bottom) as u32;
         if new_rows < MIN_STITCH_GROW_ROWS {
+            slog!(
+                "stitch: grow_bottom new_rows={} < MIN_STITCH_GROW_ROWS={} -> DROP (missed stitch candidate) frame=[{}..{}] stitched=[{}..{}]",
+                new_rows,
+                MIN_STITCH_GROW_ROWS,
+                frame_range.top,
+                frame_range.bottom,
+                old_range.top,
+                old_range.bottom
+            );
             session.current_y = frame_y;
             session.last_frame = frame;
             return PreviewUpdate::None;
         }
+        slog!(
+            "stitch: APPEND {} rows (stitched [{}..{}] -> [{}..{}])",
+            new_rows,
+            old_range.top,
+            old_range.bottom,
+            new_range.top,
+            new_range.bottom
+        );
         let src_top = (old_range.bottom - frame_range.top).max(0) as u32;
         let appended = frame_rows(&frame, src_top, new_rows);
 
@@ -2186,10 +2451,27 @@ fn merge_frame_by_range(
     if grows_top && !grows_bottom {
         let new_rows = (old_range.top - frame_range.top) as u32;
         if new_rows < MIN_STITCH_GROW_ROWS {
+            slog!(
+                "stitch: grow_top new_rows={} < MIN_STITCH_GROW_ROWS={} -> DROP (missed stitch candidate) frame=[{}..{}] stitched=[{}..{}]",
+                new_rows,
+                MIN_STITCH_GROW_ROWS,
+                frame_range.top,
+                frame_range.bottom,
+                old_range.top,
+                old_range.bottom
+            );
             session.current_y = frame_y;
             session.last_frame = frame;
             return PreviewUpdate::None;
         }
+        slog!(
+            "stitch: PREPEND {} rows (stitched [{}..{}] -> [{}..{}])",
+            new_rows,
+            old_range.top,
+            old_range.bottom,
+            new_range.top,
+            new_range.bottom
+        );
         let prepended = frame_rows(&frame, 0, new_rows);
 
         let old_raw = std::mem::replace(&mut session.stitched, ImageBuffer::new(0, 0)).into_raw();
