@@ -1382,7 +1382,7 @@ function ScreenshotEditor() {
                 fontSize={fontSize}
                 viewportImageOffsetY={0}
                 showAnnotationLayer={editorMode === 'edit'}
-                insetFrame={editorMode === 'recording'}
+                insetFrame
               />
               {editorMode === 'long-capture' && longScreenshot.currentFrameDataUrl && (
                 <div
@@ -1405,13 +1405,14 @@ function ScreenshotEditor() {
               )}
               {editorMode === 'long-capture' && (
                 <div
-                  className="pointer-events-none absolute z-40 box-border border-2 border-primary bg-transparent"
+                  className="pointer-events-none absolute z-40 bg-transparent"
                   style={{
                     left: selectionOffset.left,
                     top: selectionOffset.top,
                     width: displaySize.width,
                     height: displaySize.height,
                     opacity: editorVisible ? 1 : 0,
+                    boxShadow: 'inset 0 0 0 2px rgba(0,102,204,0.95)',
                   }}
                 />
               )}

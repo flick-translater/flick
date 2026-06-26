@@ -65,15 +65,13 @@ export function ScreenshotEditorCanvas({
   insetFrame = false,
 }: ScreenshotEditorCanvasProps) {
   const selectedControlCssRect = selectedControlRect ? canvasRectToCss(selectedControlRect) : null;
-  const frameClass = framed
-    ? insetFrame
-      ? 'shadow-[inset_0_0_0_2px_rgba(0,102,204,0.95)]'
-      : 'shadow-[0_0_0_2px_rgba(0,102,204,0.95)]'
-    : '';
+  const frameShadow = insetFrame
+    ? 'inset 0 0 0 2px rgba(0,102,204,0.95)'
+    : '0 0 0 2px rgba(0,102,204,0.95)';
 
   return (
     <div
-      className={`absolute overflow-hidden bg-transparent ${frameClass}`}
+      className="absolute overflow-hidden bg-transparent"
       style={{
         left: selectionOffset.left,
         top: selectionOffset.top,
@@ -128,6 +126,12 @@ export function ScreenshotEditorCanvas({
           pointerEvents: showAnnotationLayer ? 'auto' : 'none',
         }}
       />
+      {framed && (
+        <div
+          className="pointer-events-none absolute inset-0 z-10"
+          style={{ boxShadow: frameShadow }}
+        />
+      )}
       {showAnnotationLayer && selectedControlCssRect && (
         <div
           className="pointer-events-none absolute z-20 border border-primary"

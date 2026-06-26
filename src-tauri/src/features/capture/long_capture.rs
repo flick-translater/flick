@@ -1191,6 +1191,12 @@ fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
         let toolbar_height: f64 = 56.0;
         let mut regions = vec![
             SelectionRect {
+                x: selection_left.floor() as i32,
+                y: selection_top.floor() as i32,
+                width: selection_width.ceil().max(1.0) as u32,
+                height: selection_height.ceil().max(1.0) as u32,
+            },
+            SelectionRect {
                 x: toolbar_left.floor() as i32,
                 y: toolbar_top.floor() as i32,
                 width: toolbar_width.ceil() as u32,
