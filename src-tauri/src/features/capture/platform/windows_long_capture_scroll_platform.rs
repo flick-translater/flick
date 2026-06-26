@@ -13,7 +13,7 @@ use std::{
 
 use tauri::AppHandle;
 use windows_sys::Win32::{
-    Foundation::{GetLastError, LPARAM, LRESULT, WPARAM},
+    Foundation::{LPARAM, LRESULT, WPARAM},
     System::Threading::GetCurrentThreadId,
     UI::{
         Input::KeyboardAndMouse::{
@@ -39,12 +39,11 @@ use crate::{
 
 use super::{ScrollControllerOptions, ScrollTarget, windows_platform};
 
-const WHEEL_SPEED_FACTOR: f64 = 0.35;
-const MAX_WHEEL_DELTA_PER_EVENT: f64 = WHEEL_DELTA as f64;
-const RATE_WINDOW_MS: i64 = 150;
-const RATE_MAX_DELTA_PER_WINDOW: f64 = WHEEL_DELTA as f64 * 2.0;
-const BUTTON_SCROLL_DELTA_PER_STEP: i32 = WHEEL_DELTA as i32 / 3;
-const BUTTON_SCROLL_INTERVAL: Duration = Duration::from_millis(70);
+const BUTTON_SCROLL_DELTA_PER_STEP: i32 = 25;
+const BUTTON_SCROLL_INTERVAL: Duration = Duration::from_millis(35);
+const REAL_WHEEL_DELTA_PER_STEP: i32 = WHEEL_DELTA as i32 * 3 / 10;
+const REAL_WHEEL_INTERVAL: Duration = Duration::from_millis(14);
+const REAL_WHEEL_IDLE_TIMEOUT: Duration = Duration::from_millis(90);
 const SYNTHETIC_SCROLL_TAG: usize = 0x464c_4b31; // "FLK1"
 const STOP_HOOK_MESSAGE: u32 = WM_APP + 0x4c4b;
 
@@ -57,6 +56,7 @@ struct ScrollWorkerState {
     should_throttle_scroll: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
+#[derive(Clone, Copy)]
 struct WheelCommand {
     delta: i32,
 }
@@ -142,13 +142,38 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
         let session_id = session_id.clone();
         let stop = stop.clone();
         thread::spawn(move || {
-            let mut rate_window = Vec::new();
+            let mut active_direction = 0_i32;
+            let mut last_real_wheel_ms = 0_i64;
             while !stop.load(Ordering::SeqCst) {
-                match wheel_receiver.recv_timeout(Duration::from_millis(50)) {
+                match wheel_receiver.recv_timeout(if active_direction == 0 {
+                    REAL_WHEEL_IDLE_TIMEOUT
+                } else {
+                    REAL_WHEEL_INTERVAL
+                }) {
                     Ok(command) => {
-                        handle_wheel_command(&worker_state, &mut rate_window, command);
+                        active_direction = handle_wheel_command(&worker_state, command);
+                        last_real_wheel_ms = monotonic_millis();
                     }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Timeout) if active_direction != 0 => {
+                        let now = monotonic_millis();
+                        if last_real_wheel_ms > 0
+                            && now - last_real_wheel_ms > REAL_WHEEL_IDLE_TIMEOUT.as_millis() as i64
+                        {
+                            active_direction = 0;
+                            continue;
+                        }
+                        if (worker_state.should_throttle_scroll)() {
+                            continue;
+                        }
+                        dispatch_wheel_to_underlying_window(
+                            &worker_state.app,
+                            &worker_state.session_id,
+                            active_direction * REAL_WHEEL_DELTA_PER_STEP,
+                        );
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        active_direction = 0;
+                    }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
             }
@@ -161,7 +186,6 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
     let hook_thread_id = unsafe { GetCurrentThreadId() };
     let hook = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(low_level_mouse_proc), null_mut(), 0) };
     if hook.is_null() {
-        let error = unsafe { GetLastError() };
         clear_hook_state();
         return;
     }
@@ -286,38 +310,22 @@ fn enqueue_wheel_from_hook(info: &MSLLHOOKSTRUCT) -> bool {
     true
 }
 
-fn handle_wheel_command(
-    state: &ScrollWorkerState,
-    rate_window: &mut Vec<(i64, f64)>,
-    command: WheelCommand,
-) {
+fn handle_wheel_command(state: &ScrollWorkerState, command: WheelCommand) -> i32 {
     let raw_delta = command.delta;
     let now = monotonic_millis();
+    let direction = raw_delta.signum();
     state.last_scroll_millis.store(now, Ordering::SeqCst);
     state
         .last_scroll_delta
-        .store(raw_delta.signum() as i64, Ordering::SeqCst);
+        .store(direction as i64, Ordering::SeqCst);
 
     if (state.should_throttle_scroll)() {
-        return;
+        return direction;
     }
 
-    rate_window.retain(|(timestamp, _)| now - *timestamp < RATE_WINDOW_MS);
-    let used: f64 = rate_window.iter().map(|(_, delta)| *delta).sum();
-    let remaining = (RATE_MAX_DELTA_PER_WINDOW - used).max(0.0);
-    let want = ((raw_delta as f64) * WHEEL_SPEED_FACTOR)
-        .clamp(-MAX_WHEEL_DELTA_PER_EVENT, MAX_WHEEL_DELTA_PER_EVENT);
-    let emit_abs = want.abs().min(remaining);
-    if emit_abs <= 0.0 {
-        return;
-    }
-
-    rate_window.push((now, emit_abs));
-    let mut emit = (emit_abs * want.signum()).round() as i32;
-    if emit == 0 {
-        emit = raw_delta.signum();
-    }
+    let emit = direction * REAL_WHEEL_DELTA_PER_STEP;
     dispatch_wheel_to_underlying_window(&state.app, &state.session_id, emit);
+    direction
 }
 
 fn dispatch_wheel_to_underlying_window(app: &AppHandle, session_id: &str, delta: i32) {
@@ -339,9 +347,7 @@ fn inject_wheel(delta: i32) {
         },
     };
     let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
-    if sent != 1 {
-        let error = unsafe { GetLastError() };
-    }
+    let _ = sent;
 }
 
 fn point_in_selection(

@@ -13,7 +13,7 @@ pub fn async_log(message: impl Into<String>) {
             .name("async-log".to_string())
             .spawn(move || {
                 while let Ok(message) = receiver.recv() {
-                    println!("{message}");
+                    eprintln!("{message}");
                 }
             });
 

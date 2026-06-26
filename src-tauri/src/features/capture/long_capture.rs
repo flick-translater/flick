@@ -81,13 +81,6 @@ const ROW_FEATURE_LEN: usize = ROW_FEATURE_SEGMENTS * 2;
 /// frame carries genuinely new content, so stitching it is not a duplicate. Slow scrolling simply
 /// accumulates across a few dropped frames until it has moved ≥20px, then stitches once.
 const MIN_SCROLL_DELTA: i64 = 20;
-/// `frames_nearly_identical` only treats a frame as a true duplicate when its best vertical
-/// alignment sits within ±this of zero. A genuinely static frame aligns at offset 0; a small
-/// non-zero best offset means the page actually moved (just under MIN_SCROLL_DELTA) and the SAD dip
-/// is real motion — or, on self-similar text, a coincidental match at a non-zero offset that the old
-/// dip test wrongly accepted as a duplicate, dropping real content. Requiring near-zero alignment
-/// lets those frames through to the full delta search instead of silently dropping them.
-const NEAR_DUP_MAX_OFFSET: i64 = 2;
 /// Do not commit very small edge growth as its own stitched strip. These rows usually come from
 /// sub-pixel/compositor settling around a stop point; a later larger frame will include them again.
 const MIN_STITCH_GROW_ROWS: u32 = 16;
@@ -1418,14 +1411,10 @@ fn frames_nearly_identical(
     // Compare against the SAD at the search edges: a genuine sub-threshold alignment is markedly
     // better than the edge offsets; a far/fast scroll shows no such dip.
     let edge_sad = sad_at(thr).min(sad_at(-thr));
-    // Near-duplicate only if BOTH: the alignment is essentially at zero (a truly static frame), AND
-    // the in-range best is a clear SAD dip vs the edges. The zero-offset requirement is what rejects
-    // the self-similar-text false match: on text, a coincidental SAD dip can appear at a non-zero
-    // offset even though the page really moved — those frames must go through to the full delta search
-    // rather than be dropped as duplicates (the text missed-stitch bug).
-    let dip = best_sad.saturating_mul(4) < edge_sad.saturating_mul(3);
-    let at_zero = best_offset.abs() <= NEAR_DUP_MAX_OFFSET;
-    at_zero && dip
+    // Near-duplicate if the in-range best is clearly better than the edges. The stream callback keeps
+    // the previous enqueued frame unchanged, so these small moves accumulate until the next frame
+    // reaches MIN_SCROLL_DELTA and can be located reliably.
+    best_sad.saturating_mul(4) < edge_sad.saturating_mul(3)
 }
 
 /// Stage-1 (parallel) work: measure the relative scroll between `prev_frame` and `frame`.
