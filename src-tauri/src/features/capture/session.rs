@@ -30,10 +30,6 @@ use crate::{
 
 use super::{history, platform};
 
-pub(crate) fn capture_editor_log(_step: &str) {}
-
-pub fn capture_editor_frontend_log(_message: &str) {}
-
 pub fn cancel_capture(app: &AppHandle) -> Result<(), FlickError> {
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(mut guard) = state.capture_snapshots.lock() {
@@ -84,10 +80,6 @@ pub fn complete_capture(
         state,
         !defer_overlay_hide_for_editor,
     )?;
-    capture_editor_log(&format!(
-        "complete_capture: cached_screens={} editor_enabled={editor_enabled} defer_overlay_hide={defer_overlay_hide_for_editor}",
-        cached_screens.len()
-    ));
 
     let app_handle = app.clone();
     let should_restore_previous_frontmost = intent == CaptureIntent::Capture;
@@ -95,12 +87,6 @@ pub fn complete_capture(
         let run = || -> Result<(), FlickError> {
             let capture_service = ScreenCaptureService::default();
             let image = platform::capture_image(&capture_service, &selection, &cached_screens)?;
-            capture_editor_log(&format!(
-                "complete_capture: captured image width={} height={} {}",
-                image.width(),
-                image.height(),
-                image_sample_summary(&image)
-            ));
 
             let state = app_handle.state::<AppState>();
             if !defer_overlay_hide_for_editor {
@@ -250,10 +236,7 @@ pub fn complete_capture(
                     }
                 }
             } else {
-                capture_editor_log("regular capture branch entered");
-
                 if editor_enabled {
-                    capture_editor_log("editor enabled; creating pending edit");
                     match create_pending_capture_edit(
                         &app_handle,
                         &state,
@@ -262,7 +245,6 @@ pub fn complete_capture(
                         selection.clone(),
                     ) {
                         Ok(()) => {
-                            capture_editor_log("pending edit created; editor window opened");
                             return Ok(());
                         }
                         Err(error) => {
@@ -311,7 +293,6 @@ pub fn get_pending_capture_image(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<String, FlickError> {
-    capture_editor_log("get_pending_capture_image: start");
     let original_path = {
         let pending = state
             .pending_capture_edits
@@ -326,21 +307,13 @@ pub fn get_pending_capture_image(
         session.original_path.clone()
     };
 
-    capture_editor_log("get_pending_capture_image: waiting for temp png");
     wait_for_file(Path::new(&original_path), Duration::from_secs(3))?;
-    capture_editor_log("get_pending_capture_image: reading temp png");
     let bytes = fs::read(original_path)
         .map_err(|error| FlickError::Message(format!("failed to read pending image: {error}")))?;
-    capture_editor_log(&format!(
-        "get_pending_capture_image: png bytes read len={}",
-        bytes.len()
-    ));
-    capture_editor_log("get_pending_capture_image: encoding base64 data url");
     let data_url = format!(
         "data:image/png;base64,{}",
         general_purpose::STANDARD.encode(bytes)
     );
-    capture_editor_log("get_pending_capture_image: complete");
     Ok(data_url)
 }
 
@@ -351,7 +324,6 @@ pub fn confirm_regular_capture_edit(
     png_base64: String,
     pin_to_desktop: bool,
 ) -> Result<CaptureRecord, FlickError> {
-    capture_editor_log("confirm_regular_capture_edit: start");
     platform::finalize_capture_session(&app, &state, true);
     let pending = remove_pending_capture_edit(&state, &session_id)?;
     let record = CaptureRecord {
@@ -361,21 +333,14 @@ pub fn confirm_regular_capture_edit(
         height: pending.selection.height,
         path: pending.final_path.clone(),
     };
-    capture_editor_log("confirm_regular_capture_edit: pending session removed");
-    capture_editor_log(
-        "confirm_regular_capture_edit: closing editor window before background save",
-    );
     close_screenshot_editor_window(&app, &session_id);
-    capture_editor_log("confirm_regular_capture_edit: cleaning temp image");
     cleanup_pending_original(&pending);
 
     let app_for_save = app.clone();
     let record_for_return = record.clone();
     thread::spawn(move || {
-        capture_editor_log("confirm background save: decoding base64 png");
         let run = || -> Result<(), FlickError> {
             let image_bytes = decode_png_base64(&png_base64)?;
-            capture_editor_log("confirm background save: decoding image bytes");
             let image = image::load_from_memory(&image_bytes)
                 .map_err(|error| {
                     FlickError::Message(format!("failed to decode edited image: {error}"))
@@ -383,7 +348,6 @@ pub fn confirm_regular_capture_edit(
                 .to_rgba8();
 
             let state = app_for_save.state::<AppState>();
-            capture_editor_log("confirm background save: loading settings");
             let screenshot_dir = history::current_screenshot_dir(&state)?;
             let max_screenshots = state
                 .settings
@@ -398,7 +362,6 @@ pub fn confirm_regular_capture_edit(
                 path: record_for_return.path.clone(),
             };
 
-            capture_editor_log("confirm background save: finalizing image");
             finalize_regular_capture_image(
                 &app_for_save,
                 &state,
@@ -420,13 +383,11 @@ pub fn confirm_regular_capture_edit(
             Ok(())
         };
 
-        match run() {
-            Ok(()) => capture_editor_log("confirm background save: complete"),
-            Err(error) => eprintln!("capture edit background save failed: {error}"),
+        if let Err(error) = run() {
+            eprintln!("capture edit background save failed: {error}");
         }
     });
 
-    capture_editor_log("confirm_regular_capture_edit: complete; save running in background");
     Ok(record)
 }
 
@@ -436,10 +397,8 @@ pub fn save_regular_capture_edit(
     session_id: String,
     png_base64: String,
 ) -> Result<CaptureRecord, FlickError> {
-    capture_editor_log("save_regular_capture_edit: start");
     platform::finalize_capture_session(&app, &state, true);
     let pending = remove_pending_capture_edit(&state, &session_id)?;
-    capture_editor_log("save_regular_capture_edit: pending session removed");
     close_screenshot_editor_window(&app, &session_id);
     cleanup_pending_original(&pending);
 
@@ -461,9 +420,7 @@ pub fn save_regular_capture_edit(
         path: pending.final_path,
     };
 
-    capture_editor_log("save_regular_capture_edit: save png start");
     ScreenCaptureService::default().save_png(&image, Path::new(&record.path))?;
-    capture_editor_log("save_regular_capture_edit: prune history start");
     history::prune_capture_history(&screenshot_dir, max_screenshots)?;
 
     let mut history_guard = state
@@ -475,7 +432,6 @@ pub fn save_regular_capture_edit(
     drop(history_guard);
 
     emit_capture_status(&app, "capture-finished", &record);
-    capture_editor_log("save_regular_capture_edit: complete");
     Ok(record)
 }
 
@@ -484,7 +440,6 @@ pub fn cancel_capture_edit(
     state: &AppState,
     session_id: &str,
 ) -> Result<(), FlickError> {
-    capture_editor_log("cancel_capture_edit: start");
     let tauri_state = app.state::<AppState>();
     platform::finalize_capture_session(app, &tauri_state, true);
     {
@@ -499,7 +454,6 @@ pub fn cancel_capture_edit(
         }
     }
     close_screenshot_editor_window(app, session_id);
-    capture_editor_log("cancel_capture_edit: complete");
     Ok(())
 }
 
@@ -516,7 +470,6 @@ pub fn capture_editor_ready(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), FlickError> {
-    capture_editor_log("capture_editor_ready: start");
     let should_finalize = {
         let mut pending = state
             .pending_capture_edits
@@ -537,7 +490,6 @@ pub fn capture_editor_ready(
     if should_finalize {
         platform::finalize_capture_session(&app, &state, true);
     }
-    capture_editor_log("capture_editor_ready: complete");
     Ok(())
 }
 
@@ -548,9 +500,7 @@ fn create_pending_capture_edit(
     record: CaptureRecord,
     selection: SelectionRect,
 ) -> Result<(), FlickError> {
-    capture_editor_log("create_pending_capture_edit: start");
     let pending_dir = state.data_dir.join("pending-capture-edits");
-    capture_editor_log("create_pending_capture_edit: ensuring temp directory");
     fs::create_dir_all(&pending_dir).map_err(|error| {
         FlickError::Message(format!(
             "failed to create pending capture edit directory: {error}"
@@ -558,30 +508,21 @@ fn create_pending_capture_edit(
     })?;
     let original_path = pending_dir.join(format!("{}.png", record.id));
     let writing_path = pending_dir.join(format!("{}.writing.png", record.id));
-    capture_editor_log("create_pending_capture_edit: spawning temp png save");
     let image_for_save = image.clone();
     let original_path_for_save = original_path.clone();
     let writing_path_for_save = writing_path.clone();
     let save_handle = thread::spawn(move || {
-        capture_editor_log("create_pending_capture_edit/save thread: saving temp png");
         let result = ScreenCaptureService::default()
             .save_png(&image_for_save, &writing_path_for_save)
             .and_then(|_| {
                 fs::rename(&writing_path_for_save, &original_path_for_save)
                     .map_err(anyhow::Error::from)
             });
-        capture_editor_log("create_pending_capture_edit/save thread: temp png save complete");
         result
     });
 
-    capture_editor_log("create_pending_capture_edit: storing pending session");
     let keep_overlay_until_finish = platform::keep_native_overlay_until_editor_finish();
-    if selection_spans_multiple_monitors(app, &selection) {
-        capture_editor_log("create_pending_capture_edit: cross-monitor selection detected");
-    }
-    capture_editor_log(&format!(
-        "create_pending_capture_edit: keep native overlay until finish={keep_overlay_until_finish}"
-    ));
+    if selection_spans_multiple_monitors(app, &selection) {}
     let pending = PendingCaptureEdit {
         id: record.id.clone(),
         created_at: record.created_at,
@@ -600,7 +541,6 @@ fn create_pending_capture_edit(
             .map_err(|_| FlickError::Message("pending capture edits mutex poisoned".into()))?;
         sessions.insert(record.id.clone(), pending);
     }
-    capture_editor_log("create_pending_capture_edit: starting escape watcher");
     start_capture_edit_escape_watcher(app.clone(), record.id.clone());
     start_capture_edit_finalize_fallback(app.clone(), record.id.clone());
 
@@ -611,7 +551,6 @@ fn create_pending_capture_edit(
         .screenshot_editor_color
         .clone();
 
-    capture_editor_log("create_pending_capture_edit: opening editor window");
     let show_result = show_screenshot_editor_window(
         app,
         &record.id,
@@ -620,7 +559,6 @@ fn create_pending_capture_edit(
         image.height(),
         &editor_color,
     );
-    capture_editor_log("create_pending_capture_edit: waiting for temp png save");
     let save_result = save_handle
         .join()
         .map_err(|_| FlickError::Message("temp png save thread panicked".into()))?;
@@ -662,7 +600,6 @@ fn create_pending_capture_edit(
         cleanup_pending_original(&cancelled);
         return Ok(());
     }
-    capture_editor_log("create_pending_capture_edit: complete");
     Ok(())
 }
 
@@ -688,7 +625,6 @@ fn start_capture_edit_finalize_fallback(app: AppHandle, session_id: String) {
             })
             .unwrap_or(false);
         if should_finalize {
-            capture_editor_log("capture editor finalize fallback: finalize capture session");
             platform::finalize_capture_session(&app, &state, true);
         }
     });
@@ -733,18 +669,14 @@ fn finalize_regular_capture_image(
     record: CaptureRecord,
     max_screenshots: u32,
 ) -> Result<CaptureRecord, FlickError> {
-    capture_editor_log("finalize_regular_capture_image: save png start");
     let capture_service = ScreenCaptureService::default();
     capture_service.save_png(image, Path::new(&record.path))?;
 
-    capture_editor_log("finalize_regular_capture_image: copy clipboard start");
     if let Err(error) = capture_service.copy_to_clipboard(image) {
         eprintln!("failed to write screenshot to clipboard: {error}");
     }
-    capture_editor_log("finalize_regular_capture_image: prune history start");
     history::prune_capture_history(screenshot_dir, max_screenshots)?;
 
-    capture_editor_log("finalize_regular_capture_image: update memory history start");
     let mut history_guard = state
         .history
         .lock()
@@ -753,9 +685,7 @@ fn finalize_regular_capture_image(
     history_guard.truncate(max_screenshots as usize);
     drop(history_guard);
 
-    capture_editor_log("finalize_regular_capture_image: emit capture-finished");
     emit_capture_status(app, "capture-finished", &record);
-    capture_editor_log("finalize_regular_capture_image: complete");
     Ok(record)
 }
 
@@ -767,56 +697,6 @@ fn decode_png_base64(value: &str) -> Result<Vec<u8>, FlickError> {
     general_purpose::STANDARD
         .decode(payload)
         .map_err(|error| FlickError::Message(format!("failed to decode edited PNG: {error}")))
-}
-
-fn image_sample_summary(image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> String {
-    let width = image.width();
-    let height = image.height();
-    let sample_columns = width.min(16);
-    let sample_rows = height.min(16);
-    let mut total_samples = 0usize;
-    let mut non_white_samples = 0usize;
-    let mut transparent_samples = 0usize;
-    let mut bright_samples = 0usize;
-    let mut red_total = 0usize;
-    let mut green_total = 0usize;
-    let mut blue_total = 0usize;
-
-    for row in 0..sample_rows {
-        for column in 0..sample_columns {
-            let x = if sample_columns <= 1 {
-                0
-            } else {
-                column * (width - 1) / (sample_columns - 1)
-            };
-            let y = if sample_rows <= 1 {
-                0
-            } else {
-                row * (height - 1) / (sample_rows - 1)
-            };
-            let pixel = image.get_pixel(x, y).0;
-            total_samples += 1;
-            red_total += pixel[0] as usize;
-            green_total += pixel[1] as usize;
-            blue_total += pixel[2] as usize;
-            if pixel[3] == 0 {
-                transparent_samples += 1;
-            }
-            if pixel[3] != 0 && (pixel[0] < 245 || pixel[1] < 245 || pixel[2] < 245) {
-                non_white_samples += 1;
-            }
-            if pixel[0] >= 245 && pixel[1] >= 245 && pixel[2] >= 245 {
-                bright_samples += 1;
-            }
-        }
-    }
-
-    let avg_red = red_total / total_samples.max(1);
-    let avg_green = green_total / total_samples.max(1);
-    let avg_blue = blue_total / total_samples.max(1);
-    format!(
-        "non_white_samples={non_white_samples}/{total_samples} bright_samples={bright_samples}/{total_samples} transparent_samples={transparent_samples}/{total_samples} avg_rgb={avg_red},{avg_green},{avg_blue}"
-    )
 }
 
 fn wait_for_file(path: &Path, timeout: Duration) -> Result<(), FlickError> {
@@ -896,7 +776,6 @@ pub fn begin_capture_session_with_intent(
             && platform::supports_screenshot_editor_toolbar()
     };
     if should_preload_editor {
-        capture_editor_log("begin_capture_session: preloading screenshot editor window");
         if let Err(error) = preload_screenshot_editor_window(app) {
             eprintln!("failed to preload screenshot editor window: {error}");
         }

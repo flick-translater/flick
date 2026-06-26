@@ -175,33 +175,6 @@ pub fn show_screenshot_editor_window(
     let window_height = (window_bottom - window_top).max(1.0);
     let window_x = desktop_x + window_left;
     let window_y = desktop_y + window_top;
-    let window_rect = SelectionRect {
-        x: window_x.floor() as i32,
-        y: window_y.floor() as i32,
-        width: window_width.ceil() as u32,
-        height: window_height.ceil() as u32,
-    };
-    let toolbar_screen_rect = SelectionRect {
-        x: (desktop_x + toolbar_left).floor() as i32,
-        y: (desktop_y + toolbar_region_top).floor() as i32,
-        width: toolbar_width.ceil() as u32,
-        height: toolbar_region_height.ceil() as u32,
-    };
-    crate::features::capture::capture_editor_log(&format!(
-        "show_screenshot_editor_window: desktop=({desktop_x},{desktop_y},{desktop_width}x{desktop_height}) selection=({}, {}, {}x{}) toolbar=({}, {}, {}x{}) editor_window=({}, {}, {}x{})",
-        selection.x,
-        selection.y,
-        selection.width,
-        selection.height,
-        toolbar_screen_rect.x,
-        toolbar_screen_rect.y,
-        toolbar_screen_rect.width,
-        toolbar_screen_rect.height,
-        window_rect.x,
-        window_rect.y,
-        window_rect.width,
-        window_rect.height
-    ));
     let selection_window_left = selection_left - window_left;
     let selection_window_top = selection_top - window_top;
     let toolbar_window_left = toolbar_left - window_left;
@@ -332,51 +305,29 @@ pub fn preload_screenshot_editor_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn close_screenshot_editor_window(app: &AppHandle, session_id: &str) {
-    crate::features::capture::capture_editor_log(&format!(
-        "close_screenshot_editor_window: start session={session_id}"
-    ));
     let label = format!("{SCREENSHOT_EDITOR_WINDOW_PREFIX}-{session_id}");
     if let Some(window) = app.get_webview_window(&label) {
-        crate::features::capture::capture_editor_log(&format!(
-            "close_screenshot_editor_window: close capture window label={label}"
-        ));
         let _ = window.set_ignore_cursor_events(false);
         let _ = window.hide();
         restore_screenshot_editor_capture_window_style(&window);
         let _ = window.close();
     } else {
-        crate::features::capture::capture_editor_log(&format!(
-            "close_screenshot_editor_window: capture window missing label={label}"
-        ));
     }
     let long_edit_label = format!("{SCREENSHOT_EDITOR_WINDOW_PREFIX}-long-{session_id}");
     if let Some(window) = app.get_webview_window(&long_edit_label) {
-        crate::features::capture::capture_editor_log(&format!(
-            "close_screenshot_editor_window: close long edit window label={long_edit_label}"
-        ));
         let _ = window.set_ignore_cursor_events(false);
         let _ = window.hide();
         let _ = window.close();
     } else {
-        crate::features::capture::capture_editor_log(&format!(
-            "close_screenshot_editor_window: long edit window missing label={long_edit_label}"
-        ));
     }
     if let Some(window) = app.get_webview_window(PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL) {
-        crate::features::capture::capture_editor_log(&format!(
-            "close_screenshot_editor_window: close preload window label={PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL}"
-        ));
         let _ = window.set_ignore_cursor_events(false);
         let _ = window.hide();
         restore_screenshot_editor_capture_window_style(&window);
         let _ = window.close();
     } else {
-        crate::features::capture::capture_editor_log(&format!(
-            "close_screenshot_editor_window: preload window missing label={PRELOADED_SCREENSHOT_EDITOR_WINDOW_LABEL}"
-        ));
     }
     close_gif_recording_toolbar_window(app, session_id);
-    crate::features::capture::capture_editor_log("close_screenshot_editor_window: complete");
 }
 
 pub fn show_gif_recording_toolbar_window(

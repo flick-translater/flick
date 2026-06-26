@@ -116,8 +116,6 @@ const MIN_AVG_CORR_PERMILLE: u32 = 850;
 /// Fraction of the frame's non-trivial rows that must match before accepting a last/next delta.
 const MIN_RELATIVE_NONTRIVIAL_FRACTION: f64 = 0.25;
 
-pub(super) fn long_log(_message: impl AsRef<str>) {}
-
 pub(super) fn monotonic_millis() -> i64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as i64
@@ -302,20 +300,9 @@ pub fn start_long_capture(
     session_id: String,
 ) -> Result<LongCaptureUpdate, FlickError> {
     ensure_long_capture_supported()?;
-    long_log("============================================================");
-    long_log(format!("start: session={session_id}"));
     let selection = pending_selection(&state, &session_id)?;
-    long_log(format!(
-        "start: pending selection x={} y={} width={} height={}",
-        selection.x, selection.y, selection.width, selection.height
-    ));
     configure_long_capture_window_shape(&app, &session_id);
     let frame = capture_live_frame(&app, &state, &session_id, &selection)?;
-    long_log(format!(
-        "start: initial frame captured {}x{}",
-        frame.width(),
-        frame.height()
-    ));
     let stop = Arc::new(AtomicBool::new(false));
     let capture_pending = Arc::new(AtomicBool::new(false));
     let cursor_passthrough = Arc::new(AtomicBool::new(false));
@@ -340,18 +327,10 @@ pub fn start_long_capture(
         stop: stop.clone(),
     };
     let update = encode_build(collect_build_inputs(&session, PreviewUpdate::Replace))?;
-    long_log(format!(
-        "start: initial update total_height={} frame_height={} preview_len={} current_len={}",
-        update.total_height,
-        update.frame_height,
-        update.preview_data_url.len(),
-        update.current_frame_data_url.len()
-    ));
     sessions()
         .lock()
         .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?
         .insert(session_id.clone(), session);
-    long_log(format!("start: session stored session={session_id}"));
     clear_pipeline_queues();
     spawn_pipeline_workers(app.clone(), stop.clone());
     ensure_sampling_running(
@@ -483,7 +462,6 @@ fn ensure_sampling_running(
     // the pixel decode and delta search happen on worker threads. A small supervisor thread owns the
     // stream handle and keeps it alive until the session stops.
     thread::spawn(move || {
-        long_log("sampling: supervisor start");
         let selection = {
             match sessions().lock().ok().and_then(|guard| {
                 guard
@@ -492,7 +470,6 @@ fn ensure_sampling_running(
             }) {
                 Some(selection) => selection,
                 None => {
-                    long_log("sampling: session gone before stream open");
                     capture_pending.store(false, Ordering::SeqCst);
                     return;
                 }
@@ -545,10 +522,6 @@ fn ensure_sampling_running(
             let (lock, cvar) = raw_queue();
             if let Ok(mut queue) = lock.lock() {
                 if queue.len() >= FRAME_QUEUE_CAPACITY {
-                    long_log(format!(
-                        "sampling: QUEUE FULL ({}), dropping oldest unprocessed frame",
-                        queue.len()
-                    ));
                     queue.pop_front();
                 }
                 queue.push_back(RawJob {
@@ -566,16 +539,12 @@ fn ensure_sampling_running(
 
         let stream = match ScreenCaptureService.open_live_frame_stream(&selection, on_frame) {
             Ok(stream) => stream,
-            Err(error) => {
-                long_log(format!(
-                    "sampling: failed to open live stream {error}; falling back to polling"
-                ));
+            Err(_) => {
                 capture_pending.store(false, Ordering::SeqCst);
                 spawn_polling_sampling(app, session_id, capture_pending, stop, last_scroll_delta);
                 return;
             }
         };
-        long_log("sampling: live stream opened");
 
         // Keep the stream alive until the session stops.
         while !stop.load(Ordering::SeqCst) {
@@ -585,7 +554,6 @@ fn ensure_sampling_running(
         capture_pending.store(false, Ordering::SeqCst);
         raw_queue().1.notify_all();
         computed_queue().1.notify_all();
-        long_log("sampling: supervisor stopped");
     });
 }
 
@@ -597,7 +565,6 @@ fn spawn_polling_sampling(
     last_scroll_delta: Arc<AtomicI64>,
 ) {
     thread::spawn(move || {
-        long_log("sampling: polling live frame capture started");
         let mut prev_frame: Option<ImageBuffer<Rgba<u8>, Vec<u8>>> = None;
 
         while !stop.load(Ordering::SeqCst) {
@@ -621,8 +588,7 @@ fn spawn_polling_sampling(
             let state = app.state::<AppState>();
             let frame = match capture_live_frame(&app, &state, &session_id, &selection) {
                 Ok(frame) => frame,
-                Err(error) => {
-                    long_log(format!("sampling: polling capture failed {error}"));
+                Err(_) => {
                     capture_pending.store(false, Ordering::SeqCst);
                     thread::sleep(Duration::from_millis(120));
                     continue;
@@ -659,18 +625,13 @@ fn spawn_polling_sampling(
                 } else {
                     match encode_build(collect_build_inputs(session, preview_update)) {
                         Ok(update) => Some(update),
-                        Err(error) => {
-                            long_log(format!("sampling: encode update failed {error}"));
-                            None
-                        }
+                        Err(_) => None,
                     }
                 }
             };
 
             if let Some(update) = update {
-                if let Err(error) = emit_long_capture_update(&app, &session_id, update) {
-                    long_log(format!("sampling: emit update failed {error}"));
-                }
+                let _ = emit_long_capture_update(&app, &session_id, update);
             }
 
             prev_frame = Some(frame);
@@ -678,7 +639,6 @@ fn spawn_polling_sampling(
         }
 
         capture_pending.store(false, Ordering::SeqCst);
-        long_log("sampling: polling live frame capture stopped");
     });
 }
 
@@ -696,10 +656,9 @@ fn spawn_pipeline_workers(app: AppHandle, stop: Arc<AtomicBool>) {
     }
 
     // Compute workers (parallel): raw frame pair -> relative delta -> computed queue (keyed by index).
-    for worker_id in 0..COMPUTE_WORKERS {
+    for _ in 0..COMPUTE_WORKERS {
         let stop = stop.clone();
         thread::spawn(move || {
-            long_log(format!("compute worker {worker_id}: start"));
             let (raw_lock, raw_cvar) = raw_queue();
             let (comp_lock, comp_cvar) = computed_queue();
             loop {
@@ -755,13 +714,11 @@ fn spawn_pipeline_workers(app: AppHandle, stop: Arc<AtomicBool>) {
                 }
                 comp_cvar.notify_all();
             }
-            long_log(format!("compute worker {worker_id}: stopped"));
         });
     }
 
     // Merge thread (single): consume computed jobs strictly in index order and stitch them.
     thread::spawn(move || {
-        long_log("merge thread: start");
         let (comp_lock, comp_cvar) = computed_queue();
         // `next_index` is unset until the first job arrives; then it tracks strict ordering.
         let mut next_index: Option<u64> = None;
@@ -805,9 +762,7 @@ fn spawn_pipeline_workers(app: AppHandle, stop: Arc<AtomicBool>) {
             match job {
                 Some(job) => {
                     next_index = Some(next_index.map_or(1, |n| n + 1));
-                    if let Err(error) = merge_pipeline_job(&app, job) {
-                        long_log(format!("merge thread: frame failed {error}"));
-                    }
+                    let _ = merge_pipeline_job(&app, job);
                 }
                 None => break,
             }
@@ -815,7 +770,6 @@ fn spawn_pipeline_workers(app: AppHandle, stop: Arc<AtomicBool>) {
         // Wake compute workers so they observe stop=true and exit too.
         raw_queue().1.notify_all();
         PIPELINE_RUNNING.store(false, Ordering::SeqCst);
-        long_log("merge thread: stopped");
     });
 }
 
@@ -823,7 +777,6 @@ fn spawn_pipeline_workers(app: AppHandle, stop: Arc<AtomicBool>) {
 /// emit a preview. The session lock is held only for the cheap stitch + input gathering; the
 /// expensive PNG/base64 encoding runs without it.
 fn merge_pipeline_job(app: &AppHandle, job: ComputedJob) -> Result<(), FlickError> {
-    let total_started = Instant::now();
     let ComputedJob {
         session_id,
         frame,
@@ -833,7 +786,6 @@ fn merge_pipeline_job(app: &AppHandle, job: ComputedJob) -> Result<(), FlickErro
     // Move the pixels out of the Arc (clone only if another ref still holds it — normally not).
     let frame = Arc::try_unwrap(frame).unwrap_or_else(|arc| (*arc).clone());
 
-    let stitch_started = Instant::now();
     let inputs = {
         let mut guard = sessions()
             .lock()
@@ -844,27 +796,12 @@ fn merge_pipeline_job(app: &AppHandle, job: ComputedJob) -> Result<(), FlickErro
         };
         let preview_update = merge_computed_frame(session, frame, delta, direction);
         if matches!(preview_update, PreviewUpdate::None) {
-            long_log("merge thread: no change");
             return Ok(());
         }
         collect_build_inputs(session, preview_update)
     };
-    let stitch_ms = stitch_started.elapsed().as_millis();
-    let encode_started = Instant::now();
     let update = encode_build(inputs)?;
-    let encode_ms = encode_started.elapsed().as_millis();
-    let emit_started = Instant::now();
     emit_long_capture_update(app, &session_id, update)?;
-    let emit_ms = emit_started.elapsed().as_millis();
-    long_log(format!(
-        "merge thread: stitched total_ms={} stitch_ms={} encode_ms={} emit_ms={} raw_queue_len={} computed_queue_len={}",
-        total_started.elapsed().as_millis(),
-        stitch_ms,
-        encode_ms,
-        emit_ms,
-        FRAME_QUEUE_LEN.load(Ordering::SeqCst),
-        COMPUTED_QUEUE_LEN.load(Ordering::SeqCst)
-    ));
     Ok(())
 }
 
@@ -873,11 +810,7 @@ fn emit_long_capture_update(
     session_id: &str,
     update: LongCaptureUpdate,
 ) -> Result<(), FlickError> {
-    if let Some((label, window)) = screenshot_editor_window(app, session_id) {
-        long_log(format!(
-            "emit_update: window label={label} total_height={} frame_height={}",
-            update.total_height, update.frame_height
-        ));
+    if let Some((_, window)) = screenshot_editor_window(app, session_id) {
         window
             .emit("long-capture-update", update)
             .map_err(|error| {
@@ -887,10 +820,6 @@ fn emit_long_capture_update(
             })?;
         return Ok(());
     } else {
-        long_log(format!(
-            "emit_update: editor window not found; app emit total_height={} frame_height={}",
-            update.total_height, update.frame_height
-        ));
     }
 
     app.emit("long-capture-update", update).map_err(|error| {
@@ -921,7 +850,6 @@ pub fn cancel_long_capture(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), FlickError> {
-    long_log(format!("cancel: enter session={session_id}"));
     if let Some(session) = sessions()
         .lock()
         .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?
@@ -931,7 +859,6 @@ pub fn cancel_long_capture(
         wake_pipeline_workers();
     }
     cleanup_long_capture_ui(&app, &state, &session_id);
-    long_log("cancel: complete");
     Ok(())
 }
 
@@ -940,7 +867,6 @@ pub fn prepare_long_capture_edit(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), FlickError> {
-    long_log(format!("prepare_edit: enter session={session_id}"));
     if let Some(session) = sessions()
         .lock()
         .map_err(|_| FlickError::Message("long capture mutex poisoned".into()))?
@@ -949,15 +875,12 @@ pub fn prepare_long_capture_edit(
         session.stop.store(true, Ordering::SeqCst);
         wake_pipeline_workers();
     }
-    if let Some((label, window)) = screenshot_editor_window(&app, &session_id) {
-        long_log(format!("prepare_edit: editor label={label} restore cursor"));
+    if let Some((_, window)) = screenshot_editor_window(&app, &session_id) {
         let _ = window.set_ignore_cursor_events(false);
     }
     platform::set_overlay_mouse_passthrough(&app, false);
     platform::set_overlay_capture_sharing(&app, true);
-    long_log("prepare_edit: finalize capture session/overlay start");
     platform::finalize_capture_session(&app, &state, true);
-    long_log("prepare_edit: complete");
     Ok(())
 }
 
@@ -966,7 +889,6 @@ pub fn open_long_capture_edit_window(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), FlickError> {
-    long_log(format!("open_edit_window: enter session={session_id}"));
     let has_session = {
         let guard = sessions()
             .lock()
@@ -984,16 +906,9 @@ pub fn open_long_capture_edit_window(
 
     let label = format!("screenshot-editor-long-{session_id}");
     if let Some(window) = app.get_webview_window(&label) {
-        long_log(format!(
-            "open_edit_window: existing window found label={label}; cleanup old capture window"
-        ));
         cleanup_long_capture_capture_window(&app, &state, &session_id);
-        long_log(format!(
-            "open_edit_window: show existing window label={label}"
-        ));
         let _ = window.show();
         let _ = window.set_focus();
-        long_log("open_edit_window: existing window focused");
         return Ok(());
     }
 
@@ -1016,9 +931,6 @@ pub fn open_long_capture_edit_window(
     let x = monitor_x + (monitor_width - width) / 2.0;
     let y = monitor_y + (monitor_height - height) / 2.0;
     let url = format!("screenshot-editor.html?session_id={session_id}&long_edit=1");
-    long_log(format!(
-        "open_edit_window: build start label={label} url={url} pos={x:.1},{y:.1} size={width:.1}x{height:.1}"
-    ));
 
     let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::App(url.into()))
         .title("Flick Screenshot Editor")
@@ -1034,17 +946,8 @@ pub fn open_long_capture_edit_window(
         .transparent(false)
         .shadow(true)
         .build()?;
-    long_log(format!("open_edit_window: build complete label={label}"));
     let _ = window.set_position(LogicalPosition::new(x, y));
-    long_log(format!(
-        "open_edit_window: cleanup old capture window before frontend show label={label}"
-    ));
     cleanup_long_capture_capture_window(&app, &state, &session_id);
-    long_log(format!(
-        "open_edit_window: opened hidden label=screenshot-editor-long-{session_id} size={}x{}",
-        width.round(),
-        height.round()
-    ));
     Ok(())
 }
 
@@ -1055,9 +958,6 @@ fn finalize_long_capture(
     copy_to_clipboard: bool,
     pin_to_desktop: bool,
 ) -> Result<CaptureRecord, FlickError> {
-    long_log(format!(
-        "finalize: enter session={session_id} copy_to_clipboard={copy_to_clipboard}"
-    ));
     {
         let stop = {
             let guard = sessions()
@@ -1078,17 +978,8 @@ fn finalize_long_capture(
         .remove(&session_id)
         .ok_or_else(|| FlickError::Message("long capture session not found".into()))?;
     let image = long_session.stitched;
-    long_log(format!(
-        "finalize: stitched image {}x{}",
-        image.width(),
-        image.height()
-    ));
     cleanup_long_capture_ui(&app, &state, &session_id);
     let pending = session::remove_pending_capture_edit(&state, &session_id)?;
-    long_log(format!(
-        "finalize: pending removed final_path={}",
-        pending.final_path
-    ));
     session::cleanup_pending_original(&pending);
 
     let screenshot_dir = history::current_screenshot_dir(&state)?;
@@ -1106,19 +997,13 @@ fn finalize_long_capture(
     };
 
     let capture_service = ScreenCaptureService::default();
-    long_log(format!("finalize: save png start path={}", record.path));
     capture_service.save_png(&image, Path::new(&record.path))?;
-    long_log("finalize: save png complete");
     if copy_to_clipboard {
-        long_log("finalize: copy clipboard start");
         if let Err(error) = capture_service.copy_to_clipboard(&image) {
             eprintln!("failed to copy long screenshot to clipboard: {error}");
         }
-        long_log("finalize: copy clipboard complete");
     }
-    long_log("finalize: prune history start");
     history::prune_capture_history(&screenshot_dir, max_screenshots)?;
-    long_log("finalize: prune history complete");
     let mut history_guard = state
         .history
         .lock()
@@ -1143,27 +1028,22 @@ fn finalize_long_capture(
             }
         });
     }
-    long_log("finalize: complete");
     Ok(record)
 }
 
 fn cleanup_long_capture_ui(app: &AppHandle, state: &State<'_, AppState>, session_id: &str) {
     #[cfg(target_os = "windows")]
     {
-        long_log("cleanup_ui/windows: restore overlay and close editor windows start");
         platform::set_overlay_mouse_passthrough(app, false);
         platform::set_overlay_capture_sharing(app, true);
         platform::finalize_capture_session(app, state, true);
         crate::app::windows::close_screenshot_editor_window(app, session_id);
-        long_log("cleanup_ui/windows: complete");
         return;
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        long_log("cleanup_ui: restore overlay/editor state start");
         cleanup_long_capture_capture_window(app, state, session_id);
-        long_log("cleanup_ui: complete");
     }
 }
 
@@ -1172,20 +1052,13 @@ fn cleanup_long_capture_capture_window(
     state: &State<'_, AppState>,
     session_id: &str,
 ) {
-    if let Some((label, window)) = screenshot_editor_window(app, session_id) {
-        long_log(format!(
-            "cleanup_ui: editor label={label} restore cursor/hide"
-        ));
+    if let Some((_, window)) = screenshot_editor_window(app, session_id) {
         let _ = window.set_ignore_cursor_events(false);
         let _ = window.hide();
     } else {
-        long_log(format!(
-            "cleanup_ui: no capture editor window found session={session_id}"
-        ));
     }
     platform::set_overlay_mouse_passthrough(app, false);
     platform::set_overlay_capture_sharing(app, true);
-    long_log("cleanup_ui: finalize capture session/overlay start");
     platform::finalize_capture_session(app, state, true);
 }
 
@@ -1206,13 +1079,7 @@ fn wait_for_pending_capture(session_id: &str) -> Result<(), FlickError> {
         waited += FINALIZE_CAPTURE_WAIT_POLL;
     }
 
-    if waited > Duration::ZERO {
-        long_log(format!(
-            "finalize: waited_for_pending_capture_ms={} still_pending={}",
-            waited.as_millis(),
-            capture_pending.load(Ordering::SeqCst)
-        ));
-    }
+    if waited > Duration::ZERO {}
     Ok(())
 }
 
@@ -1220,7 +1087,6 @@ fn pending_selection(
     state: &State<'_, AppState>,
     session_id: &str,
 ) -> Result<SelectionRect, FlickError> {
-    long_log(format!("pending_selection: lookup session={session_id}"));
     let pending = state
         .pending_capture_edits
         .lock()
@@ -1241,19 +1107,7 @@ fn capture_live_frame(
     session_id: &str,
     selection: &SelectionRect,
 ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, FlickError> {
-    long_log(format!(
-        "capture_live_frame: start session={session_id} selection=({},{} {}x{})",
-        selection.x, selection.y, selection.width, selection.height
-    ));
     let window = screenshot_editor_window(app, session_id);
-    long_log(format!(
-        "capture_live_frame: editor window found={} label={}",
-        window.is_some(),
-        window
-            .as_ref()
-            .map(|(label, _)| label.as_str())
-            .unwrap_or("<none>")
-    ));
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     if let Some((_, window)) = window.as_ref() {
         platform::set_window_capture_sharing(window, false);
@@ -1261,25 +1115,10 @@ fn capture_live_frame(
     if let Some((_, window)) = window.as_ref() {
         let _ = window.hide();
     }
-    long_log("capture_live_frame: hide overlay start");
     platform::hide_overlay_for_live_capture(app, state);
-    long_log("capture_live_frame: hide overlay complete");
     thread::sleep(WINDOW_HIDE_DELAY);
-    long_log("capture_live_frame: capture live desktop start");
     let result = capture_live_frame_with_editor_hidden(selection);
-    match &result {
-        Ok(image) => long_log(format!(
-            "capture_live_frame: capture live desktop complete {}x{}",
-            image.width(),
-            image.height()
-        )),
-        Err(error) => long_log(format!(
-            "capture_live_frame: capture live desktop failed {error}"
-        )),
-    }
-    long_log("capture_live_frame: restore overlay start");
     platform::restore_overlay_after_live_capture(app, state, selection);
-    long_log("capture_live_frame: restore overlay complete");
     #[cfg(target_os = "macos")]
     if let Some((_, window)) = window.as_ref() {
         platform::set_window_capture_sharing(window, true);
@@ -1361,26 +1200,13 @@ fn query_f64(url: &tauri::Url, key: &str) -> Option<f64> {
 fn capture_live_frame_with_editor_hidden(
     selection: &SelectionRect,
 ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, FlickError> {
-    long_log(format!(
-        "capture_live_frame_with_editor_hidden: service capture start selection=({},{} {}x{})",
-        selection.x, selection.y, selection.width, selection.height
-    ));
     #[cfg(target_os = "macos")]
     {
         match capture_single_frame_from_live_stream(selection) {
             Ok(image) => {
-                long_log(format!(
-                    "capture_live_frame_with_editor_hidden: live stream frame complete {}x{}",
-                    image.width(),
-                    image.height()
-                ));
                 return Ok(image);
             }
-            Err(error) => {
-                long_log(format!(
-                    "capture_live_frame_with_editor_hidden: live stream frame failed {error}; falling back to one-shot capture"
-                ));
-            }
+            Err(_) => {}
         }
     }
 
@@ -1403,7 +1229,6 @@ fn capture_single_frame_from_live_stream(
             }
         }),
     )?;
-    long_log("capture_live_frame_with_editor_hidden: live stream opened for single frame");
     let frame = receiver
         .recv_timeout(INITIAL_LIVE_STREAM_FRAME_TIMEOUT)
         .map_err(|error| {
@@ -1593,7 +1418,6 @@ fn merge_computed_frame(
     direction_hint: i64,
 ) -> PreviewUpdate {
     if frame.width() != session.stitched.width() {
-        long_log("append_free: width changed, replacing stitched image");
         return reset_stitched_to_frame(session, frame);
     }
 
@@ -1601,13 +1425,6 @@ fn merge_computed_frame(
         // Couldn't align to the previous frame. Try a wide re-acquisition against the stitched image
         // (same stall-recovery path as before) before dropping the frame.
         session.failed_locate_count = session.failed_locate_count.saturating_add(1);
-        long_log(format!(
-            "append_free: no last/next overlap, frame dropped failures={} current_y={} stitched=[{}, {})",
-            session.failed_locate_count,
-            session.current_y,
-            session.stitched_range.top,
-            session.stitched_range.bottom,
-        ));
         if session.failed_locate_count >= STALL_RESET_FAILURES {
             session.last_shift = 0;
             let frame_sig = RowSignatures::from_frame(&frame);
@@ -1618,10 +1435,6 @@ fn merge_computed_frame(
                 session.current_y,
                 STALL_RECOVERY_RADIUS,
             ) {
-                long_log(format!(
-                    "append_free: stall recovery current_y={} -> {recovered_y} after {} failures",
-                    session.current_y, session.failed_locate_count
-                ));
                 session.failed_locate_count = 0;
                 session.current_y = recovered_y;
                 return merge_frame_by_range(session, frame, recovered_y);
@@ -1643,12 +1456,7 @@ fn merge_computed_frame(
         CORRECTION_SEARCH_RADIUS,
     )
     .unwrap_or(estimated_y);
-    if new_y != estimated_y {
-        long_log(format!(
-            "append_free: drift correction estimated_y={estimated_y} -> new_y={new_y} (shift {})",
-            new_y - estimated_y
-        ));
-    }
+    if new_y != estimated_y {}
     // Track scroll speed for the next frame's search hint, using the corrected position.
     let moved = (new_y - session.current_y).unsigned_abs();
     if moved > 0 {
@@ -1656,14 +1464,6 @@ fn merge_computed_frame(
         SHARED_LAST_SHIFT.store(session.last_shift as usize, Ordering::SeqCst);
     }
     let _ = direction_hint;
-    long_log(format!(
-        "append_free: located via last/next top_y={new_y} current_y={} delta_y={} stitched=[{}, {}) last_shift={}",
-        session.current_y,
-        delta_y,
-        session.stitched_range.top,
-        session.stitched_range.bottom,
-        session.last_shift,
-    ));
 
     merge_frame_by_range(session, frame, new_y)
 }
@@ -2335,11 +2135,6 @@ fn merge_frame_by_range(
     let old_range = session.stitched_range;
     let frame_range = CaptureRange::from_top_height(frame_y, frame.height());
 
-    long_log(format!(
-        "merge_range: frame=[{}, {}) stitched=[{}, {}) current_y={}",
-        frame_range.top, frame_range.bottom, old_range.top, old_range.bottom, session.current_y
-    ));
-
     if old_range.contains(frame_range) {
         // `frame_y` is already an absolute position from locating the frame in the stitch, so only
         // move the viewport. Do not repaint covered rows from live frames: during scroll, compositor
@@ -2348,9 +2143,6 @@ fn merge_frame_by_range(
         let moved = frame_y != session.current_y;
         session.current_y = frame_y;
         session.last_frame = frame;
-        long_log(format!(
-            "merge_range: frame already covered, no stitched growth moved={moved}"
-        ));
         return if moved {
             PreviewUpdate::OffsetOnly
         } else {
@@ -2371,10 +2163,6 @@ fn merge_frame_by_range(
         if new_rows < MIN_STITCH_GROW_ROWS {
             session.current_y = frame_y;
             session.last_frame = frame;
-            long_log(format!(
-                "merge_range: defer tiny bottom growth old_bottom={} new_bottom={} new_rows={} threshold={}",
-                old_range.bottom, new_range.bottom, new_rows, MIN_STITCH_GROW_ROWS
-            ));
             return PreviewUpdate::None;
         }
         let src_top = (old_range.bottom - frame_range.top).max(0) as u32;
@@ -2389,13 +2177,6 @@ fn merge_frame_by_range(
         session.stitched_range = new_range;
         session.current_y = frame_y;
         session.last_frame = frame;
-        long_log(format!(
-            "merge_range: append bottom in-place old_bottom={} new_bottom={} new_rows={} height={}",
-            old_range.bottom,
-            new_range.bottom,
-            new_rows,
-            session.stitched.height(),
-        ));
         return PreviewUpdate::Append {
             rows: new_rows,
             image: appended,
@@ -2407,10 +2188,6 @@ fn merge_frame_by_range(
         if new_rows < MIN_STITCH_GROW_ROWS {
             session.current_y = frame_y;
             session.last_frame = frame;
-            long_log(format!(
-                "merge_range: defer tiny top growth old_top={} new_top={} new_rows={} threshold={}",
-                old_range.top, new_range.top, new_rows, MIN_STITCH_GROW_ROWS
-            ));
             return PreviewUpdate::None;
         }
         let prepended = frame_rows(&frame, 0, new_rows);
@@ -2426,13 +2203,6 @@ fn merge_frame_by_range(
         session.stitched_range = new_range;
         session.current_y = frame_y;
         session.last_frame = frame;
-        long_log(format!(
-            "merge_range: prepend top in-place old_top={} new_top={} new_rows={} height={}",
-            old_range.top,
-            new_range.top,
-            new_rows,
-            session.stitched.height(),
-        ));
         return PreviewUpdate::Prepend {
             rows: new_rows,
             image: prepended,
@@ -2468,22 +2238,13 @@ fn merge_frame_by_range(
 
     let preview_update = if grows_top && grows_bottom {
         // Grew at both ends in one frame (rare): fall back to a full replace.
-        long_log("merge_range: grew both ends, full replace");
         PreviewUpdate::Replace
     } else if let Some((new_rows, prepended)) = top_prepend {
-        long_log(format!(
-            "merge_range: prepend top old_top={} new_top={} new_rows={}",
-            old_range.top, new_range.top, new_rows
-        ));
         PreviewUpdate::Prepend {
             rows: new_rows,
             image: prepended,
         }
     } else if let Some((new_rows, appended)) = bottom_append {
-        long_log(format!(
-            "merge_range: append bottom old_bottom={} new_bottom={} new_rows={}",
-            old_range.bottom, new_range.bottom, new_rows
-        ));
         PreviewUpdate::Append {
             rows: new_rows,
             image: appended,
@@ -2496,12 +2257,6 @@ fn merge_frame_by_range(
     session.stitched_range = new_range;
     session.current_y = frame_y;
     session.last_frame = frame;
-    long_log(format!(
-        "merge_range: stitched updated range=[{}, {}) height={}",
-        session.stitched_range.top,
-        session.stitched_range.bottom,
-        session.stitched.height(),
-    ));
     preview_update
 }
 
@@ -2569,7 +2324,6 @@ fn collect_build_inputs(
 
 /// Expensive phase, run WITHOUT the lock: PNG-encode + base64 the gathered images.
 fn encode_build(inputs: BuildInputs) -> Result<LongCaptureUpdate, FlickError> {
-    let total_started = Instant::now();
     let current_frame_data_url = image_to_data_url(&inputs.current_frame)?;
     let mut preview_data_url = String::new();
     let mut preview_append_data_url = String::new();
@@ -2587,16 +2341,6 @@ fn encode_build(inputs: BuildInputs) -> Result<LongCaptureUpdate, FlickError> {
         preview_prepend_rows = rows;
         preview_prepend_data_url = image_to_data_url(&image)?;
     }
-    long_log(format!(
-        "encode_build: total_ms={} current_len={} preview_len={} append_len={} append_rows={} prepend_len={} prepend_rows={}",
-        total_started.elapsed().as_millis(),
-        current_frame_data_url.len(),
-        preview_data_url.len(),
-        preview_append_data_url.len(),
-        preview_append_rows,
-        preview_prepend_data_url.len(),
-        preview_prepend_rows
-    ));
     Ok(LongCaptureUpdate {
         current_frame_data_url,
         preview_data_url,

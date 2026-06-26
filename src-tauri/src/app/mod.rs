@@ -149,7 +149,6 @@ pub fn run() {
             commands::capture::open_recording_controls_window,
             commands::capture::close_gif_recording_toolbar_window,
             commands::capture::close_recording_controls_window,
-            commands::capture::capture_editor_frontend_log,
             commands::settings::get_app_settings,
             commands::settings::get_autostart_status,
             commands::settings::set_autostart_enabled,

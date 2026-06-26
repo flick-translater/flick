@@ -94,8 +94,6 @@ type LongCaptureUpdate = {
   max_offset: number;
 };
 
-function editorLog(_step: string) {}
-
 function ScreenshotEditor() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
   const appWindow = useMemo(() => getCurrentWindow(), []);
@@ -254,7 +252,6 @@ function ScreenshotEditor() {
 
   useEffect(() => {
     if (isPreload) {
-      editorLog('preload window ready');
       return;
     }
     if (!sessionId) {
@@ -265,19 +262,13 @@ function ScreenshotEditor() {
     document.body.tabIndex = -1;
     document.body.focus();
     window.focus();
-    editorLog(
-      `window load: label=${windowLabel} session=${sessionId} preload=${isPreload} long_edit=${isLongEditLaunch} href=${window.location.href}`,
-    );
 
     const imageCommand = isLongEditLaunch ? 'get_long_capture_image' : 'get_pending_capture_image';
-    editorLog(`frontend load: ${imageCommand} start`);
     void invoke<string>(imageCommand, { sessionId })
       .then((dataUrl) => {
-        editorLog(`frontend load: data url received length=${dataUrl.length}`);
         setScreenshotDataUrl(dataUrl);
         const image = new Image();
         image.onload = () => {
-          editorLog(`frontend load: image decoded natural=${image.naturalWidth}x${image.naturalHeight}`);
           imageRef.current = image;
           setImageSize({ width: image.naturalWidth, height: image.naturalHeight });
           if (isLongEditLaunch) {
@@ -293,7 +284,6 @@ function ScreenshotEditor() {
             }
           }
           setImageLoaded(true);
-          editorLog('frontend load: canvas sized');
           if (isLongEditLaunch) {
             void invoke('prepare_long_capture_edit', { sessionId });
             setIsLongEditWindow(true);
@@ -307,23 +297,19 @@ function ScreenshotEditor() {
                 return;
               }
               readyNotifiedRef.current = true;
-              editorLog('frontend load: first frame rendered; notify backend ready');
               void invoke('capture_editor_ready', { sessionId })
                 .catch((readyError: unknown) => {
-                  editorLog(`frontend load: capture_editor_ready failed ${String(readyError)}`);
                 })
                 .finally(() => {
                   setEditorVisible(true);
                 });
             });
           });
-          editorLog('frontend load: initial render scheduled');
         };
         image.onerror = () => {
           if (isClosingRef.current || isFinishedRef.current) {
             return;
           }
-          editorLog('frontend load: image decode failed');
           setError('Failed to load screenshot.');
         };
         image.src = dataUrl;
@@ -332,7 +318,6 @@ function ScreenshotEditor() {
         if (isClosingRef.current || isFinishedRef.current) {
           return;
         }
-        editorLog(`frontend load: failed ${String(loadError)}`);
         setError(String(loadError));
       });
   }, [isPreload, isLongEditLaunch, sessionId, windowLabel]);
@@ -409,9 +394,7 @@ function ScreenshotEditor() {
     if (isPreload) {
       return;
     }
-    editorLog('long update listener: registering window');
     const windowUnlisten = appWindow.listen<LongCaptureUpdate>('long-capture-update', (event) => {
-      editorLog('long update listener: window event received');
       applyLongCaptureUpdate(event.payload);
     });
     return () => {
@@ -421,11 +404,7 @@ function ScreenshotEditor() {
 
   useEffect(() => {
     const unlistenPromise = appWindow.onCloseRequested(async (event) => {
-      editorLog(
-        `window close requested: label=${windowLabel} session=${sessionId || '<missing>'} finished=${isFinishedRef.current} closing=${isClosingRef.current} mode=${editorMode} long_edit=${isLongEditLaunch}`,
-      );
       if (isFinishedRef.current || !sessionId) {
-        editorLog(`window close allowed: label=${windowLabel}`);
         return;
       }
       event.preventDefault();
@@ -433,16 +412,13 @@ function ScreenshotEditor() {
       isFinishedRef.current = true;
       stopLongScroll();
       if (editorMode === 'long-capture') {
-        editorLog(`window close prevented: invoke cancel_long_capture label=${windowLabel}`);
         await invoke('cancel_long_capture', { sessionId }).catch(() => undefined);
       }
       if (editorMode === 'recording') {
         await invoke('cancel_recording', { sessionId }).catch(() => undefined);
         await invoke('close_recording_controls_window', { sessionId }).catch(() => undefined);
       }
-      editorLog(`window close prevented: invoke cancel_capture_edit label=${windowLabel}`);
       await invoke('cancel_capture_edit', { sessionId }).catch(() => undefined);
-      editorLog(`window close prevented: closing label=${windowLabel}`);
       await appWindow.close();
     });
 
@@ -515,26 +491,20 @@ function ScreenshotEditor() {
     const canvas = baseCanvasRef.current;
     const image = imageRef.current;
     if (!canvas || !image) {
-      editorLog(`renderCommitted: skipped canvas=${Boolean(canvas)} image=${Boolean(image)}`);
       return;
     }
 
     const context = canvas.getContext('2d');
     if (!context) {
-      editorLog('renderCommitted: skipped missing 2d context');
       return;
     }
 
     const bounds = canvas.getBoundingClientRect();
-    editorLog(
-      `renderCommitted: draw start canvas=${canvas.width}x${canvas.height} image=${image.naturalWidth}x${image.naturalHeight} rect=${Math.round(bounds.left)},${Math.round(bounds.top)},${Math.round(bounds.width)}x${Math.round(bounds.height)} selection=${selectionOffset.left},${selectionOffset.top},${displaySize.width}x${displaySize.height}`,
-    );
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     for (const annotation of annotationsRef.current) {
       drawAnnotation(context, annotation);
     }
-    editorLog(`renderCommitted: draw complete ${canvasSampleSummary(context, canvas)}`);
   }
 
   function renderDraft(annotation: Annotation | null) {
@@ -849,7 +819,6 @@ function ScreenshotEditor() {
         }
       })
       .catch((saveError: unknown) => {
-        editorLog(`color save failed ${String(saveError)}`);
       });
   }
 
@@ -911,9 +880,6 @@ function ScreenshotEditor() {
       return;
     }
     longUpdateSignatureRef.current = signature;
-    editorLog(
-      `long update: frame=${update.width}x${update.frame_height} total=${update.total_height} offset=${update.scroll_offset} min=${update.min_offset} max=${update.max_offset} preview_len=${update.preview_data_url.length} preview_append_len=${previewAppendDataUrl.length} preview_append_rows=${previewAppendRows} preview_prepend_len=${previewPrependDataUrl.length} preview_prepend_rows=${previewPrependRows} current_len=${update.current_frame_data_url.length}`,
-    );
     setLongScreenshot((previous) => {
       let previewSegments = previous.previewSegments;
       let previewDataUrl = previous.previewDataUrl;
@@ -960,15 +926,10 @@ function ScreenshotEditor() {
   }
 
   async function handleLongCaptureStart() {
-    editorLog(
-      `long start click: session=${sessionId || '<missing>'} isSaving=${isSaving} imageLoaded=${imageLoaded} mode=${editorMode} selection=${selectionOffset.left},${selectionOffset.top},${displaySize.width}x${displaySize.height}`,
-    );
     if (!sessionId || isSaving) {
-      editorLog('long start ignored: missing session or saving');
       return;
     }
     if (isLinux) {
-      editorLog('long start ignored: unsupported on linux');
       return;
     }
     setTool(null);
@@ -983,12 +944,9 @@ function ScreenshotEditor() {
     setEditorMode('long-capture');
     try {
       await waitForNextPaint();
-      editorLog('long start invoke start_long_capture');
       const update = await invoke<LongCaptureUpdate>('start_long_capture', { sessionId });
-      editorLog('long start invoke complete');
       applyLongCaptureUpdate(update);
     } catch (startError) {
-      editorLog(`long start failed: ${String(startError)}`);
       setEditorMode('edit');
       setError(String(startError));
     } finally {
@@ -1095,19 +1053,13 @@ function ScreenshotEditor() {
 
   function handleLongEdit() {
     stopLongScroll();
-    editorLog(
-      `long edit click: active=${longScreenshot.active} preview_len=${longScreenshot.previewDataUrl.length} total=${longScreenshot.totalHeight}`,
-    );
     void (async () => {
       try {
         if (!sessionId) {
           throw new Error('Long screenshot session is missing.');
         }
-        editorLog(`long edit click: invoke open_long_capture_edit_window start label=${windowLabel}`);
         await invoke('open_long_capture_edit_window', { sessionId });
-        editorLog(`long edit click: invoke open_long_capture_edit_window complete label=${windowLabel}`);
       } catch (editError) {
-        editorLog(`long edit failed: ${String(editError)}`);
         setError(String(editError));
       }
     })();
@@ -1126,10 +1078,8 @@ function ScreenshotEditor() {
     }
     longScrollActiveRef.current = true;
     longScrollInFlightRef.current = true;
-    editorLog(`long scroll ${direction}: start`);
     void invoke('scroll_long_capture', { sessionId, direction })
       .catch((scrollError: unknown) => {
-        editorLog(`long scroll ${direction} failed: ${String(scrollError)}`);
         setError(String(scrollError));
         longScrollActiveRef.current = false;
       })
@@ -1144,7 +1094,6 @@ function ScreenshotEditor() {
     }
     longScrollActiveRef.current = false;
     void invoke('stop_long_capture_scroll', { sessionId }).catch(() => undefined);
-    editorLog('long scroll: stop');
   }
 
   async function resizeWindowForLongEdit(
@@ -1185,12 +1134,10 @@ function ScreenshotEditor() {
         monitorTop + (monitorHeight - height) / 2,
       ));
       if (showAfterResize) {
-        editorLog(`long edit resize: show window label=${windowLabel} size=${width}x${height}`);
         await appWindow.show();
       }
       await appWindow.setFocus();
     } catch (resizeError) {
-      editorLog(`long edit resize failed: ${String(resizeError)}`);
     }
   }
 
@@ -1202,25 +1149,18 @@ function ScreenshotEditor() {
     if (isFinishedRef.current) {
       return;
     }
-    editorLog(`cancel click: start label=${windowLabel} mode=${editorMode} long_edit=${isLongEditLaunch}`);
     isClosingRef.current = true;
     isFinishedRef.current = true;
     if (editorMode === 'long-capture') {
-      editorLog('cancel click: invoke cancel_long_capture start');
       await invoke('cancel_long_capture', { sessionId }).catch(() => undefined);
-      editorLog('cancel click: invoke cancel_long_capture complete');
     }
     if (editorMode === 'recording') {
       await invoke('cancel_recording', { sessionId }).catch(() => undefined);
       await invoke('close_recording_controls_window', { sessionId }).catch(() => undefined);
     }
-    editorLog(`cancel click: invoke cancel_capture_edit start label=${windowLabel}`);
     await invoke('cancel_capture_edit', { sessionId }).catch((cancelError: unknown) => {
-      editorLog(`cancel click: failed ${String(cancelError)}`);
       setError(String(cancelError));
     });
-    editorLog(`cancel click: invoke cancel_capture_edit complete label=${windowLabel}`);
-    editorLog(`cancel click: close window label=${windowLabel}`);
     await getCurrentWindow().close();
   }
 
@@ -1233,28 +1173,19 @@ function ScreenshotEditor() {
       return;
     }
 
-    editorLog(`confirm click: start label=${windowLabel} mode=${editorMode} long_edit=${isLongEditLaunch} pin=${pinToDesktop}`);
     setIsSaving(true);
     setError('');
     isFinishedRef.current = true;
     try {
-      editorLog('confirm click: encode png data url start');
       if (editorMode === 'long-capture') {
-        editorLog('confirm click: invoke confirm_long_capture start');
         await invoke('confirm_long_capture', { sessionId, pinToDesktop });
-        editorLog('confirm click: invoke confirm_long_capture complete');
       } else {
         const pngBase64 = buildEditedPngBase64();
-        editorLog('confirm click: encode png data url complete');
-        editorLog(`confirm click: invoke confirm_regular_capture_edit start label=${windowLabel}`);
         await invoke('confirm_regular_capture_edit', { sessionId, pngBase64, pinToDesktop });
-        editorLog(`confirm click: invoke confirm_regular_capture_edit complete label=${windowLabel}`);
       }
-      editorLog(`confirm click: close window label=${windowLabel}`);
       await getCurrentWindow().close();
     } catch (saveError) {
       isFinishedRef.current = false;
-      editorLog(`confirm click: failed ${String(saveError)}`);
       setError(String(saveError));
       setIsSaving(false);
     }
@@ -2242,44 +2173,6 @@ function constrainPoint(from: Point, to: Point): Point {
     x: from.x + Math.cos(snapped) * distance,
     y: from.y + Math.sin(snapped) * distance,
   };
-}
-
-function canvasSampleSummary(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
-  const sampleColumns = Math.min(canvas.width, 16);
-  const sampleRows = Math.min(canvas.height, 16);
-  let totalSamples = 0;
-  let nonWhiteSamples = 0;
-  let brightSamples = 0;
-  let transparentSamples = 0;
-  let redTotal = 0;
-  let greenTotal = 0;
-  let blueTotal = 0;
-
-  for (let row = 0; row < sampleRows; row += 1) {
-    for (let column = 0; column < sampleColumns; column += 1) {
-      const x = sampleColumns <= 1 ? 0 : Math.round((column * (canvas.width - 1)) / (sampleColumns - 1));
-      const y = sampleRows <= 1 ? 0 : Math.round((row * (canvas.height - 1)) / (sampleRows - 1));
-      const [red, green, blue, alpha] = context.getImageData(x, y, 1, 1).data;
-      totalSamples += 1;
-      redTotal += red;
-      greenTotal += green;
-      blueTotal += blue;
-      if (alpha === 0) {
-        transparentSamples += 1;
-      }
-      if (alpha !== 0 && (red < 245 || green < 245 || blue < 245)) {
-        nonWhiteSamples += 1;
-      }
-      if (red >= 245 && green >= 245 && blue >= 245) {
-        brightSamples += 1;
-      }
-    }
-  }
-
-  const averageRed = Math.round(redTotal / Math.max(totalSamples, 1));
-  const averageGreen = Math.round(greenTotal / Math.max(totalSamples, 1));
-  const averageBlue = Math.round(blueTotal / Math.max(totalSamples, 1));
-  return `nonWhiteSamples=${nonWhiteSamples}/${totalSamples} brightSamples=${brightSamples}/${totalSamples} transparentSamples=${transparentSamples}/${totalSamples} avgRgb=${averageRed},${averageGreen},${averageBlue}`;
 }
 
 function isHexColor(value: string | undefined): value is string {

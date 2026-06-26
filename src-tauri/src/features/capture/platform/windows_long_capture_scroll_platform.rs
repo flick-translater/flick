@@ -31,7 +31,7 @@ use windows_sys::Win32::{
 use crate::{
     error::FlickError,
     features::capture::{
-        long_capture::{long_log, monotonic_millis, screenshot_editor_window},
+        long_capture::{monotonic_millis, screenshot_editor_window},
         platform,
     },
     models::SelectionRect,
@@ -162,9 +162,6 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
     let hook = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(low_level_mouse_proc), null_mut(), 0) };
     if hook.is_null() {
         let error = unsafe { GetLastError() };
-        long_log(format!(
-            "scroll_controller/windows: failed to install WH_MOUSE_LL hook last_error={error}"
-        ));
         clear_hook_state();
         return;
     }
@@ -344,9 +341,6 @@ fn inject_wheel(delta: i32) {
     let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
     if sent != 1 {
         let error = unsafe { GetLastError() };
-        long_log(format!(
-            "scroll_controller/windows: SendInput wheel failed sent={sent} delta={delta} last_error={error}"
-        ));
     }
 }
 

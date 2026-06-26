@@ -98,7 +98,6 @@ pub fn begin_interactive_capture_session(
 }
 
 pub fn cancel_interactive_capture_session(_app: &AppHandle, _state: &State<'_, AppState>) {
-    crate::features::capture::capture_editor_log("windows native capture: cancel requested");
     clear_active_session();
 }
 
@@ -254,9 +253,6 @@ fn run_native_capture_session(app: AppHandle, session_id: u64) {
         return;
     }
 
-    crate::features::capture::capture_editor_log(
-        "windows native capture: using async key polling; low-level hooks disabled",
-    );
     run_native_capture_loop(app, session_id);
 }
 
@@ -352,24 +348,15 @@ fn run_native_capture_loop(app: AppHandle, session_id: u64) {
         right_was_down = right_down;
         thread::sleep(POLL_INTERVAL);
     }
-    crate::features::capture::capture_editor_log(
-        "windows overlay: owner thread hiding native overlay",
-    );
     let _ = frozen_overlay::hide_native_overlay(&app);
 }
 
 fn run_editor_overlay_hold_loop(session_id: u64) {
-    crate::features::capture::capture_editor_log(
-        "windows overlay: hold loop start after selection",
-    );
     while is_active_session(session_id) {
         frozen_overlay::pump_native_overlay_messages();
         thread::sleep(POLL_INTERVAL);
     }
     frozen_overlay::pump_native_overlay_messages();
-    crate::features::capture::capture_editor_log(
-        "windows overlay: hold loop complete after editor finish",
-    );
 }
 
 fn current_global_cursor_position() -> Result<CursorPosition, FlickError> {

@@ -328,11 +328,6 @@ pub fn close_recording_controls_window(app: AppHandle, session_id: String) {
     capture::close_recording_controls_window(app, session_id);
 }
 
-#[tauri::command]
-pub fn capture_editor_frontend_log(message: String) {
-    capture::capture_editor_frontend_log(&message);
-}
-
 pub fn begin_capture_session(
     app: &AppHandle,
     state: &State<'_, AppState>,

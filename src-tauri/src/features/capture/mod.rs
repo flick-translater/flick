@@ -31,10 +31,8 @@ pub use recording::{
     pause_recording, resume_gif_recording, resume_recording, set_gif_recording_window_shape,
     set_recording_window_mode, start_gif_recording, start_recording,
 };
-pub(crate) use session::capture_editor_log;
 pub use session::{
     begin_capture_session, begin_capture_session_with_intent, cancel_capture,
-    cancel_capture_edit_command, capture_editor_frontend_log, capture_editor_ready,
-    complete_capture, confirm_regular_capture_edit, get_pending_capture_image,
-    save_regular_capture_edit,
+    cancel_capture_edit_command, capture_editor_ready, complete_capture,
+    confirm_regular_capture_edit, get_pending_capture_image, save_regular_capture_edit,
 };

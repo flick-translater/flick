@@ -170,10 +170,6 @@ pub(super) fn show_native_overlay(
     snapshots: &[CachedScreenCapture],
     visuals: OverlayVisuals,
 ) -> Result<(), FlickError> {
-    crate::features::capture::capture_editor_log(&format!(
-        "windows overlay: show_native_overlay snapshots={}",
-        snapshots.len()
-    ));
     register_overlay_window_class()?;
 
     let mut state = overlay_state()
@@ -200,14 +196,6 @@ pub(super) fn show_native_overlay(
         show_overlay_window(window.hwnd as HWND, &snapshot.bounds)?;
         render_overlay_window(window.hwnd as HWND, &mut data)?;
         window.data = Some(data);
-        crate::features::capture::capture_editor_log(&format!(
-            "windows overlay: initial render hwnd={:#x} bounds=({}, {}, {}x{})",
-            window.hwnd,
-            snapshot.bounds.x,
-            snapshot.bounds.y,
-            snapshot.bounds.width,
-            snapshot.bounds.height
-        ));
     }
 
     for window in state.windows.iter().skip(snapshots.len()) {
@@ -218,15 +206,9 @@ pub(super) fn show_native_overlay(
 }
 
 pub(super) fn hide_native_overlay(_app: &AppHandle) -> Result<(), FlickError> {
-    crate::features::capture::capture_editor_log("windows overlay: hide_native_overlay start");
     let mut state = overlay_state()
         .lock()
         .map_err(|_| FlickError::Message("windows overlay state mutex poisoned".into()))?;
-    crate::features::capture::capture_editor_log(&format!(
-        "windows overlay: hide_native_overlay visible={} windows={}",
-        state.overlay_visible,
-        state.windows.len()
-    ));
     state.overlay_visible = false;
     state.draw_state = OverlayDrawState::default();
     state.visuals = None;

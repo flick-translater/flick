@@ -22,7 +22,7 @@ use tauri::AppHandle;
 use crate::{
     error::FlickError,
     features::capture::{
-        long_capture::{long_log, monotonic_millis, screenshot_editor_window},
+        long_capture::{monotonic_millis, screenshot_editor_window},
         platform,
     },
     models::SelectionRect,
@@ -48,14 +48,6 @@ const BUTTON_SCROLL_PX_PER_STEP: i32 = 36;
 const BUTTON_SCROLL_INTERVAL: Duration = Duration::from_millis(70);
 
 pub(super) fn start_scroll_controller(options: ScrollControllerOptions) {
-    long_log(format!(
-        "scroll_controller/macos: start session={} selection=({},{} {}x{})",
-        options.session_id,
-        options.selection.x,
-        options.selection.y,
-        options.selection.width,
-        options.selection.height
-    ));
     thread::spawn(move || run_scroll_controller(options));
 }
 
@@ -114,9 +106,6 @@ fn run_button_scroll_loop(
     set_editor_cursor_passthrough(&app, &session_id, true);
     let _ = display.hide_cursor();
     let _ = CGDisplay::warp_mouse_cursor_position(target_location);
-    long_log(format!(
-        "scroll_controller/macos: button scroll loop start direction={direction} signed={signed}"
-    ));
 
     while !stop.load(Ordering::SeqCst) && left_mouse_button_down() {
         if let Ok(scroll) =
@@ -135,7 +124,6 @@ fn run_button_scroll_loop(
     set_editor_cursor_passthrough(&app, &session_id, false);
     stop.store(true, Ordering::SeqCst);
     running.store(false, Ordering::SeqCst);
-    long_log("scroll_controller/macos: button scroll loop stopped");
 }
 
 fn run_scroll_controller(options: ScrollControllerOptions) {
@@ -188,11 +176,6 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
     let rate_max_px_per_window = ((selection.height as f64) * RATE_MAX_FRAME_FRACTION)
         .min(RATE_MAX_PX_PER_WINDOW)
         .max(40.0);
-    long_log(format!(
-        "scroll_controller/macos: synth available={} target_pid={:?} rate_max_px={rate_max_px_per_window:.0} window_ms={RATE_WINDOW_MS}",
-        synth.is_some(),
-        target.pid
-    ));
 
     let tap = match CGEventTap::new(
         CGEventTapLocation::HID,
@@ -284,7 +267,6 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
     ) {
         Ok(tap) => tap,
         Err(()) => {
-            long_log("scroll_controller/macos: failed to create event tap");
             return;
         }
     };
@@ -292,7 +274,6 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
     let source = match tap.mach_port().create_runloop_source(0) {
         Ok(source) => source,
         Err(()) => {
-            long_log("scroll_controller/macos: failed to create runloop source");
             return;
         }
     };
@@ -300,7 +281,6 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
     let run_loop = CFRunLoop::get_current();
     run_loop.add_source(&source, unsafe { kCFRunLoopCommonModes });
     tap.enable();
-    long_log("scroll_controller/macos: event tap enabled");
 
     while !stop.load(Ordering::SeqCst) {
         CFRunLoop::run_in_mode(
@@ -316,7 +296,6 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
     if let Some((_, window)) = screenshot_editor_window(&app, &session_id) {
         platform::set_window_capture_sharing(&window, true);
     }
-    long_log("scroll_controller/macos: stopped");
 }
 
 fn point_in_selection(x: f64, y: f64, selection: &SelectionRect) -> bool {
@@ -380,10 +359,7 @@ fn update_editor_cursor_passthrough(
 }
 
 fn set_editor_cursor_passthrough(app: &AppHandle, session_id: &str, passthrough: bool) {
-    if let Some((label, window)) = screenshot_editor_window(app, session_id) {
-        long_log(format!(
-            "scroll_controller/macos: set_ignore_cursor_events label={label} passthrough={passthrough}"
-        ));
+    if let Some((_, window)) = screenshot_editor_window(app, session_id) {
         let _ = window.set_ignore_cursor_events(passthrough);
     }
 }

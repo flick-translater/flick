@@ -1,4 +1,5 @@
 mod app;
+pub mod async_log;
 mod commands;
 mod error;
 mod features;
