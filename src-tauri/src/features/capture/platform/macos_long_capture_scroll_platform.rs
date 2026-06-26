@@ -2,8 +2,8 @@
 
 use std::{
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        Arc,
+        atomic::{AtomicBool, AtomicI64, Ordering},
     },
     thread,
     time::Duration,
@@ -35,17 +35,15 @@ use super::{ScrollControllerOptions, ScrollTarget};
 const SCROLL_SPEED_FACTOR: f64 = 0.35;
 /// Hard cap on the pixels a single forwarded wheel event may move the page.
 const MAX_SCROLL_PX_PER_EVENT: f64 = 120.0;
-/// Sliding window for the scroll-rate limit.
-const RATE_WINDOW_MS: i64 = 150;
-/// Absolute cap on scroll pixels per window.
-const RATE_MAX_PX_PER_WINDOW: f64 = 200.0;
-/// Scroll budget per window as a fraction of the selection's logical height.
-const RATE_MAX_FRAME_FRACTION: f64 = 0.5;
 /// Sentinel written to a synthetic scroll event's user-data field so the event tap recognizes its
 /// own posted events and ignores them.
 const SYNTHETIC_SCROLL_TAG: i64 = 0x466c_6b53; // "FlkS"
 const BUTTON_SCROLL_PX_PER_STEP: i32 = 36;
 const BUTTON_SCROLL_INTERVAL: Duration = Duration::from_millis(70);
+/// Real-wheel forwarding is rate-limited to one fixed step per this interval, producing a constant
+/// scroll speed regardless of how fast the user spins the wheel. A steady per-frame delta is what
+/// lets the stitcher avoid the integer-multiple mis-match on periodic text.
+const FIXED_SCROLL_INTERVAL_MS: i64 = 70;
 
 pub(super) fn start_scroll_controller(options: ScrollControllerOptions) {
     thread::spawn(move || run_scroll_controller(options));
@@ -172,10 +170,11 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
         (Some(source), Some(pid)) => Some(SendSynth { source, pid }),
         _ => None,
     };
-    let scroll_window = Arc::new(Mutex::new(Vec::<(i64, f64)>::new()));
-    let rate_max_px_per_window = ((selection.height as f64) * RATE_MAX_FRAME_FRACTION)
-        .min(RATE_MAX_PX_PER_WINDOW)
-        .max(40.0);
+    // Timestamp of the last synthetic scroll we forwarded. Combined with FIXED_SCROLL_INTERVAL_MS this
+    // turns the user's variable-speed wheel into a constant-rate, fixed-step scroll: at most one fixed
+    // step per interval. A constant per-frame delta removes the speed variation that lets the row
+    // correlation pick an integer multiple of the true shift (the duplicate-stitch / big-jump bug).
+    let last_emit_ms = Arc::new(AtomicI64::new(0));
 
     let tap = match CGEventTap::new(
         CGEventTapLocation::HID,
@@ -220,48 +219,21 @@ fn run_scroll_controller(options: ScrollControllerOptions) {
                 last_scroll_delta_for_tap.store(delta_y.signum().round() as i64, Ordering::SeqCst);
 
                 if throttle_for_tap() {
-                    crate::async_log!(
-                        "[STITCH ts={}ms] wheel: THROTTLED-DROP raw_delta_y={:.1}",
-                        now,
-                        delta_y
-                    );
                     return CallbackResult::Drop;
                 }
 
-                let want = (delta_y.abs() * SCROLL_SPEED_FACTOR).min(MAX_SCROLL_PX_PER_EVENT);
-                let emit = if let Ok(mut win) = scroll_window.lock() {
-                    win.retain(|(ts, _)| now - *ts < RATE_WINDOW_MS);
-                    let used: f64 = win.iter().map(|(_, px)| *px).sum();
-                    let remaining = (rate_max_px_per_window - used).max(0.0);
-                    let emit = want.min(remaining);
-                    if emit > 0.0 {
-                        win.push((now, emit));
-                    }
-                    emit
-                } else {
-                    0.0
-                };
-                if emit <= 0.0 {
-                    crate::async_log!(
-                        "[STITCH ts={}ms] wheel: RATE-LIMITED-DROP raw_delta_y={:.1} want={:.1}px (window full)",
-                        now,
-                        delta_y,
-                        want
-                    );
+                // Fixed-step, rate-limited forwarding: convert the user's variable-speed wheel into a
+                // constant scroll. Forward exactly one fixed step (BUTTON_SCROLL_PX_PER_STEP) at most
+                // once per FIXED_SCROLL_INTERVAL_MS; drop wheel events that arrive inside the interval.
+                // This keeps the per-frame scroll delta steady so the stitcher never sees a varying
+                // shift it could confuse with an integer multiple on periodic text.
+                let prev_emit = last_emit_ms.load(Ordering::SeqCst);
+                if prev_emit != 0 && now - prev_emit < FIXED_SCROLL_INTERVAL_MS {
                     return CallbackResult::Drop;
                 }
+                last_emit_ms.store(now, Ordering::SeqCst);
 
-                let signed = (emit * delta_y.signum()).round() as i32;
-                crate::async_log!(
-                    "[STITCH ts={}ms] wheel: raw_delta_y={:.1} want={:.1}px emit={:.1}px signed={} (factor={} cap={})",
-                    now,
-                    delta_y,
-                    want,
-                    emit,
-                    signed,
-                    SCROLL_SPEED_FACTOR,
-                    MAX_SCROLL_PX_PER_EVENT
-                );
+                let signed = BUTTON_SCROLL_PX_PER_STEP * (delta_y.signum() as i32);
                 if signed != 0 {
                     if let Ok(scroll) = CGEvent::new_scroll_event(
                         synth.source.clone(),
