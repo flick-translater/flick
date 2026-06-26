@@ -81,6 +81,7 @@ const ROW_FEATURE_LEN: usize = ROW_FEATURE_SEGMENTS * 2;
 /// frame carries genuinely new content, so stitching it is not a duplicate. Slow scrolling simply
 /// accumulates across a few dropped frames until it has moved ≥20px, then stitches once.
 const MIN_SCROLL_DELTA: i64 = 20;
+const NEAR_DUP_MAX_OFFSET: i64 = 2;
 /// Do not commit very small edge growth as its own stitched strip. These rows usually come from
 /// sub-pixel/compositor settling around a stop point; a later larger frame will include them again.
 const MIN_STITCH_GROW_ROWS: u32 = 16;
@@ -130,6 +131,14 @@ const MIN_RELATIVE_NONTRIVIAL_FRACTION: f64 = 0.25;
 pub(super) fn monotonic_millis() -> i64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as i64
+}
+
+fn accumulate_subthreshold_scroll_frames() -> bool {
+    cfg!(target_os = "windows")
+}
+
+fn reject_subthreshold_relative_delta() -> bool {
+    cfg!(target_os = "windows")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1411,10 +1420,14 @@ fn frames_nearly_identical(
     // Compare against the SAD at the search edges: a genuine sub-threshold alignment is markedly
     // better than the edge offsets; a far/fast scroll shows no such dip.
     let edge_sad = sad_at(thr).min(sad_at(-thr));
-    // Near-duplicate if the in-range best is clearly better than the edges. The stream callback keeps
-    // the previous enqueued frame unchanged, so these small moves accumulate until the next frame
-    // reaches MIN_SCROLL_DELTA and can be located reliably.
-    best_sad.saturating_mul(4) < edge_sad.saturating_mul(3)
+    let dip = best_sad.saturating_mul(4) < edge_sad.saturating_mul(3);
+    if !dip {
+        return false;
+    }
+    if accumulate_subthreshold_scroll_frames() {
+        return true;
+    }
+    best_offset.abs() <= NEAR_DUP_MAX_OFFSET
 }
 
 /// Stage-1 (parallel) work: measure the relative scroll between `prev_frame` and `frame`.
@@ -2009,15 +2022,17 @@ fn locate_next_frame_from_last(
         if delta_y == 0 {
             continue;
         }
-        // Reject tiny deltas unconditionally. With the 60fps stream, near-duplicate frames (the page
+        // On Windows, reject tiny deltas. With the 60fps stream, near-duplicate frames (the page
         // barely moved between two samples) arrive constantly; their tiny delta is the self-similar
         // near-neighbor artifact (the whole page offset by ~1 line still matches at ~1000‰), not real
         // motion. Committing them stitches the same content repeatedly (the "duplicate stitch" bug)
         // and, with a poisoned prediction, self-locks the search at a crawl. This used to be gated on
         // a known scroll direction, but the stream's wheel-direction signal is sparse, so the gate
         // often missed. Dropping these frames is safe: overlap is nearly a full frame, so the next
-        // larger frame still overlaps. The first frame of a run (no predecessor) is handled upstream.
-        if delta_y.abs() < MIN_SCROLL_DELTA {
+        // larger frame still overlaps. macOS keeps these small deltas because its scroll/capture
+        // cadence is smoother in practice and dropping them loses useful motion. The first frame of a
+        // run (no predecessor) is handled upstream.
+        if reject_subthreshold_relative_delta() && delta_y.abs() < MIN_SCROLL_DELTA {
             continue;
         }
 
