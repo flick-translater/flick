@@ -45,6 +45,8 @@ const FINALIZE_CAPTURE_WAIT_POLL: Duration = Duration::from_millis(25);
 const LONG_PREVIEW_WIDTH: u32 = 240;
 #[cfg(target_os = "windows")]
 const SCREENSHOT_EDITOR_TOOLBAR_REGION_WIDTH: f64 = 744.0;
+#[cfg(target_os = "windows")]
+const LONG_CAPTURE_SELECTION_FRAME_THICKNESS: u32 = 2;
 /// If the stream delivers no frame for this long, the page was likely still (and may have jumped),
 /// so the next frame drops its stale predecessor and starts a fresh stitch base instead of measuring
 /// a bogus delta across the gap. Stream-driven, not wheel-driven, so it works during inertia too.
@@ -1173,6 +1175,10 @@ fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
 
         let toolbar_left = query_f64(&url, "toolbar_left").unwrap_or(8.0);
         let toolbar_top = query_f64(&url, "toolbar_top").unwrap_or(8.0);
+        let selection_left = query_f64(&url, "selection_left").unwrap_or(0.0);
+        let selection_top = query_f64(&url, "selection_top").unwrap_or(0.0);
+        let selection_width = query_f64(&url, "display_width").unwrap_or(0.0);
+        let selection_height = query_f64(&url, "display_height").unwrap_or(0.0);
         let thumbnail_left = query_f64(&url, "thumbnail_left").unwrap_or(8.0);
         let thumbnail_top = query_f64(&url, "thumbnail_top").unwrap_or(8.0);
         let thumbnail_region_top = query_f64(&url, "thumbnail_region_top").unwrap_or(thumbnail_top);
@@ -1183,7 +1189,7 @@ fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
             .unwrap_or(SCREENSHOT_EDITOR_TOOLBAR_REGION_WIDTH)
             .max(1.0);
         let toolbar_height: f64 = 56.0;
-        let regions = vec![
+        let mut regions = vec![
             SelectionRect {
                 x: toolbar_left.floor() as i32,
                 y: toolbar_top.floor() as i32,
@@ -1197,6 +1203,12 @@ fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
                 height: thumbnail_height.ceil() as u32,
             },
         ];
+        regions.extend(long_capture_selection_frame_regions(
+            selection_left,
+            selection_top,
+            selection_width,
+            selection_height,
+        ));
         crate::app::platform::configure_screenshot_editor_window_shape(&window, &regions);
     }
 
@@ -1205,6 +1217,55 @@ fn configure_long_capture_window_shape(app: &AppHandle, session_id: &str) {
         let _ = app;
         let _ = session_id;
     }
+}
+
+#[cfg(target_os = "windows")]
+fn long_capture_selection_frame_regions(
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+) -> Vec<SelectionRect> {
+    let width = width.ceil().max(0.0) as u32;
+    let height = height.ceil().max(0.0) as u32;
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+
+    let thickness = LONG_CAPTURE_SELECTION_FRAME_THICKNESS
+        .min(width)
+        .min(height);
+    let left = left.floor() as i32;
+    let top = top.floor() as i32;
+    let right_x = left + width.saturating_sub(thickness) as i32;
+    let bottom_y = top + height.saturating_sub(thickness) as i32;
+
+    vec![
+        SelectionRect {
+            x: left,
+            y: top,
+            width,
+            height: thickness,
+        },
+        SelectionRect {
+            x: left,
+            y: bottom_y,
+            width,
+            height: thickness,
+        },
+        SelectionRect {
+            x: left,
+            y: top,
+            width: thickness,
+            height,
+        },
+        SelectionRect {
+            x: right_x,
+            y: top,
+            width: thickness,
+            height,
+        },
+    ]
 }
 
 #[cfg(target_os = "windows")]
@@ -2060,7 +2121,8 @@ fn locate_next_frame_from_last(
         // periodic multiple on short text frames?
         if weighted_corr_permille > diagnostic_weighted_best_corr
             || (weighted_corr_permille == diagnostic_weighted_best_corr
-                && (delta_y - predicted).abs() < (diagnostic_weighted_best_delta_y - predicted).abs())
+                && (delta_y - predicted).abs()
+                    < (diagnostic_weighted_best_delta_y - predicted).abs())
         {
             diagnostic_weighted_best_corr = weighted_corr_permille;
             diagnostic_weighted_best_delta_y = delta_y;

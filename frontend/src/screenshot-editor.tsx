@@ -1403,6 +1403,18 @@ function ScreenshotEditor() {
                   />
                 </div>
               )}
+              {editorMode === 'long-capture' && (
+                <div
+                  className="pointer-events-none absolute z-40 box-border border-2 border-primary bg-transparent"
+                  style={{
+                    left: selectionOffset.left,
+                    top: selectionOffset.top,
+                    width: displaySize.width,
+                    height: displaySize.height,
+                    opacity: editorVisible ? 1 : 0,
+                  }}
+                />
+              )}
 
               {editorMode === 'edit' ? (
                 <ScreenshotEditorToolbar
