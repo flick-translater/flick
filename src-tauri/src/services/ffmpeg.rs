@@ -44,6 +44,20 @@ pub fn detect_ffmpeg(configured_path: &str) -> FfmpegStatus {
         };
     }
 
+    #[cfg(target_os = "macos")]
+    for homebrew_path in [
+        Path::new("/usr/local/bin/ffmpeg"),
+        Path::new("/opt/homebrew/bin/ffmpeg"),
+    ] {
+        if ffmpeg_works(homebrew_path) {
+            return FfmpegStatus {
+                available: true,
+                path: homebrew_path.display().to_string(),
+                source: "system".into(),
+            };
+        }
+    }
+
     if command_works("ffmpeg") {
         return FfmpegStatus {
             available: true,
