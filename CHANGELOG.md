@@ -2,6 +2,14 @@
 
 All notable changes to Flick will be documented in this file.
 
+## [1.1.3] - 2026-06-27
+
+### Improved
+
+- Improved screenshot editor text annotation editing so draft text matches final rendered size and uses a transparent inline input without a visible box.
+- Improved screenshot editor annotation selection so switching tools clears selection handles, while selecting an existing annotation synchronizes the active tool, color, and size controls.
+- Improved screenshot editor toolbar adjustments so color, line width, and text size changes apply to the currently selected annotation when supported.
+
 ## [1.1.2] - 2026-06-27
 
 ### Fixed
