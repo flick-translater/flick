@@ -91,6 +91,7 @@ type ScreenshotEditorToolbarProps = {
   embedded?: boolean;
   showLongCapture?: boolean;
   useNativeTooltip?: boolean;
+  onBeforeToolbarAction?: () => void;
 };
 
 export function ScreenshotEditorToolbar({
@@ -141,6 +142,7 @@ export function ScreenshotEditorToolbar({
   embedded = false,
   showLongCapture = true,
   useNativeTooltip = false,
+  onBeforeToolbarAction,
 }: ScreenshotEditorToolbarProps) {
   const { t } = useTranslation();
   const hsvColor = hexToHsv(color);
@@ -175,7 +177,10 @@ export function ScreenshotEditorToolbar({
               <button
                 type="button"
                 aria-label={label}
-                onClick={() => onToolClick(item.id)}
+                onClick={() => {
+                  onBeforeToolbarAction?.();
+                  onToolClick(item.id);
+                }}
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
                   isActive
                     ? 'border-primary bg-primary text-white'
@@ -286,6 +291,7 @@ export function ScreenshotEditorToolbar({
           type="button"
           aria-label={t('screenshotEditor.actions.color')}
           onClick={() => {
+            onBeforeToolbarAction?.();
             setEmojiPickerOpen(false);
             setColorPickerOpen((open) => !open);
           }}
@@ -362,7 +368,10 @@ export function ScreenshotEditorToolbar({
             type="button"
             aria-label={t('screenshotEditor.actions.pinToDesktop')}
             disabled={isSaving || !imageLoaded}
-            onClick={onPinToDesktop}
+            onClick={() => {
+              onBeforeToolbarAction?.();
+              onPinToDesktop();
+            }}
             className={toolbarButtonClass}
           >
             <Pin size={18} />
@@ -384,7 +393,10 @@ export function ScreenshotEditorToolbar({
                 type="button"
                 aria-label={t('screenshotEditor.actions.longScreenshot')}
                 disabled={isSaving || !imageLoaded}
-                onClick={onLongCapture}
+                onClick={() => {
+                  onBeforeToolbarAction?.();
+                  onLongCapture();
+                }}
                 className={toolbarButtonClass}
               >
                 <LongScreenshotIcon />
@@ -399,7 +411,10 @@ export function ScreenshotEditorToolbar({
                 type="button"
                 aria-label={t('screenshotEditor.actions.recordGif')}
                 disabled={isSaving || !imageLoaded}
-                onClick={onGifRecording}
+                onClick={() => {
+                  onBeforeToolbarAction?.();
+                  onGifRecording();
+                }}
                 className={toolbarButtonClass}
               >
                 <Video size={18} />
@@ -413,12 +428,30 @@ export function ScreenshotEditorToolbar({
 
       <div className="flex items-center gap-1">
         <TooltipButton label={t('screenshotEditor.actions.undo')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
-          <button type="button" aria-label={t('screenshotEditor.actions.undo')} onClick={undo} disabled={!canUndo} className={toolbarButtonClass}>
+          <button
+            type="button"
+            aria-label={t('screenshotEditor.actions.undo')}
+            onClick={() => {
+              onBeforeToolbarAction?.();
+              undo();
+            }}
+            disabled={!canUndo}
+            className={toolbarButtonClass}
+          >
             <Undo2 size={18} />
           </button>
         </TooltipButton>
         <TooltipButton label={t('screenshotEditor.actions.redo')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
-          <button type="button" aria-label={t('screenshotEditor.actions.redo')} onClick={redo} disabled={!canRedo} className={toolbarButtonClass}>
+          <button
+            type="button"
+            aria-label={t('screenshotEditor.actions.redo')}
+            onClick={() => {
+              onBeforeToolbarAction?.();
+              redo();
+            }}
+            disabled={!canRedo}
+            className={toolbarButtonClass}
+          >
             <Redo2 size={18} />
           </button>
         </TooltipButton>
@@ -428,7 +461,15 @@ export function ScreenshotEditorToolbar({
 
       <div className="flex items-center gap-1">
         <TooltipButton label={t('screenshotEditor.actions.clear')} positionClass={tooltipPositionClass} useNativeTooltip={useNativeTooltip}>
-          <button type="button" aria-label={t('screenshotEditor.actions.clear')} onClick={clearAnnotations} className={toolbarButtonClass}>
+          <button
+            type="button"
+            aria-label={t('screenshotEditor.actions.clear')}
+            onClick={() => {
+              onBeforeToolbarAction?.();
+              clearAnnotations();
+            }}
+            className={toolbarButtonClass}
+          >
             <Trash2 size={18} />
           </button>
         </TooltipButton>
@@ -436,7 +477,10 @@ export function ScreenshotEditorToolbar({
           <button
             type="button"
             aria-label={t('screenshotEditor.actions.cancel')}
-            onClick={onCancel}
+            onClick={() => {
+              onBeforeToolbarAction?.();
+              onCancel();
+            }}
             className="flex h-8 w-8 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <X size={18} />
@@ -447,7 +491,10 @@ export function ScreenshotEditorToolbar({
             type="button"
             aria-label={t('screenshotEditor.actions.confirm')}
             disabled={isSaving || !imageLoaded}
-            onClick={onConfirm}
+            onClick={() => {
+              onBeforeToolbarAction?.();
+              onConfirm();
+            }}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-green-600 text-white transition-colors hover:bg-green-700 disabled:opacity-50"
           >
             <Check size={18} />

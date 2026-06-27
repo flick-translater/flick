@@ -65,6 +65,9 @@ export function ScreenshotEditorCanvas({
   insetFrame = false,
 }: ScreenshotEditorCanvasProps) {
   const selectedControlCssRect = selectedControlRect ? canvasRectToCss(selectedControlRect) : null;
+  const cssFontSize = fontSize * (displaySize.height / Math.max(imageSize.height, 1));
+  const textDraftLineHeight = cssFontSize * 1.25;
+  const textDraftLineCount = textDraft ? textDraft.value.split('\n').length : 1;
   const frameShadow = insetFrame
     ? 'inset 0 0 0 2px rgba(0,102,204,0.95)'
     : '0 0 0 2px rgba(0,102,204,0.95)';
@@ -173,13 +176,19 @@ export function ScreenshotEditorCanvas({
             }
           }}
           onPointerDown={(event) => event.stopPropagation()}
-          className="absolute z-30 min-h-10 min-w-32 resize rounded border border-primary bg-white/95 px-2 py-1 font-bold text-on-surface shadow-lg outline-none"
+          className="absolute z-30 min-w-32 resize-none border-0 bg-transparent p-0 font-bold outline-none"
           style={{
             left: textDraft.cssPosition.x,
             top: textDraft.cssPosition.y,
             color,
-            fontSize,
-            lineHeight: 1.25,
+            caretColor: color,
+            fontFamily: 'Inter, sans-serif',
+            fontSize: cssFontSize,
+            lineHeight: `${textDraftLineHeight}px`,
+            minHeight: textDraftLineHeight,
+            height: Math.max(textDraftLineHeight, textDraftLineCount * textDraftLineHeight + 2),
+            boxSizing: 'border-box',
+            overflow: 'hidden',
           }}
         />
       )}

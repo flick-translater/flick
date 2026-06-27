@@ -125,6 +125,7 @@ function ScreenshotEditor() {
   const draftRef = useRef<Annotation | null>(null);
   const dragStartRef = useRef<Point | null>(null);
   const annotationDragRef = useRef<AnnotationDragState | null>(null);
+  const textDraftRef = useRef<TextDraft | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [editorVisible, setEditorVisible] = useState(true);
   const [imageSize, setImageSize] = useState(imageSizeFallback);
@@ -379,6 +380,10 @@ function ScreenshotEditor() {
   });
 
   useEffect(() => {
+    textDraftRef.current = textDraft;
+  }, [textDraft]);
+
+  useEffect(() => {
     if (!textDraft) {
       return;
     }
@@ -473,6 +478,9 @@ function ScreenshotEditor() {
     const nextIndex = annotationsRef.current.length;
     commitAnnotations([...annotationsRef.current, annotation]);
     setSelectedAnnotationIndex(isSelectableAnnotation(annotation) ? nextIndex : null);
+    if (isSelectableAnnotation(annotation)) {
+      syncToolbarFromAnnotation(annotation);
+    }
   }, [commitAnnotations]);
 
   const removeAnnotationAt = useCallback((index: number) => {
@@ -486,6 +494,34 @@ function ScreenshotEditor() {
     ? getAnnotationBounds(selectedAnnotation)
     : null;
   const selectedControlRect = selectedAnnotationRect ? expandRectToMinSize(selectedAnnotationRect, selectionMinSize) : null;
+
+  function syncToolbarFromAnnotation(annotation: Annotation) {
+    const nextTool = toolFromAnnotation(annotation);
+    if (nextTool) {
+      setTool(nextTool);
+      setEmojiPickerOpen(false);
+    }
+    if ('color' in annotation) {
+      setColor(annotation.color);
+      setHexInput(annotation.color);
+    }
+    if ('width' in annotation) {
+      setLineWidth(Math.round(annotation.width));
+    }
+    if (annotation.kind === 'text') {
+      setFontSize(Math.round(annotation.fontSize));
+    }
+  }
+
+  function selectAnnotation(index: number) {
+    const annotation = annotationsRef.current[index];
+    if (!annotation || !isSelectableAnnotation(annotation)) {
+      setSelectedAnnotationIndex(null);
+      return;
+    }
+    setSelectedAnnotationIndex(index);
+    syncToolbarFromAnnotation(annotation);
+  }
 
   function renderCommitted() {
     const canvas = baseCanvasRef.current;
@@ -591,6 +627,7 @@ function ScreenshotEditor() {
   }
 
   function handleToolClick(nextTool: Tool) {
+    setSelectedAnnotationIndex(null);
     setColorPickerOpen(false);
     setTool((currentTool) => {
       const nextActiveTool = currentTool === nextTool ? null : nextTool;
@@ -617,6 +654,7 @@ function ScreenshotEditor() {
     const nextAnnotations = [...annotationsRef.current, annotation];
     commitAnnotations(nextAnnotations);
     setSelectedAnnotationIndex(nextAnnotations.length - 1);
+    syncToolbarFromAnnotation(annotation);
     setEmojiPickerOpen(false);
   }
 
@@ -626,6 +664,40 @@ function ScreenshotEditor() {
     ));
     annotationsRef.current = nextAnnotations;
     setAnnotations(nextAnnotations);
+    if (index === selectedAnnotationIndex) {
+      syncToolbarFromAnnotation(annotation);
+    }
+  }
+
+  function updateSelectedAnnotation(transform: (annotation: Annotation) => Annotation) {
+    if (selectedAnnotationIndex === null) {
+      return;
+    }
+    const annotation = annotationsRef.current[selectedAnnotationIndex];
+    if (!annotation) {
+      return;
+    }
+    updateAnnotationAt(selectedAnnotationIndex, transform(annotation));
+  }
+
+  function handleLineWidthChange(width: number) {
+    setLineWidth(width);
+    updateSelectedAnnotation((annotation) => (
+      'width' in annotation ? { ...annotation, width } : annotation
+    ));
+  }
+
+  function handleFontSizeChange(size: number) {
+    setFontSize(size);
+    updateSelectedAnnotation((annotation) => (
+      annotation.kind === 'text' ? { ...annotation, fontSize: size } : annotation
+    ));
+  }
+
+  function applyColorToSelectedAnnotation(nextColor: string) {
+    updateSelectedAnnotation((annotation) => (
+      'color' in annotation ? { ...annotation, color: nextColor } : annotation
+    ));
   }
 
   function finishAnnotationDrag() {
@@ -646,6 +718,9 @@ function ScreenshotEditor() {
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     if (!imageRef.current) {
       return;
+    }
+    if (textDraftRef.current) {
+      commitTextDraft();
     }
     setColorPickerOpen(false);
     setEmojiPickerOpen(false);
@@ -673,7 +748,7 @@ function ScreenshotEditor() {
         return;
       }
       event.currentTarget.setPointerCapture(event.pointerId);
-      setSelectedAnnotationIndex(annotationHitIndex);
+      selectAnnotation(annotationHitIndex);
       annotationDragRef.current = {
         annotationIndex: annotationHitIndex,
         initialAnnotations: annotationsRef.current,
@@ -790,17 +865,20 @@ function ScreenshotEditor() {
   }
 
   function commitTextDraft() {
-    if (!textDraft?.value.trim()) {
+    const draft = textDraftRef.current;
+    if (!draft?.value.trim()) {
+      textDraftRef.current = null;
       setTextDraft(null);
       return;
     }
     addAnnotation({
       kind: 'text',
-      position: textDraft.position,
-      text: textDraft.value.trim(),
+      position: draft.position,
+      text: draft.value.trim(),
       color,
       fontSize,
     });
+    textDraftRef.current = null;
     setTextDraft(null);
   }
 
@@ -811,6 +889,7 @@ function ScreenshotEditor() {
     const normalized = nextColor.toLowerCase();
     setColor(normalized);
     setHexInput(normalized);
+    applyColorToSelectedAnnotation(normalized);
     void invoke<AppSettings>('update_screenshot_editor_color', { color: normalized })
       .then((settings) => {
         if (isHexColor(settings.screenshot_editor_color)) {
@@ -1245,13 +1324,13 @@ function ScreenshotEditor() {
                   onToolClick={handleToolClick}
                   popupPositionClass="top-[calc(100%+8px)]"
                   lineWidth={lineWidth}
-                  setLineWidth={setLineWidth}
+                  setLineWidth={handleLineWidthChange}
                   mosaicWidth={mosaicWidth}
                   setMosaicWidth={setMosaicWidth}
                   mosaicSize={mosaicSize}
                   setMosaicSize={setMosaicSize}
                   fontSize={fontSize}
-                  setFontSize={setFontSize}
+                  setFontSize={handleFontSizeChange}
                   emojiPickerOpen={emojiPickerOpen}
                   visibleEmojiChoices={visibleEmojiChoices}
                   onEmojiChoice={handleEmojiChoice}
@@ -1287,6 +1366,7 @@ function ScreenshotEditor() {
                   imageLoaded={imageLoaded}
                   embedded
                   showLongCapture={false}
+                  onBeforeToolbarAction={commitTextDraft}
                 />
               </div>
               <div
@@ -1426,13 +1506,13 @@ function ScreenshotEditor() {
                   onToolClick={handleToolClick}
                   popupPositionClass={popupPositionClass}
                   lineWidth={lineWidth}
-                  setLineWidth={setLineWidth}
+                  setLineWidth={handleLineWidthChange}
                   mosaicWidth={mosaicWidth}
                   setMosaicWidth={setMosaicWidth}
                   mosaicSize={mosaicSize}
                   setMosaicSize={setMosaicSize}
                   fontSize={fontSize}
-                  setFontSize={setFontSize}
+                  setFontSize={handleFontSizeChange}
                   emojiPickerOpen={emojiPickerOpen}
                   visibleEmojiChoices={visibleEmojiChoices}
                   onEmojiChoice={handleEmojiChoice}
@@ -1468,6 +1548,7 @@ function ScreenshotEditor() {
                   imageLoaded={imageLoaded}
                   showLongCapture={!isLinux}
                   useNativeTooltip={isWindows}
+                  onBeforeToolbarAction={commitTextDraft}
                 />
               ) : editorMode === 'long-capture' ? (
                 <LongScreenshotToolbar
@@ -1636,6 +1717,13 @@ function drawEmojiAnnotation(context: CanvasRenderingContext2D, annotation: Extr
 
 function isSelectableAnnotation(annotation: Annotation | undefined): annotation is Exclude<Annotation, { kind: 'mosaic' }> {
   return Boolean(annotation) && annotation?.kind !== 'mosaic';
+}
+
+function toolFromAnnotation(annotation: Annotation): Tool | null {
+  if (annotation.kind === 'number-tag') {
+    return 'number';
+  }
+  return annotation.kind === 'mosaic' ? 'mosaic' : annotation.kind;
 }
 
 function hitSelectableAnnotation(point: Point, annotations: Annotation[]) {
