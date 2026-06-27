@@ -2,6 +2,49 @@
 
 All notable changes to Flick will be documented in this file.
 
+## [1.1.2] - 2026-06-27
+
+### Fixed
+
+- Improved ffmpeg detection on macOS installed builds by checking Homebrew's common install paths, `/usr/local/bin/ffmpeg` and `/opt/homebrew/bin/ffmpeg`, before falling back to `PATH` lookup.
+- Fixed installed macOS app builds failing to detect ffmpeg when launched from Finder, Dock, or login items with a GUI environment that does not include Homebrew directories in `PATH`.
+
+## [1.1.1] - 2026-06-27
+
+### Added
+
+- Added pinned image support, including UI and backend integration.
+- Added a Number Tag annotation tool to the screenshot editor.
+- Added selection frame visualization and preview support for long captures in the screenshot editor.
+- Improved overlay behavior with crosshair support and monitor scaling refinements.
+
+### Improved
+
+- Refined long-capture scrolling, near-duplicate detection, and Windows scroll responsiveness.
+- Improved toolbar sizing and pin-to-desktop behavior.
+- Removed verbose diagnostic logging from screenshot editor and scroll controller paths.
+
+## [1.1.0] - 2026-06-25
+
+### Added
+
+- Added long capture support with toolbar-based scroll controls, improved stitching, and platform-specific scrolling integrations.
+- Added GIF recording with localized toolbar controls and native tooltips.
+- Added MP4 video recording support alongside GIF recording.
+- Added cross-platform system audio capture, including Windows WASAPI loopback support.
+- Added ffmpeg download progress reporting and video recording availability checks with fallback to GIF.
+- Added video thumbnail generation and paginated capture history.
+- Added localized screenshot editor support.
+
+### Improved
+
+- Modularized screenshot editor components and recording window behavior.
+- Improved screenshot editor toolbar positioning and interaction.
+- Improved recording frame handling, format handling, and capture workflow stability.
+- Improved Windows file opening through `ShellExecuteW`.
+- Updated README documentation for screenshot editor features, platform support, and Linux limitations.
+- Removed verbose diagnostic logging from capture, recording, and audio paths.
+
 ## [1.0.0] - 2026-04-11
 
 ### Highlights
