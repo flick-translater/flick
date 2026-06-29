@@ -2,6 +2,14 @@
 
 All notable changes to Flick will be documented in this file.
 
+## [1.1.4] - 2026-06-29
+
+### Improved
+
+- Improved Windows screenshot overlay activation and interaction by explicitly focusing and foregrounding overlay windows after display.
+- Improved screenshot editor window presentation so it gains focus consistently after being shown.
+- Improved Windows frozen overlay handling by clipping the cursor during capture and simplifying activation behavior.
+
 ## [1.1.3] - 2026-06-27
 
 ### Improved
