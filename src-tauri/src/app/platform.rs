@@ -193,6 +193,14 @@ pub fn configure_screenshot_editor_window(window: &WebviewWindow) {
     let _ = window;
 }
 
+pub fn show_screenshot_editor_window_after_show(window: &WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    windows_platform::show_screenshot_editor_window_after_show(window);
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = window;
+}
+
 pub fn configure_pinned_image_window(window: &WebviewWindow) {
     #[cfg(target_os = "macos")]
     macos_platform::configure_pinned_image_window(window);

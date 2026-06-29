@@ -95,6 +95,7 @@ pub fn show_screenshot_editor_window(
     if let Some(window) = app.get_webview_window(&label) {
         window.show()?;
         window.set_focus()?;
+        platform::show_screenshot_editor_window_after_show(&window);
         return Ok(window);
     }
 
@@ -237,6 +238,7 @@ pub fn show_screenshot_editor_window(
                 platform::configure_screenshot_editor_window_shape(&window, &window_regions);
                 window.show()?;
                 window.set_focus()?;
+                platform::show_screenshot_editor_window_after_show(&window);
                 return Ok(window);
             }
             Err(_) => {
@@ -265,6 +267,7 @@ pub fn show_screenshot_editor_window(
     let _ = window.set_position(LogicalPosition::new(window_x, window_y));
     let _ = window.show();
     let _ = window.set_focus();
+    platform::show_screenshot_editor_window_after_show(&window);
     Ok(window)
 }
 

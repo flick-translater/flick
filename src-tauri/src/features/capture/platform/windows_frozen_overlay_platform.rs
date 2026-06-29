@@ -14,12 +14,13 @@ use windows_sys::Win32::{
         CreateCompatibleBitmap, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC,
         DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC, SRCCOPY, SelectObject,
     },
+    UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus},
     UI::WindowsAndMessaging::{
-        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE,
-        GetWindowLongPtrW, IDC_CROSS, LoadCursorW, RegisterClassW, SW_HIDE, SW_SHOWNA,
-        SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPos,
-        ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_DESTROY,
-        WM_ERASEBKGND, WM_NCCREATE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        CS_HREDRAW, CS_VREDRAW, ClipCursor, CreateWindowExW, DefWindowProcW, DestroyWindow,
+        GWL_EXSTYLE, GetWindowLongPtrW, IDC_CROSS, LoadCursorW, RegisterClassW, SW_HIDE, SW_SHOW,
+        SWP_SHOWWINDOW, SetForegroundWindow, SetWindowDisplayAffinity, SetWindowLongPtrW,
+        SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+        WM_DESTROY, WM_ERASEBKGND, WM_NCCREATE, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
         WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
     },
 };
@@ -598,7 +599,7 @@ fn draw_crosshair(
 fn create_overlay_window() -> Result<HWND, FlickError> {
     let hwnd = unsafe {
         CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
             overlay_window_class_name().as_ptr(),
             overlay_window_class_name().as_ptr(),
             WS_POPUP,
@@ -628,6 +629,7 @@ fn show_overlay_window(hwnd: HWND, bounds: &SelectionRect) -> Result<(), FlickEr
     let height = i32::try_from(bounds.height)
         .map_err(|_| FlickError::Message("invalid overlay height".into()))?;
     unsafe {
+        ClipCursor(std::ptr::null());
         SetWindowPos(
             hwnd,
             -1isize as HWND,
@@ -635,9 +637,12 @@ fn show_overlay_window(hwnd: HWND, bounds: &SelectionRect) -> Result<(), FlickEr
             bounds.y,
             width,
             height,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            SWP_SHOWWINDOW,
         );
-        ShowWindow(hwnd, SW_SHOWNA);
+        ShowWindow(hwnd, SW_SHOW);
+        SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
+        SetFocus(hwnd);
     }
     Ok(())
 }

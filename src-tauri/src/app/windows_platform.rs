@@ -8,9 +8,10 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
 use windows_sys::Win32::{
     Graphics::Dwm::{DWMWA_TRANSITIONS_FORCEDISABLED, DwmSetWindowAttribute},
     Graphics::Gdi::{CombineRgn, CreateRectRgn, DeleteObject, RGN_OR, SetWindowRgn},
+    UI::Input::KeyboardAndMouse::SetFocus,
     UI::WindowsAndMessaging::{
-        ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_LOADFROMFILE, LoadImageW,
-        SendMessageW, WM_SETICON,
+        ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_LOADFROMFILE, LoadImageW, SWP_NOMOVE,
+        SWP_NOSIZE, SWP_SHOWWINDOW, SendMessageW, SetForegroundWindow, SetWindowPos, WM_SETICON,
     },
 };
 
@@ -151,6 +152,25 @@ pub fn configure_built_window(window: &WebviewWindow) {
 pub fn configure_screenshot_editor_window(window: &WebviewWindow) {
     if let Err(error) = disable_window_transitions(window) {
         eprintln!("failed to disable screenshot editor window transitions: {error}");
+    }
+}
+
+pub fn show_screenshot_editor_window_after_show(window: &WebviewWindow) {
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    unsafe {
+        SetWindowPos(
+            hwnd.0 as _,
+            -1isize as _,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
+        SetForegroundWindow(hwnd.0 as _);
+        SetFocus(hwnd.0 as _);
     }
 }
 
