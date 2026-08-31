@@ -2,6 +2,12 @@
 
 All notable changes to Flick will be documented in this file.
 
+## [1.1.5] - 2026-08-31
+
+### Fixed
+
+- Fixed intermittent translation failures when a streamed UTF-8 character was split across network chunks.
+
 ## [1.1.4] - 2026-06-29
 
 ### Improved
