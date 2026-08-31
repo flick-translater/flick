@@ -144,16 +144,14 @@ impl OpenAiChatProtocol {
 
     async fn collect_streaming_response(&self, response: Response) -> Result<String> {
         let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut buffer = Vec::new();
         let mut aggregated = String::new();
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
-            buffer.push_str(std::str::from_utf8(&chunk)?);
+            buffer.extend_from_slice(&chunk);
 
-            while let Some(index) = buffer.find('\n') {
-                let line = buffer[..index].trim_end_matches('\r').to_string();
-                buffer.drain(..=index);
+            while let Some(line) = take_complete_line(&mut buffer)? {
                 if self.consume_sse_line(&line, &mut aggregated)? {
                     return if aggregated.is_empty() {
                         Err(anyhow!("Empty response"))
@@ -164,7 +162,7 @@ impl OpenAiChatProtocol {
             }
         }
 
-        let trailing = buffer.trim();
+        let trailing = std::str::from_utf8(&buffer)?.trim();
         if !trailing.is_empty() {
             let _ = self.consume_sse_line(trailing, &mut aggregated)?;
         }
@@ -198,6 +196,20 @@ impl OpenAiChatProtocol {
     }
 }
 
+fn take_complete_line(buffer: &mut Vec<u8>) -> Result<Option<String>> {
+    let Some(newline_index) = buffer.iter().position(|byte| *byte == b'\n') else {
+        return Ok(None);
+    };
+
+    let mut line = buffer.drain(..=newline_index).collect::<Vec<_>>();
+    line.pop();
+    if line.last() == Some(&b'\r') {
+        line.pop();
+    }
+
+    Ok(Some(String::from_utf8(line)?))
+}
+
 #[async_trait]
 impl ChatProtocol for OpenAiChatProtocol {
     async fn chat_with_system(&self, system_prompt: &str, user_message: &str) -> Result<String> {
@@ -219,5 +231,39 @@ impl ChatProtocol for OpenAiChatProtocol {
 
     fn protocol_name(&self) -> &'static str {
         "openai"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::take_complete_line;
+
+    #[test]
+    fn buffers_utf8_characters_split_across_network_chunks() {
+        let event = "data: {\"choices\":[{\"delta\":{\"content\":\"翻译\"}}]}\n";
+        let bytes = event.as_bytes();
+        let split_at = event.find('翻').unwrap() + 1;
+        let mut buffer = Vec::new();
+
+        buffer.extend_from_slice(&bytes[..split_at]);
+        assert!(take_complete_line(&mut buffer).unwrap().is_none());
+
+        buffer.extend_from_slice(&bytes[split_at..]);
+        assert_eq!(
+            take_complete_line(&mut buffer).unwrap().as_deref(),
+            Some(event.trim_end())
+        );
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn accepts_crlf_sse_lines() {
+        let mut buffer = b"data: [DONE]\r\nremaining".to_vec();
+
+        assert_eq!(
+            take_complete_line(&mut buffer).unwrap().as_deref(),
+            Some("data: [DONE]")
+        );
+        assert_eq!(buffer, b"remaining");
     }
 }
